@@ -85,6 +85,13 @@ def mvp_ami_bootstrap(
     return MvpAmiBootstrapOk(app_cfg=app_cfg, meter_mod=meter_mod, root=root, cfg_path=cfg_path)
 
 
+def channel_spec_is_tcp(channel: Optional[ChannelSpec]) -> bool:
+    """True when request asks for outbound TCP (modem / transparent tunnel), not serial."""
+    if channel is None:
+        return False
+    return channel.type in ("tcp", "tcp_client")
+
+
 def find_stage(diags: list, stage: str):
     for d in diags:
         if getattr(d, "stage", None) == stage:

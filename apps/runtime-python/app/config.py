@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal, Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,7 +20,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     """
     `stub` — simulated envelope (no wire).
-    `mvp_ami` — serial host-initiated read via local MVP-AMI checkout (`MeterClient.run_phase1`).
+    `mvp_ami` — host-initiated reads via local MVP-AMI (`MeterClient.run_phase1` serial or `run_phase1_tcp_socket` TCP client).
     """
     adapter: Literal["stub", "mvp_ami"] = "stub"
     """If set, require `Authorization: Bearer <token>` on `/v1/*` routes. `/health` stays open."""
@@ -42,6 +43,10 @@ class Settings(BaseSettings):
     discovery_snapshot_autosave: bool = True
     """Max history JSON files per meter (oldest deleted)."""
     discovery_snapshot_max_history: int = 32
+    tcp_client_connect_timeout_seconds: float = Field(
+        default=15.0,
+        description="Default TCP connect timeout (s) when channel.type is tcp/tcp_client (read-identity).",
+    )
 
 
 @lru_cache

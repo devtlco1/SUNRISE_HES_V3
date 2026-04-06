@@ -29,7 +29,7 @@
 
 With `SUNRISE_RUNTIME_ADAPTER=mvp_ami` and `SUNRISE_RUNTIME_MVP_AMI_ROOT` set to a local **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)** checkout, the sidecar runs the same host-initiated serial pipeline (open → IEC → association → COSEM reads) for:
 
-- **`read-identity`** — one identity OBIS (default `0.0.96.1.1.255`).
+- **`read-identity`** — one identity OBIS (default `0.0.96.1.1.255`); serial (`run_phase1`) or **TCP client** (`run_phase1_tcp_socket`) when `channel.type` is `tcp` / `tcp_client` — see **`docs/runtime-python-tcp-client-read-identity.md`**.
 - **`read-basic-registers`** — a **small fixed OBIS set** (clock, energy, voltage — configurable; see **`docs/runtime-python-mvp-ami-adapter.md`**).
 
 Both return the same **`RuntimeResponseEnvelope`** shape as the stub (`operation` discriminates the payload). Env vars and curl examples: **`docs/runtime-python-mvp-ami-adapter.md`**.

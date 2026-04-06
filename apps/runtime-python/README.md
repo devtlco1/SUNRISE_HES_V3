@@ -30,7 +30,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 | `SUNRISE_RUNTIME_HOST` | Bind host (default `0.0.0.0`) |
 | `SUNRISE_RUNTIME_PORT` | Bind port (default `8766`) |
 | `SUNRISE_RUNTIME_LOG_LEVEL` | e.g. `INFO`, `DEBUG` |
-| `SUNRISE_RUNTIME_ADAPTER` | `stub` (default, simulated) or `mvp_ami` (serial via local MVP-AMI checkout) |
+| `SUNRISE_RUNTIME_ADAPTER` | `stub` (default, simulated) or `mvp_ami` (serial + optional **TCP client** `read-identity` via MVP-AMI) |
 | `SUNRISE_RUNTIME_MVP_AMI_ROOT` | **Required for `mvp_ami`:** absolute path to cloned `devtlco1/MVP-AMI` |
 | `SUNRISE_RUNTIME_MVP_AMI_CONFIG_PATH` | Optional path to MVP-AMI `config.json` (default `<root>/config.json`) |
 | `SUNRISE_RUNTIME_IDENTITY_OBIS` | Optional identity OBIS for `run_phase1` (default `0.0.96.1.1.255`) |
@@ -39,8 +39,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 | `SUNRISE_RUNTIME_DISCOVERY_SNAPSHOT_AUTOSAVE` | `true`/`false` — autosave after successful on-wire discovery (default `true`) |
 | `SUNRISE_RUNTIME_DISCOVERY_SNAPSHOT_MAX_HISTORY` | Max history files per meter (default `32`) |
 | `SUNRISE_RUNTIME_SERVICE_TOKEN` | If set, `POST /v1/*` requires `Authorization: Bearer <token>`. `GET /health` stays open. |
+| `SUNRISE_RUNTIME_TCP_CLIENT_CONNECT_TIMEOUT_SECONDS` | Default **15** — TCP dial timeout for `read-identity` when `channel.type` is `tcp` / `tcp_client` |
 
-Full setup and failure codes: **`../../docs/runtime-python-mvp-ami-adapter.md`**.
+Full setup and failure codes: **`../../docs/runtime-python-mvp-ami-adapter.md`**. TCP client / modem: **`../../docs/runtime-python-tcp-client-read-identity.md`**.
 
 ## Layout
 

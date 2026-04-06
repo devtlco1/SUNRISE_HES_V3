@@ -1,6 +1,6 @@
-# Python sidecar: real `mvp_ami` adapter (serial reads)
+# Python sidecar: real `mvp_ami` adapter (serial + optional TCP client)
 
-This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)** (`MeterClient.run_phase1`) over **serial** (host-initiated pipeline: open → IEC → association → COSEM reads).
+This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)**. **Serial** uses `MeterClient.run_phase1` (open → IEC → association → COSEM reads). **TCP client / modem** uses `MeterClient.run_phase1_tcp_socket` for **`read-identity` only** — see **`docs/runtime-python-tcp-client-read-identity.md`**.
 
 ## What is implemented
 
@@ -20,7 +20,7 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
 ## What stays stubbed / out of scope
 
 - **Queues, workers, relay, bulk reads, command execution** — unchanged placeholders elsewhere.
-- **TCP client / multi-channel** in the adapter — not implemented; use MVP-AMI’s own `config.json` for transport until extended.
+- **TCP client beyond `read-identity`** — `read-basic-registers` and discovery remain **serial-only** for now.
 - **Public** runtime routes — still the in-process TypeScript factory; only **`POST /api/internal/python-runtime/read-identity`** and **`POST /api/internal/python-runtime/read-basic-registers`** proxy to Python when `RUNTIME_PYTHON_SIDECAR_URL` is set.
 - **Queue execution** — types only (`lib/jobs/foundation.ts`, `apps/runtime-python/app/jobs/read_job_foundation.py`); no Redis/workers yet.
 
@@ -50,6 +50,7 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
 | `SUNRISE_RUNTIME_IDENTITY_OBIS` | No | Logical name / identity OBIS string passed to `run_phase1`. Default: `0.0.96.1.1.255`. |
 | `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` | No | Comma-separated OBIS list for `read-basic-registers`. Default: `0.0.1.0.0.255,1.0.1.8.0.255,1.0.32.7.0.255`. |
 | `SUNRISE_RUNTIME_SERVICE_TOKEN` | No | If set, `Authorization: Bearer <token>` on `/v1/*`. |
+| `SUNRISE_RUNTIME_TCP_CLIENT_CONNECT_TIMEOUT_SECONDS` | No | Default **15** — TCP connect timeout for `read-identity` when `channel.type` is `tcp` / `tcp_client`. |
 
 ## Optional request override (serial port only)
 
@@ -63,6 +64,17 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
 ```
 
 When `channel.type` is `serial` and `devicePath` is set, it overrides **`serial.port_primary`** in the loaded MVP-AMI config for that call.
+
+## TCP client (`read-identity` only)
+
+```json
+{
+  "meterId": "meter-1",
+  "channel": { "type": "tcp", "host": "192.0.2.10", "port": 4059 }
+}
+```
+
+Full behavior, error codes, and honesty notes: **`docs/runtime-python-tcp-client-read-identity.md`**.
 
 ## Run the sidecar
 

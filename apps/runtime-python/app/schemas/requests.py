@@ -6,12 +6,18 @@ from pydantic import BaseModel, Field
 
 
 class ChannelSpec(BaseModel):
-    """Future: serial device, TCP client target, etc. Stub ignores beyond logging."""
+    """Transport hints: serial device path, or TCP client (modem / transparent GPRS tunnel)."""
 
-    type: Literal["unspecified", "stub", "serial", "tcp_client"] = "unspecified"
-    devicePath: Optional[str] = Field(default=None, description="e.g. /dev/ttyUSB0")
-    host: Optional[str] = None
-    port: Optional[int] = None
+    type: Literal["unspecified", "stub", "serial", "tcp_client", "tcp"] = "unspecified"
+    devicePath: Optional[str] = Field(default=None, description="e.g. /dev/ttyUSB0 (serial)")
+    host: Optional[str] = Field(default=None, description="TCP client target host (type tcp / tcp_client)")
+    port: Optional[int] = Field(default=None, description="TCP client target port")
+    connectTimeoutSeconds: Optional[float] = Field(
+        default=None,
+        ge=0.5,
+        le=120.0,
+        description="Override SUNRISE_RUNTIME_TCP_CLIENT_CONNECT_TIMEOUT_SECONDS for this request.",
+    )
 
 
 class ReadIdentityRequest(BaseModel):

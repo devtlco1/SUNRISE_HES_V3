@@ -107,6 +107,6 @@ Then validate **serial** against the meter that showed **`post_aarq_zero_rx`** o
 - Inbound diagnostics: `docs/runtime-ingress.md`, `GET /api/runtime/ingress/status`.
 - Control-plane boundary: `docs/runtime-boundary.md`.
 - Topology comparison (API): `status.mvpAmiTopologyComparison`.
-- **Python sidecar:** `apps/runtime-python/` (FastAPI — direct reads + **discover-supported-obis** + **file-backed discovery snapshots** under `/v1/runtime/*`, async jobs under `/v1/jobs/*`; `docs/runtime-python-discovery.md`). Next **internal** `read-basic-registers` checks the latest snapshot before proxying (**409** if catalog missing/incompatible).
+- **Python sidecar:** `apps/runtime-python/` (FastAPI — direct reads + **discover-supported-obis** + **file-backed discovery snapshots** under `/v1/runtime/*`, async jobs under `/v1/jobs/*`; `docs/runtime-python-discovery.md`). Next **internal** `read-basic-registers` checks the latest snapshot before proxying (**409** if catalog missing/incompatible). **`read-identity`** supports **TCP client** channel (`channel.type` `tcp` / `tcp_client`) via MVP-AMI `run_phase1_tcp_socket` — `docs/runtime-python-tcp-client-read-identity.md`.
 - **Next.js → Python proxy (internal):** sync + job enqueue/poll under `app/api/internal/python-runtime/`, `docs/architecture-control-plane-python.md`.
 - **Read-job queue (v1):** `docs/job-queue-foundation.md`, `lib/jobs/foundation.ts`, `apps/runtime-python/app/jobs/local_read_job_queue.py`.
