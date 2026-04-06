@@ -31,8 +31,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  CONNECTIVITY_FETCH_NETWORK_ERROR,
+  fetchConnectivity,
+} from "@/lib/connectivity/api"
 import { formatHealthState } from "@/lib/connectivity/format"
-import { mockConnectivityListRows } from "@/lib/mock/connectivity"
 import {
   operationalListPageStackClass,
   operationalMonoIdTriggerClass,
@@ -62,6 +65,10 @@ function ConnectivityTableHeaderRow() {
 }
 
 type ConnectivityListProps = {
+  /**
+   * When provided, skips `/api/connectivity` (e.g. `NEXT_PUBLIC_CONNECTIVITY_USE_MOCK` or tests).
+   * Pass `[]` to exercise an empty catalog without the API.
+   */
   rows?: ConnectivityListRow[]
 }
 
@@ -82,10 +89,16 @@ function matchesSearch(row: ConnectivityListRow, q: string) {
     .includes(n)
 }
 
-export function ConnectivityList({
-  rows: sourceRows = mockConnectivityListRows,
-}: ConnectivityListProps) {
-  const [loading, setLoading] = useState(true)
+export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
+  const staticMode = rowsProp !== undefined
+  const [fetchedRows, setFetchedRows] = useState<ConnectivityListRow[]>([])
+  const [loadKey, setLoadKey] = useState(0)
+  const [loading, setLoading] = useState(rowsProp === undefined)
+  const [error, setError] = useState<string | null>(null)
+
+  const sourceRows =
+    rowsProp !== undefined ? rowsProp : fetchedRows
+
   const [search, setSearch] = useState("")
   const [commFilter, setCommFilter] = useState<string>(ALL)
   const [networkFilter, setNetworkFilter] = useState<string>(ALL)
@@ -97,9 +110,43 @@ export function ConnectivityList({
   const [selected, setSelected] = useState<ConnectivityListRow | null>(null)
 
   useEffect(() => {
-    const t = window.setTimeout(() => setLoading(false), 380)
-    return () => window.clearTimeout(t)
-  }, [])
+    if (staticMode) return
+
+    const ac = new AbortController()
+    let stale = false
+
+    fetchConnectivity(ac.signal)
+      .then((result) => {
+        if (stale) return
+        setLoading(false)
+        if (!result.ok) {
+          setError(result.error)
+          setFetchedRows([])
+          return
+        }
+        setError(null)
+        setFetchedRows(result.rows)
+      })
+      .catch((e) => {
+        if (e instanceof Error && e.name === "AbortError") return
+        if (stale) return
+        setLoading(false)
+        setError(CONNECTIVITY_FETCH_NETWORK_ERROR)
+        setFetchedRows([])
+      })
+
+    return () => {
+      stale = true
+      ac.abort()
+    }
+  }, [staticMode, loadKey])
+
+  function reload() {
+    if (staticMode) return
+    setLoading(true)
+    setError(null)
+    setLoadKey((k) => k + 1)
+  }
 
   const resetPage = useCallback(() => setPage(1), [])
 
@@ -173,8 +220,10 @@ export function ConnectivityList({
     if (!open) setSelected(null)
   }
 
-  const emptyCatalog = sourceRows.length === 0
-  const noResults = !emptyCatalog && filtered.length === 0
+  const fetchFailed = !staticMode && !loading && error !== null
+  const emptyCatalog = !fetchFailed && sourceRows.length === 0
+  const noResults =
+    !fetchFailed && !emptyCatalog && filtered.length === 0
 
   return (
     <div className={operationalListPageStackClass}>
@@ -250,7 +299,11 @@ export function ConnectivityList({
 
       <SectionCard
         title="Communication endpoints"
-        description="Per-meter routes, gateways, and session posture. Values are mock telemetry for layout review."
+        description={
+          staticMode
+            ? "Static catalog — filters and pagination run client-side."
+            : "Served from GET /api/connectivity. Filters and pagination run client-side on the fetched row set."
+        }
       >
         <TableShell>
           <TableToolbar
@@ -274,7 +327,13 @@ export function ConnectivityList({
             }
             right={
               <>
-                <Button type="button" variant="outline" size="sm" disabled>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={staticMode || loading}
+                  onClick={reload}
+                >
                   Refresh
                 </Button>
                 <Button type="button" variant="secondary" size="sm" disabled>
@@ -295,7 +354,7 @@ export function ConnectivityList({
                 </Table>
               </div>
             </div>
-          ) : emptyCatalog || noResults ? null : (
+          ) : fetchFailed ? null : emptyCatalog || noResults ? null : (
             <div className="relative min-w-0">
               <div className="min-w-[1180px]">
                 <Table>
@@ -397,14 +456,35 @@ export function ConnectivityList({
             </div>
           )}
 
-          {!loading && emptyCatalog ? (
+          {!loading && fetchFailed ? (
             <TableEmpty
-              title="No connectivity endpoints"
-              description="Registered communication paths will list here. Use an empty rows prop to verify this layout."
+              title="Unable to load catalog"
+              description={error ?? "Request failed."}
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={reload}
+                >
+                  Retry
+                </Button>
+              }
             />
           ) : null}
 
-          {!loading && noResults ? (
+          {!loading && !fetchFailed && emptyCatalog ? (
+            <TableEmpty
+              title="No connectivity endpoints"
+              description={
+                staticMode
+                  ? "Use an empty rows prop to verify this layout."
+                  : "The catalog source returned no rows. If this is unexpected, verify data/connectivity.json or the upstream feed."
+              }
+            />
+          ) : null}
+
+          {!loading && !fetchFailed && noResults ? (
             <TableEmpty
               title="No endpoints match filters"
               description="Clear filters or widen communication, network, and health criteria."

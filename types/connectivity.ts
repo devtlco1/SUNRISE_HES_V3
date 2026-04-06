@@ -6,7 +6,7 @@ export type ConnectivityHealthState =
   | "failed"
   | "unknown"
 
-/** Operational connectivity monitoring row (mock / future API). */
+/** Operational connectivity monitoring row (read-only API + UI filters). */
 export type ConnectivityListRow = {
   id: string
   serialNumber: string
