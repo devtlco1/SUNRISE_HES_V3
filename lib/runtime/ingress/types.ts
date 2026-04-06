@@ -193,7 +193,9 @@ export type IngressMvpAmiTopologyComparisonPublic = {
   sunriseIngressBehavior: string
   concreteDifferences: string[]
   liveVpsEvidenceAnchor: string
-  /** Whether further ingress experiments remain reasonable (does not guarantee meter support). */
+  /**
+   * Whether further **inbound TCP ingress** tweaks are still a credible primary bet (VPS evidence may set false).
+   */
   associationAssumptionStillWorthTesting: boolean
   recommendedNextDirection: string
 }

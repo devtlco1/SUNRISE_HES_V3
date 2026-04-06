@@ -35,15 +35,15 @@ export const INGRESS_MVP_AMI_TOPOLOGY_COMPARISON: IngressMvpAmiTopologyCompariso
       "Gurux usage is shared at the APDU level, but framing/read scheduling and who owns the next TX after TCP connect differ.",
     ],
     liveVpsEvidenceAnchor:
-      "Strict UA OK, AARQ APDU aligned with Gurux, post-AARQ zero RX, `closeOrigin=closed_after_disc_final`, " +
-      "`peerClosedBeforeServerTeardown=false` — the meter did not answer AARE; server closed after its teardown. " +
-      "That does not prove the inbound association model matches the MVP-AMI session that succeeded elsewhere.",
+      "VPS: strict UA OK; learned HDLC address e.g. 00020023; LOW LN AARQ matches Gurux; password on wire matches " +
+      "config (88935860); conservative AARQ profile tested; staged/API IEC+ACK+delay+DLMS tested — still " +
+      "`post_aarq_zero_rx` in both auto and staged modes; `closeOrigin=closed_after_disc_final`. " +
+      "Conclusion: not a small framing/password/trigger-order bug; treat as transport/session-boundary mismatch.",
     associationAssumptionStillWorthTesting:
-      true,
+      false,
     recommendedNextDirection:
-      "Treat MVP-AMI TCP POC (`run_phase1_tcp_socket` + /api/read-tcp) as the closest comparator: same TCP accept " +
-      "topology but different trigger — consider an API- or job-triggered session on the accepted socket, " +
-      "or a small sidecar service that reuses MVP-AMI’s exact IEC-then-DLMS order; alternatively validate " +
-      "the same meter on MVP-AMI serial vs this TCP ingress to isolate transport vs role. " +
-      "Avoid assuming byte-identical AARQ implies identical session validity across these modes.",
+      "Stop inbound TypeScript DLMS micro-tweaks for this goal. Keep Next.js as control plane/UI; add a dedicated " +
+      "protocol runtime (Python sidecar reusing MVP-AMI-class serial/TCP client flows). Wire control plane to " +
+      "sidecar via stable JSON (mirror RuntimeResponseEnvelope). First milestone: serial (or host-initiated TCP) " +
+      "associate + one identity read + structured errors. See docs/protocol-runtime-handoff.md.",
   }

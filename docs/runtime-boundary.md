@@ -1,5 +1,9 @@
 # Smart meter runtime boundary (v1)
 
+## Post–VPS note (inbound TCP ingress)
+
+Live inbound TCP experiments reached **strict UA** and **Gurux-aligned AARQ** with **no post-AARQ RX** in both auto and staged modes — see **`docs/runtime-ingress.md`** and the architecture handoff **`docs/protocol-runtime-handoff.md`**. The **stub/real adapter** contracts below remain the right **UI-facing** shape; **on-wire execution** for production reads should move toward a **separate protocol service** (e.g. Python/MVP-AMI-class sidecar) rather than further ingress tuning in this repo.
+
 ## Purpose
 
 This layer defines **typed contracts** and a **replaceable adapter** between the HES application (dashboard, future job runners) and **smart-meter runtime operations** (probe, association, reads, relay-oriented workflows).

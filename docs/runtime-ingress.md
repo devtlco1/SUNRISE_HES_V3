@@ -24,6 +24,15 @@ Therefore: **proving AARQ equals Gurux on the wire does not prove** the same **t
 
 **API field:** `status.mvpAmiTopologyComparison` on `GET /api/runtime/ingress/status` repeats this comparison in structured form (`transportEquivalenceAssessment`, `concreteDifferences`, `recommendedNextDirection`).
 
+### VPS evidence — final (inbound TCP)
+
+Live experiments on the deployment meter have **not** produced **post-AARQ** meter RX in either session model:
+
+- **Auto-on-accept** and **`staged_triggered_session`** (API-triggered IEC → ACK → delay → DLMS, see `RUNTIME_TCP_METER_INGRESS_SESSION_MODE`) both end with **`post_aarq_zero_rx`** (or equivalent AARE hunt outcome) and **`closeOrigin: closed_after_disc_final`** after server teardown.
+- On-wire checks passed for **strict UA**, learned HDLC address, **Gurux-aligned LOW LN AARQ**, **password match**, and **conservative** initiate profile — so the blocker is **not** a small APDU/password/framing bug.
+
+**Product implication:** further effort should **not** center on incremental TypeScript ingress tweaks for this path. See **[protocol-runtime-handoff.md](protocol-runtime-handoff.md)** for the recommended **control plane (Next.js) + dedicated protocol runtime (e.g. Python/MVP-AMI-class sidecar)** split and migration steps.
+
 ## Environment variables — listener
 
 | Variable | Purpose |
@@ -32,7 +41,8 @@ Therefore: **proving AARQ equals Gurux on the wire does not prove** the same **t
 | `RUNTIME_TCP_METER_INGRESS_HOST` | Bind address; default `0.0.0.0` if unset (all IPv4 interfaces). |
 | `RUNTIME_TCP_METER_INGRESS_PORT` | **Required** when ingress is enabled: TCP port 1–65535. |
 | `RUNTIME_TCP_METER_INGRESS_SOCKET_TIMEOUT_SECONDS` | Idle timeout for **passive** preview sockets (default `120`). Active DLMS sessions clear the per-socket idle timer at start. |
-| `INTERNAL_API_TOKEN` | Reserved for future authenticated internal ingest/API hooks (not required for ingress status today). |
+| `INTERNAL_API_TOKEN` | Bearer token for **`POST /api/runtime/ingress/start-session`** (staged mode). Not required for **`GET .../ingress/status`**. |
+| `RUNTIME_TCP_METER_INGRESS_SESSION_MODE` | `auto_associate_on_accept` (default) or `staged_triggered_session` — see protocol handoff; staged did not change post-AARQ outcome in VPS tests. |
 | `RUNTIME_INGRESS_LAST_SESSION_TRACE_PATH` | Optional filesystem path; last bounded session trace JSON is written at session end (mode `600`). Protect this path on the VPS — it contains raw frame hex. |
 
 ## Environment variables — inbound DLMS session (vendor profile)
@@ -111,6 +121,6 @@ Includes heuristic classes (`hdlc_candidate`, `dlms_not_verified`, …) and, whe
 
 ## Next implementation steps
 
-- Stronger COSEM/APDU parsing (invoke-id–aware GET-Response, segmentation, RR/RNR).
-- Internal reading ingest (persistence) behind `INTERNAL_API_TOKEN` or a dedicated worker boundary.
-- IEC optical/serial wake parameters for non-TCP media when applicable.
+- **Primary:** Follow **[protocol-runtime-handoff.md](protocol-runtime-handoff.md)** — freeze ingress micro-tweaks; introduce a **sidecar** (Python / MVP-AMI-class) for on-wire sessions; keep Next.js as control plane and API envelope.
+- **Ingress (optional):** retain listener + status routes for **diagnostics** only unless field topology mandates inbound TCP and a gateway is proven compatible.
+- **Later (post–sidecar):** stronger COSEM parsing, segmentation, RR/RNR, and ingest persistence — owned by the protocol runtime or shared libraries, not duplicated in the ingress experiment path.
