@@ -32,6 +32,13 @@ function formatReadingsProxyFailure(parsed: unknown, status: number): string {
   if (parsed && typeof parsed === "object") {
     const p = parsed as Record<string, unknown>
     const msg = typeof p.message === "string" ? p.message : ""
+    const errTag = typeof p.error === "string" ? p.error : ""
+    if (typeof p.hint === "string" && p.hint.trim()) {
+      return [errTag || `HTTP ${status}`, p.hint].filter(Boolean).join(": ")
+    }
+    if (typeof p.downstreamUrl === "string" && p.downstreamUrl.trim()) {
+      return [errTag || `HTTP ${status}`, p.downstreamUrl, msg].filter(Boolean).join(" — ")
+    }
     const py = p.pythonDetail
     if (Array.isArray(py)) {
       const bits = py

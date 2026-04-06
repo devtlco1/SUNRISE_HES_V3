@@ -26,12 +26,15 @@ export class PythonSidecarNotConfiguredError extends Error {
 export class PythonSidecarHttpError extends Error {
   readonly status: number
   readonly bodyText: string
+  /** Request URL when the sidecar returned non-2xx (operator diagnostics). */
+  readonly requestUrl?: string
 
-  constructor(status: number, bodyText: string) {
+  constructor(status: number, bodyText: string, requestUrl?: string) {
     super(`Python sidecar HTTP ${status}: ${bodyText.slice(0, 500)}`)
     this.name = "PythonSidecarHttpError"
     this.status = status
     this.bodyText = bodyText
+    this.requestUrl = requestUrl
   }
 }
 
@@ -63,7 +66,7 @@ export async function postReadIdentityToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -103,7 +106,7 @@ export async function getTcpListenerStatusFromSidecar(): Promise<TcpListenerStat
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -144,7 +147,7 @@ export async function postTcpListenerReadIdentityToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -185,7 +188,7 @@ export async function postTcpListenerReadBasicRegistersToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -226,7 +229,7 @@ export async function postTcpListenerReadObisSelectionToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -267,7 +270,7 @@ export async function postReadBasicRegistersToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -308,7 +311,7 @@ export async function postReadObisSelectionToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -349,7 +352,7 @@ export async function postDiscoverSupportedObisToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -387,7 +390,7 @@ export async function getLatestDiscoverySnapshotFromSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -441,7 +444,7 @@ export async function listDiscoverySnapshotsFromSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -514,7 +517,7 @@ export async function postReadIdentityJobToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -555,7 +558,7 @@ export async function postReadBasicRegistersJobToPythonSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
@@ -593,7 +596,7 @@ export async function getPythonReadJobFromSidecar(
   })
   const text = await res.text()
   if (!res.ok) {
-    throw new PythonSidecarHttpError(res.status, text)
+    throw new PythonSidecarHttpError(res.status, text, url)
   }
 
   let json: unknown
