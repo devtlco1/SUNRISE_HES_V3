@@ -40,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python sidecar
+apps/runtime-python/.venv/
+apps/runtime-python/**/__pycache__/
+apps/runtime-python/**/*.pyc
