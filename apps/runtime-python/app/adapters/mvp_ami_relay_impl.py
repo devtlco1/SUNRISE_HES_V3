@@ -33,6 +33,35 @@ def _iso_z(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
+def _association_state_on_failure(
+    association_attempted: bool,
+    association_succeeded: bool,
+) -> str:
+    """DLMS association reached; method/read failed afterward => still 'associated'."""
+    if association_succeeded:
+        return "associated"
+    if association_attempted:
+        return "failed"
+    return "none"
+
+
+def _classify_relay_cosem_method_detail(detail: Optional[str]) -> tuple[str, str]:
+    """
+    Classify Gurux disconnect-control method failure.
+    Returns (error_code, concise_detail_for_message).
+    """
+    d = (detail or "").strip()
+    if d.startswith("setup:"):
+        return "RELAY_METHOD_SETUP_FAILED", d[6:].strip() or "(no detail)"
+    if d == "method_no_packets":
+        return "RELAY_METHOD_SETUP_FAILED", "no request packets from Gurux"
+    if d == "method_deadline":
+        return "RELAY_METHOD_INVOKE_FAILED", "response deadline exceeded"
+    if d.startswith("dlms_error_"):
+        return "RELAY_METHOD_INVOKE_FAILED", d
+    return "RELAY_METHOD_FAILED", d or "unknown"
+
+
 def _relay_fail(
     *,
     meter_id: str,
@@ -44,6 +73,7 @@ def _relay_fail(
     details: Optional[dict] = None,
     transport_attempted: bool = False,
     association_attempted: bool = False,
+    association_succeeded: bool = False,
     verified: bool = False,
 ) -> RuntimeResponseEnvelope:
     duration_ms = max(1, int((finished - started).total_seconds() * 1000))
@@ -57,7 +87,7 @@ def _relay_fail(
         durationMs=duration_ms,
         message=message,
         transportState="disconnected",
-        associationState="failed" if association_attempted else "none",
+        associationState=_association_state_on_failure(association_attempted, association_succeeded),  # type: ignore[arg-type]
         payload=None,
         error=RuntimeErrorInfo(code=code, message=message, details=details),
         diagnostics=RuntimeExecutionDiagnostics(
@@ -145,33 +175,34 @@ def _state_and_raw_from_meter_result(result: Any, ln: str) -> Tuple[str, str]:
     return st, raw
 
 
-def _method_packets(client: Any, obj: Any, method_index: int) -> Any:
-    try:
-        return client.method(obj, method_index)
-    except Exception:  # noqa: BLE001 — try LNParameters variant per Gurux version
-        pass
-    from gurux_dlms.GXDLMSLNParameters import GXDLMSLNParameters
-    from gurux_dlms.enums.DataType import DataType
+def _disconnect_control_method_packets(gx: Any, dc: Any, method_index: int) -> Any:
+    """
+    Gurux disconnect-control methods must use the official helpers: they call
+    GXDLMSClient.method(item, index, data, type_) with (INT8, 0), not a hand-built
+    GXDLMSLNParameters (whose constructor is version-specific: settings + status byte).
+    """
+    if method_index == 1:
+        return dc.remoteDisconnect(gx)
+    if method_index == 2:
+        return dc.remoteReconnect(gx)
+    raise ValueError(f"disconnect_control supports methods 1..2, got {method_index}")
 
-    p = GXDLMSLNParameters(False, obj, method_index, int(DataType.NONE), None, int(DataType.NONE))
-    return client.method(p)
 
-
-def _gurux_invoke_method(
+def _gurux_invoke_disconnect_control_method(
     mc: Any,
     transport: Any,
     gx: Any,
-    obj: Any,
+    dc: Any,
     method_index: int,
 ) -> Tuple[bool, Optional[str]]:
     from gurux_dlms.GXByteBuffer import GXByteBuffer
     from gurux_dlms.GXReplyData import GXReplyData
 
     try:
-        packets = _method_packets(gx, obj, method_index)
+        packets = _disconnect_control_method_packets(gx, dc, method_index)
     except Exception as exc:  # noqa: BLE001
-        log.warning("relay_method_packets_failed", extra={"error": str(exc)})
-        return False, f"method_setup:{exc}"
+        log.warning("relay_disconnect_control_method_packets_failed", extra={"error": str(exc)})
+        return False, f"setup:{exc}"
 
     if packets is None:
         return False, "method_no_packets"
@@ -591,7 +622,9 @@ def _relay_method_direct(
                     transport_attempted=True,
                     association_attempted=True,
                 )
-            ok_m, em = _gurux_invoke_method(client, transport, gx, dc_obj, method_index)
+            ok_m, em = _gurux_invoke_disconnect_control_method(
+                client, transport, gx, dc_obj, method_index
+            )
             if gx is not None:
                 try:
                     client._try_gurux_disconnect(transport, gx)
@@ -599,16 +632,18 @@ def _relay_method_direct(
                     pass
             finished = datetime.now(timezone.utc)
             if not ok_m:
+                err_code, detail_txt = _classify_relay_cosem_method_detail(em)
                 return _relay_fail(
                     meter_id=request.meterId,
                     operation=operation,
                     started=started,
                     finished=finished,
-                    message=f"Relay COSEM method failed: {em}",
-                    code="RELAY_METHOD_FAILED",
+                    message=f"Relay COSEM method failed: {detail_txt}",
+                    code=err_code,
                     details={"method": method_index, "detail": em, "tcpEndpoint": endpoint},
                     transport_attempted=True,
                     association_attempted=True,
+                    association_succeeded=True,
                     verified=False,
                 )
         else:
@@ -627,7 +662,9 @@ def _relay_method_direct(
                     transport_attempted=True,
                     association_attempted=True,
                 )
-            ok_m, em = _gurux_invoke_method(client, ser, gx, dc_obj, method_index)
+            ok_m, em = _gurux_invoke_disconnect_control_method(
+                client, ser, gx, dc_obj, method_index
+            )
             if gx is not None:
                 try:
                     client._try_gurux_disconnect(ser, gx)
@@ -639,16 +676,18 @@ def _relay_method_direct(
                 pass
             finished = datetime.now(timezone.utc)
             if not ok_m:
+                err_code, detail_txt = _classify_relay_cosem_method_detail(em)
                 return _relay_fail(
                     meter_id=request.meterId,
                     operation=operation,
                     started=started,
                     finished=finished,
-                    message=f"Relay COSEM method failed: {em}",
-                    code="RELAY_METHOD_FAILED",
+                    message=f"Relay COSEM method failed: {detail_txt}",
+                    code=err_code,
                     details={"method": method_index, "detail": em},
                     transport_attempted=True,
                     association_attempted=True,
+                    association_succeeded=True,
                     verified=False,
                 )
 
@@ -747,7 +786,9 @@ def _relay_method_inbound(
             transport_attempted=True,
             association_attempted=True,
         )
-    ok_m, em = _gurux_invoke_method(client, transport, gx, dc_obj, method_index)
+    ok_m, em = _gurux_invoke_disconnect_control_method(
+        client, transport, gx, dc_obj, method_index
+    )
     if gx is not None:
         try:
             client._try_gurux_disconnect(transport, gx)
@@ -755,13 +796,14 @@ def _relay_method_inbound(
             pass
     finished = datetime.now(timezone.utc)
     if not ok_m:
+        err_code, detail_txt = _classify_relay_cosem_method_detail(em)
         return _relay_fail(
             meter_id=request.meterId,
             operation=operation,
             started=started,
             finished=finished,
-            message=f"Inbound relay COSEM method failed: {em}",
-            code="RELAY_METHOD_FAILED",
+            message=f"Inbound relay COSEM method failed: {detail_txt}",
+            code=err_code,
             details={
                 "method": method_index,
                 "detail": em,
@@ -770,6 +812,7 @@ def _relay_method_inbound(
             },
             transport_attempted=True,
             association_attempted=True,
+            association_succeeded=True,
             verified=False,
         )
 
