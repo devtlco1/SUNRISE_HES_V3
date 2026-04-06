@@ -1,3 +1,5 @@
+import type { AlarmSeverity } from "@/types/alarm"
+
 export type DashboardStat = {
   label: string
   value: string
@@ -11,10 +13,17 @@ export type ActivityItem = {
   tone: "neutral" | "success" | "warning"
 }
 
-export type LatestCommandRow = {
+/** Compact row for the dashboard alarm digest table. */
+export type RecentAlarmDigestRow = {
   id: string
-  command: string
+  alarmType: string
   meterSerial: string
-  status: "success" | "pending" | "failed" | "neutral"
-  submittedAt: string
+  severity: AlarmSeverity
+  lastSeen: string
+}
+
+export type DashboardSnapshot = {
+  stats: DashboardStat[]
+  activity: ActivityItem[]
+  recentAlarms: RecentAlarmDigestRow[]
 }

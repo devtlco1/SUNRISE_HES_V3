@@ -1,0 +1,57 @@
+import { readFile } from "fs/promises"
+import path from "path"
+
+import { buildDashboardSnapshot } from "@/lib/dashboard/summary"
+import { normalizeAlarmRows } from "@/lib/alarms/normalize"
+import { normalizeConnectivityRows } from "@/lib/connectivity/normalize"
+import { normalizeMeterRows } from "@/lib/meters/normalize"
+import { NextResponse } from "next/server"
+
+async function readCatalogArray(filename: string): Promise<unknown[]> {
+  const filePath = path.join(process.cwd(), "data", filename)
+  const text = await readFile(filePath, "utf-8")
+  const parsed: unknown = JSON.parse(text)
+  if (!Array.isArray(parsed)) {
+    throw new Error(`INVALID_DASHBOARD_${filename}`)
+  }
+  return parsed
+}
+
+function assertNormalized<T>(
+  raw: unknown[],
+  normalized: T[],
+  label: string
+): void {
+  if (raw.length > 0 && normalized.length === 0) {
+    throw new Error(`INVALID_DASHBOARD_${label}`)
+  }
+}
+
+export async function GET() {
+  try {
+    const [metersRaw, connectivityRaw, alarmsRaw] = await Promise.all([
+      readCatalogArray("meters.json"),
+      readCatalogArray("connectivity.json"),
+      readCatalogArray("alarms.json"),
+    ])
+
+    const meters = normalizeMeterRows(metersRaw)
+    const connectivity = normalizeConnectivityRows(connectivityRaw)
+    const alarms = normalizeAlarmRows(alarmsRaw)
+
+    assertNormalized(metersRaw, meters, "METERS")
+    assertNormalized(connectivityRaw, connectivity, "CONNECTIVITY")
+    assertNormalized(alarmsRaw, alarms, "ALARMS")
+
+    const snapshot = buildDashboardSnapshot(meters, connectivity, alarms)
+
+    return NextResponse.json(snapshot, {
+      headers: { "Cache-Control": "no-store" },
+    })
+  } catch {
+    return NextResponse.json(
+      { error: "DASHBOARD_LOAD_FAILED" },
+      { status: 500 }
+    )
+  }
+}
