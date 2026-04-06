@@ -7,6 +7,7 @@ import type {
   IdentityPayload,
   ReadObisSelectionPayload,
   ReadObisSelectionRequest,
+  RelayControlPayload,
   RuntimeResponseEnvelope,
 } from "@/types/runtime"
 
@@ -18,6 +19,8 @@ export type TcpListenerStatus = Record<string, unknown>
 export type ReadingsApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number }
+
+export type ReadingsTransportMode = "inbound" | "direct"
 
 async function parseJson(res: Response): Promise<unknown> {
   const text = await res.text()
@@ -52,6 +55,9 @@ function formatReadingsProxyFailure(parsed: unknown, status: number): string {
     }
     if (typeof p.bodyPreview === "string" && p.bodyPreview.trim()) {
       return [msg, p.bodyPreview.slice(0, 500)].filter(Boolean).join(" — ")
+    }
+    if (typeof p.body === "string" && p.body.trim()) {
+      return [errTag || `HTTP ${status}`, p.body.slice(0, 500)].filter(Boolean).join(" — ")
     }
     if (typeof p.error === "string") return [p.error, msg].filter(Boolean).join(": ") || p.error
   }
@@ -282,4 +288,64 @@ export async function postTcpListenerReadBasicRegisters(
     if (e instanceof Error && e.name === "AbortError") throw e
     return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
   }
+}
+
+async function postRelayReadings(
+  transport: ReadingsTransportMode,
+  subpath: "relay-read-status" | "relay-disconnect" | "relay-reconnect",
+  meterId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<RelayControlPayload>>> {
+  const base =
+    transport === "inbound"
+      ? "/api/readings/tcp-listener"
+      : "/api/readings/runtime"
+  try {
+    const res = await fetch(`${base}/${subpath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meterId }),
+      cache: "no-store",
+      signal,
+    })
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
+    }
+    return {
+      ok: true,
+      data: parsed as RuntimeResponseEnvelope<RelayControlPayload>,
+    }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postRelayReadStatusReadings(
+  transport: ReadingsTransportMode,
+  meterId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<RelayControlPayload>>> {
+  return postRelayReadings(transport, "relay-read-status", meterId, signal)
+}
+
+export async function postRelayDisconnectReadings(
+  transport: ReadingsTransportMode,
+  meterId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<RelayControlPayload>>> {
+  return postRelayReadings(transport, "relay-disconnect", meterId, signal)
+}
+
+export async function postRelayReconnectReadings(
+  transport: ReadingsTransportMode,
+  meterId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<RelayControlPayload>>> {
+  return postRelayReadings(transport, "relay-reconnect", meterId, signal)
 }

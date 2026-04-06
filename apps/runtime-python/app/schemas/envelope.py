@@ -25,6 +25,7 @@ RuntimeOperation = Literal[
     "readBasicRegisters",
     "readObisSelection",
     "discoverSupportedObis",
+    "relayReadStatus",
     "relayDisconnect",
     "relayReconnect",
 ]
@@ -105,6 +106,27 @@ class ObisSelectionRowResult(BaseModel):
 
 class ReadObisSelectionPayload(BaseModel):
     rows: List[ObisSelectionRowResult]
+
+
+RelayStateNormalized = Literal["on", "off", "unknown"]
+
+
+class RelayControlPayload(BaseModel):
+    """Disconnect-control / service switch posture (normalized for operator UI)."""
+
+    relayState: RelayStateNormalized = "unknown"
+    rawDisplay: Optional[str] = Field(
+        default=None,
+        description="Raw on-wire display string or repr from the last read/method when available.",
+    )
+    logicalName: Optional[str] = Field(
+        default=None,
+        description="COSEM logical name used (disconnect control LN by default).",
+    )
+    methodExecuted: Optional[int] = Field(
+        default=None,
+        description="When set, a COSEM method was invoked (e.g. 1=remote disconnect, 2=remote reconnect).",
+    )
 
 
 class DiscoveredObjectRow(BaseModel):
@@ -198,6 +220,7 @@ class RuntimeResponseEnvelope(BaseModel):
             BasicRegistersPayload,
             ReadObisSelectionPayload,
             DiscoverSupportedObisPayload,
+            RelayControlPayload,
         ]
     ] = None
     error: Optional[RuntimeErrorInfo] = None

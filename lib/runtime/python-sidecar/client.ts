@@ -6,6 +6,7 @@ import type {
   IdentityPayload,
   ReadObisSelectionPayload,
   ReadObisSelectionRequest,
+  RelayControlPayload,
   RuntimeResponseEnvelope,
 } from "@/types/runtime"
 
@@ -607,4 +608,86 @@ export async function getPythonReadJobFromSidecar(
   }
 
   return json as PythonReadJobGetResponse
+}
+
+async function postRelayEnvelopeToPythonSidecar(
+  path: string,
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<RelayControlPayload>> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text, url)
+  }
+  let json: unknown
+  try {
+    json = JSON.parse(text) as RuntimeResponseEnvelope<RelayControlPayload>
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+  return json as RuntimeResponseEnvelope<RelayControlPayload>
+}
+
+/** Direct (serial / outbound TCP client) relay status read. */
+export async function postRelayReadStatusToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<RelayControlPayload>> {
+  return postRelayEnvelopeToPythonSidecar("/v1/runtime/relay-read-status", body)
+}
+
+export async function postRelayDisconnectToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<RelayControlPayload>> {
+  return postRelayEnvelopeToPythonSidecar("/v1/runtime/relay-disconnect", body)
+}
+
+export async function postRelayReconnectToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<RelayControlPayload>> {
+  return postRelayEnvelopeToPythonSidecar("/v1/runtime/relay-reconnect", body)
+}
+
+/** Inbound staged modem socket — relay (pops/closes socket like read-identity). */
+export async function postTcpListenerRelayReadStatusToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<RelayControlPayload>> {
+  return postRelayEnvelopeToPythonSidecar(
+    "/v1/runtime/tcp-listener/relay-read-status",
+    body
+  )
+}
+
+export async function postTcpListenerRelayDisconnectToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<RelayControlPayload>> {
+  return postRelayEnvelopeToPythonSidecar(
+    "/v1/runtime/tcp-listener/relay-disconnect",
+    body
+  )
+}
+
+export async function postTcpListenerRelayReconnectToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<RelayControlPayload>> {
+  return postRelayEnvelopeToPythonSidecar(
+    "/v1/runtime/tcp-listener/relay-reconnect",
+    body
+  )
 }

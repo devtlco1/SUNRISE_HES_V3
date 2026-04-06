@@ -25,6 +25,7 @@ export type RuntimeOperation =
   | "readBasicRegisters"
   | "readObisSelection"
   | "discoverSupportedObis"
+  | "relayReadStatus"
   | "relayDisconnect"
   | "relayReconnect"
 
@@ -302,4 +303,14 @@ export interface RelaySimulatedPayload {
    */
   simulatedRelayState: "disconnected" | "connected" | "unknown"
   acceptanceNote: string
+}
+
+/** Python sidecar / MVP-AMI disconnect-control relay payload (normalized UI state). */
+export type RelayUiState = "on" | "off" | "unknown"
+
+export interface RelayControlPayload {
+  relayState: RelayUiState
+  rawDisplay?: string
+  logicalName?: string
+  methodExecuted?: number
 }

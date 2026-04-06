@@ -16,6 +16,9 @@ from app.services.discover_supported_obis import execute_discover_supported_obis
 from app.services.read_basic_registers import execute_read_basic_registers
 from app.services.read_identity import execute_read_identity
 from app.services.read_obis_selection import execute_read_obis_selection
+from app.services.relay_disconnect import execute_relay_disconnect
+from app.services.relay_read_status import execute_relay_read_status
+from app.services.relay_reconnect import execute_relay_reconnect
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/runtime", tags=["runtime-v1"])
@@ -82,3 +85,33 @@ def post_read_obis_selection(body: ReadObisSelectionRequest) -> JSONResponse:
 def post_discover_supported_obis(body: DiscoverSupportedObisRequest) -> RuntimeResponseEnvelope:
     log.info("http_discover_supported_obis", extra={"meter_id": body.meterId})
     return execute_discover_supported_obis(body)
+
+
+@router.post(
+    "/relay-read-status",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_relay_read_status(body: ReadIdentityRequest) -> JSONResponse:
+    log.info("http_relay_read_status", extra={"meter_id": body.meterId})
+    envelope = execute_relay_read_status(body)
+    return JSONResponse(content=envelope.model_dump(mode="json"))
+
+
+@router.post(
+    "/relay-disconnect",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_relay_disconnect(body: ReadIdentityRequest) -> JSONResponse:
+    log.info("http_relay_disconnect", extra={"meter_id": body.meterId})
+    envelope = execute_relay_disconnect(body)
+    return JSONResponse(content=envelope.model_dump(mode="json"))
+
+
+@router.post(
+    "/relay-reconnect",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_relay_reconnect(body: ReadIdentityRequest) -> JSONResponse:
+    log.info("http_relay_reconnect", extra={"meter_id": body.meterId})
+    envelope = execute_relay_reconnect(body)
+    return JSONResponse(content=envelope.model_dump(mode="json"))

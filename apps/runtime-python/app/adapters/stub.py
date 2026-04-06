@@ -13,6 +13,7 @@ from app.schemas.envelope import (
     IdentityPayload,
     ObisSelectionRowResult,
     ReadObisSelectionPayload,
+    RelayControlPayload,
     RuntimeExecutionDiagnostics,
     RuntimeResponseEnvelope,
 )
@@ -171,6 +172,70 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
             associationState="none",
             payload=ReadObisSelectionPayload(rows=rows),
             diagnostics=diagnostics,
+        )
+
+    def _relay_stub(
+        self,
+        request: ReadIdentityRequest,
+        *,
+        operation: str,
+        relay_state: str,
+        detail: str,
+    ) -> RuntimeResponseEnvelope:
+        started = datetime.now(timezone.utc)
+        finished = datetime.now(timezone.utc)
+        duration_ms = int((finished - started).total_seconds() * 1000) or 1
+        payload = RelayControlPayload(
+            relayState=relay_state,  # type: ignore[arg-type]
+            rawDisplay="stub",
+            logicalName="0.0.96.3.10.255",
+            methodExecuted=1 if operation == "relayDisconnect" else (2 if operation == "relayReconnect" else None),
+        )
+        diagnostics = RuntimeExecutionDiagnostics(
+            outcome="simulated_success",
+            capabilityStage="relay_control",
+            transportAttempted=False,
+            associationAttempted=False,
+            verifiedOnWire=False,
+            detailCode=detail,
+        )
+        return RuntimeResponseEnvelope(
+            ok=True,
+            simulated=True,
+            operation=operation,  # type: ignore[arg-type]
+            meterId=request.meterId,
+            startedAt=started.isoformat().replace("+00:00", "Z"),
+            finishedAt=finished.isoformat().replace("+00:00", "Z"),
+            durationMs=duration_ms,
+            message="Python stub: no meter I/O.",
+            transportState="disconnected",
+            associationState="none",
+            payload=payload,
+            diagnostics=diagnostics,
+        )
+
+    def relay_read_status(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        return self._relay_stub(
+            request,
+            operation="relayReadStatus",
+            relay_state="unknown",
+            detail="PYTHON_STUB_RELAY_READ_STATUS",
+        )
+
+    def relay_disconnect(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        return self._relay_stub(
+            request,
+            operation="relayDisconnect",
+            relay_state="off",
+            detail="PYTHON_STUB_RELAY_DISCONNECT",
+        )
+
+    def relay_reconnect(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        return self._relay_stub(
+            request,
+            operation="relayReconnect",
+            relay_state="on",
+            detail="PYTHON_STUB_RELAY_RECONNECT",
         )
 
     def discover_supported_obis(self, request: DiscoverSupportedObisRequest) -> RuntimeResponseEnvelope:

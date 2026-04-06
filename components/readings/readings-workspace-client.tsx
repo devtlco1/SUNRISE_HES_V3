@@ -20,6 +20,9 @@ import {
   fetchTcpListenerStatus,
   postReadObisSelectionDirect,
   postReadObisSelectionTcpListener,
+  postRelayDisconnectReadings,
+  postRelayReadStatusReadings,
+  postRelayReconnectReadings,
   READINGS_FETCH_NETWORK_ERROR,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
@@ -31,7 +34,13 @@ import { mergeObisSelectionIntoRowState, type ObisRowReadState } from "@/lib/obi
 import { obisSelectionRowSupportedV1Catalog } from "@/lib/obis/obis-selection-v1-client"
 import { packLabel, type ObisCatalogEntry } from "@/lib/obis/types"
 import type { MeterListRow } from "@/types/meter"
-import type { ObisSelectionItemInput, ReadObisSelectionPayload, RuntimeResponseEnvelope } from "@/types/runtime"
+import type {
+  ObisSelectionItemInput,
+  ReadObisSelectionPayload,
+  RelayControlPayload,
+  RelayUiState,
+  RuntimeResponseEnvelope,
+} from "@/types/runtime"
 import { cn } from "@/lib/utils"
 
 const POLL_MS = 6000
@@ -74,7 +83,11 @@ export function ReadingsWorkspaceClient() {
   const [statusError, setStatusError] = useState<string | null>(null)
 
   const [busy, setBusy] = useState(false)
+  const [relayBusy, setRelayBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [relayError, setRelayError] = useState<string | null>(null)
+  const [relayState, setRelayState] = useState<RelayUiState>("unknown")
+  const [lastRelayPayload, setLastRelayPayload] = useState<RelayControlPayload | null>(null)
   const [lastEnv, setLastEnv] = useState<RuntimeResponseEnvelope<
     ReadObisSelectionPayload
   > | null>(null)
@@ -181,14 +194,25 @@ export function ReadingsWorkspaceClient() {
     ? boolish(listenerStatus.listenerEnabled)
     : false
 
+  const sessionLocked = busy || relayBusy
+
   const canInboundRead =
     transport === "inbound" &&
     stagedPresent &&
     !triggerInProgress &&
-    !busy &&
+    !sessionLocked &&
     !statusLoading
 
-  const canDirectRead = transport === "direct" && !busy
+  const canDirectRead = transport === "direct" && !sessionLocked
+  const canRelayInbound =
+    transport === "inbound" &&
+    stagedPresent &&
+    !triggerInProgress &&
+    !sessionLocked &&
+    !statusLoading &&
+    listenerEnabled
+  const canRelayDirect = transport === "direct" && !sessionLocked && Boolean(meterId.trim())
+  const canRelayAction = canRelayInbound || canRelayDirect
 
   function toggleObis(obis: string) {
     setSelected((s) => {
@@ -269,6 +293,99 @@ export function ReadingsWorkspaceClient() {
     const items = v1SupportedRowsInPack.map(catalogEntryToSelectionItem)
     await executeReadObisSelection(items)
   }
+
+  async function refreshRelayStatusAfterCommand() {
+    const mid = meterId.trim() || "unknown-meter"
+    const r = await postRelayReadStatusReadings(transport, mid)
+    if (r.ok && r.data.payload?.relayState) {
+      setRelayState(r.data.payload.relayState)
+      setLastRelayPayload(r.data.payload)
+    }
+  }
+
+  async function onRelayReadStatus() {
+    setRelayError(null)
+    const mid = meterId.trim() || "unknown-meter"
+    setRelayBusy(true)
+    try {
+      const r = await postRelayReadStatusReadings(transport, mid)
+      if (!r.ok) {
+        setRelayError(r.error)
+        return
+      }
+      const env = r.data
+      const p = env.payload
+      if (p?.relayState) setRelayState(p.relayState)
+      setLastRelayPayload(p ?? null)
+      if (!env.ok) {
+        setRelayError(env.error?.message ?? env.message ?? "Relay status failed")
+      }
+    } finally {
+      setRelayBusy(false)
+      if (transport === "inbound") {
+        await loadStatus()
+      }
+    }
+  }
+
+  async function onRelayOff() {
+    setRelayError(null)
+    const mid = meterId.trim() || "unknown-meter"
+    setRelayBusy(true)
+    try {
+      const r = await postRelayDisconnectReadings(transport, mid)
+      if (!r.ok) {
+        setRelayError(r.error)
+        return
+      }
+      const env = r.data
+      setLastRelayPayload(env.payload ?? null)
+      if (!env.ok) {
+        setRelayError(env.error?.message ?? env.message ?? "Relay OFF failed")
+        return
+      }
+      setRelayState("off")
+      await refreshRelayStatusAfterCommand()
+    } finally {
+      setRelayBusy(false)
+      if (transport === "inbound") {
+        await loadStatus()
+      }
+    }
+  }
+
+  async function onRelayOn() {
+    setRelayError(null)
+    const mid = meterId.trim() || "unknown-meter"
+    setRelayBusy(true)
+    try {
+      const r = await postRelayReconnectReadings(transport, mid)
+      if (!r.ok) {
+        setRelayError(r.error)
+        return
+      }
+      const env = r.data
+      setLastRelayPayload(env.payload ?? null)
+      if (!env.ok) {
+        setRelayError(env.error?.message ?? env.message ?? "Relay ON failed")
+        return
+      }
+      setRelayState("on")
+      await refreshRelayStatusAfterCommand()
+    } finally {
+      setRelayBusy(false)
+      if (transport === "inbound") {
+        await loadStatus()
+      }
+    }
+  }
+
+  const relayBadge =
+    relayState === "on"
+      ? { label: "ON", variant: "success" as const }
+      : relayState === "off"
+        ? { label: "OFF", variant: "neutral" as const }
+        : { label: "Unknown", variant: "warning" as const }
 
   const triggerRecord =
     listenerStatus?.lastTcpListenerTrigger &&
@@ -360,6 +477,55 @@ export function ReadingsWorkspaceClient() {
               </select>
             </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs">
+            <span className="font-medium text-muted-foreground">Relay</span>
+            <StatusBadge variant={relayBadge.variant}>{relayBadge.label}</StatusBadge>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {meterId.trim() || "—"}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              disabled={!canRelayAction}
+              onClick={() => void onRelayReadStatus()}
+            >
+              Read status
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-8"
+              disabled={!canRelayAction}
+              onClick={() => void onRelayOff()}
+            >
+              OFF
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-8"
+              disabled={!canRelayAction}
+              onClick={() => void onRelayOn()}
+            >
+              ON
+            </Button>
+            {relayBusy ? (
+              <span className="text-muted-foreground">Working…</span>
+            ) : null}
+            {lastRelayPayload?.logicalName ? (
+              <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">
+                {lastRelayPayload.logicalName}
+              </span>
+            ) : null}
+          </div>
+          {relayError ? (
+            <p className="text-xs text-destructive">{relayError}</p>
+          ) : null}
 
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border bg-muted/10 px-3 py-2 text-xs">
             <span className="font-medium text-muted-foreground">Listener</span>

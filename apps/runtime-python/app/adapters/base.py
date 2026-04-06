@@ -27,3 +27,15 @@ class ProtocolRuntimeAdapter(ABC):
     @abstractmethod
     def discover_supported_obis(self, request: DiscoverSupportedObisRequest) -> RuntimeResponseEnvelope:
         raise NotImplementedError
+
+    @abstractmethod
+    def relay_read_status(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        raise NotImplementedError
+
+    @abstractmethod
+    def relay_disconnect(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        raise NotImplementedError
+
+    @abstractmethod
+    def relay_reconnect(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        raise NotImplementedError

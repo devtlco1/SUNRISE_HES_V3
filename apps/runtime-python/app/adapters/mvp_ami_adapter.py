@@ -1867,3 +1867,48 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             detail_code=disc_detail,
             capability_stage="object_discovery",
         )
+
+    def relay_read_status(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        from app.adapters.mvp_ami_relay_impl import relay_read_status as _impl
+
+        return _impl(request)
+
+    def relay_disconnect(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        from app.adapters.mvp_ami_relay_impl import relay_disconnect as _impl
+
+        return _impl(request)
+
+    def relay_reconnect(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        from app.adapters.mvp_ami_relay_impl import relay_reconnect as _impl
+
+        return _impl(request)
+
+    def relay_read_status_on_accepted_tcp_socket(
+        self,
+        request: ReadIdentityRequest,
+        sock: socket.socket,
+        remote_endpoint: str,
+    ) -> RuntimeResponseEnvelope:
+        from app.adapters.mvp_ami_relay_impl import relay_read_status_inbound as _impl
+
+        return _impl(request, sock, remote_endpoint)
+
+    def relay_disconnect_on_accepted_tcp_socket(
+        self,
+        request: ReadIdentityRequest,
+        sock: socket.socket,
+        remote_endpoint: str,
+    ) -> RuntimeResponseEnvelope:
+        from app.adapters.mvp_ami_relay_impl import relay_disconnect_inbound as _impl
+
+        return _impl(request, sock, remote_endpoint)
+
+    def relay_reconnect_on_accepted_tcp_socket(
+        self,
+        request: ReadIdentityRequest,
+        sock: socket.socket,
+        remote_endpoint: str,
+    ) -> RuntimeResponseEnvelope:
+        from app.adapters.mvp_ami_relay_impl import relay_reconnect_inbound as _impl
+
+        return _impl(request, sock, remote_endpoint)

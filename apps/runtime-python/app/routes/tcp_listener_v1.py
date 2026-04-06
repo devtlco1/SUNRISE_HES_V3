@@ -20,6 +20,11 @@ from app.services.tcp_listener_read_identity import execute_tcp_listener_read_id
 from app.services.tcp_listener_read_obis_selection import (
     execute_tcp_listener_read_obis_selection,
 )
+from app.services.tcp_listener_relay import (
+    execute_tcp_listener_relay_disconnect,
+    execute_tcp_listener_relay_read_status,
+    execute_tcp_listener_relay_reconnect,
+)
 from app.tcp_listener.staged_modem_listener import get_tcp_modem_listener
 
 log = logging.getLogger(__name__)
@@ -83,4 +88,34 @@ def post_tcp_listener_read_obis_selection(
     )
     envelope = execute_tcp_listener_read_obis_selection(body)
     # Avoid FastAPI response_model Union validation issues on payload variants.
+    return JSONResponse(content=envelope.model_dump(mode="json"))
+
+
+@router.post(
+    "/relay-read-status",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_relay_read_status(body: ReadIdentityRequest) -> JSONResponse:
+    log.info("http_tcp_listener_relay_read_status", extra={"meter_id": body.meterId})
+    envelope = execute_tcp_listener_relay_read_status(body)
+    return JSONResponse(content=envelope.model_dump(mode="json"))
+
+
+@router.post(
+    "/relay-disconnect",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_relay_disconnect(body: ReadIdentityRequest) -> JSONResponse:
+    log.info("http_tcp_listener_relay_disconnect", extra={"meter_id": body.meterId})
+    envelope = execute_tcp_listener_relay_disconnect(body)
+    return JSONResponse(content=envelope.model_dump(mode="json"))
+
+
+@router.post(
+    "/relay-reconnect",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_relay_reconnect(body: ReadIdentityRequest) -> JSONResponse:
+    log.info("http_tcp_listener_relay_reconnect", extra={"meter_id": body.meterId})
+    envelope = execute_tcp_listener_relay_reconnect(body)
     return JSONResponse(content=envelope.model_dump(mode="json"))
