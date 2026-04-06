@@ -1,0 +1,39 @@
+{
+  "simulatorVersion": "1",
+  "profile": {
+    "manufacturer": "SimulatedMeterWorks",
+    "model": "HES-RUNTIME-STUB-v1",
+    "firmwareVersion": "0.0.0-simulator",
+    "protocolVersion": "DLMS/COSEM (placeholder — not live on wire)",
+    "serialNumberTemplate": "SIM-{meterId}",
+    "logicalDeviceNameTemplate": "LDN-SIM-{meterId}",
+    "protocolStackHint": "HDLC/COSEM (simulated stack — no socket)",
+    "associationLevel": "LN (simulated)",
+    "securitySuite": "None (simulated)",
+    "lastKnownClockUtc": "2026-04-06T12:00:00.000Z",
+    "connectivityPlaceholder": "reachable_simulated",
+    "latencyMsSimulatedBase": 18,
+    "basicRegisters": {
+      "1-0:1.7.0.255": { "value": "2.441", "unit": "kW", "quality": "good_simulated" },
+      "1-0:1.8.0.255": { "value": "18432.7", "unit": "kWh", "quality": "good_simulated" },
+      "1-0:32.7.0.255": { "value": "229.8", "unit": "V", "quality": "good_simulated" }
+    },
+    "defaultRelaySimulatedState": "connected"
+  },
+  "meterOverrides": {
+    "hes-mt-10021": {
+      "serialNumber": "SN-448821",
+      "manufacturer": "Elster",
+      "model": "AS3000",
+      "firmwareVersion": "4.12.8",
+      "lastKnownClockUtc": "2026-04-06T08:40:00.000Z"
+    },
+    "hes-mt-10022": {
+      "serialNumber": "SN-102933",
+      "manufacturer": "Landis+Gyr",
+      "model": "E650",
+      "firmwareVersion": "5.2.1",
+      "lastKnownClockUtc": "2026-04-06T08:35:00.000Z"
+    }
+  }
+}
