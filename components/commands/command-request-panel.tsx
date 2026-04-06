@@ -30,7 +30,7 @@ const scopeOptions: { id: TargetScope; label: string; hint: string }[] = [
   {
     id: "group",
     label: "Group / route",
-    hint: "Placeholder — cohort dispatch",
+    hint: "Cohort dispatch (placeholder)",
   },
 ]
 
@@ -63,7 +63,7 @@ export function CommandRequestPanel({ onQueued }: CommandRequestPanelProps) {
   return (
     <SectionCard
       title="New command request"
-      description="Compose a batch request — submission is UI-only; no execution or queue integration."
+      description="Draft a batch command. Submit logs a reference in the UI only; execution and queues are not connected."
     >
       <div className="space-y-5">
         <fieldset className="space-y-2">
@@ -141,7 +141,7 @@ export function CommandRequestPanel({ onQueued }: CommandRequestPanelProps) {
             id="cmd-note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Operational context for the request log…"
+            placeholder="Reason or ticket reference for the request log…"
             rows={3}
             className={cn(
               "w-full resize-y rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none",
@@ -153,7 +153,7 @@ export function CommandRequestPanel({ onQueued }: CommandRequestPanelProps) {
 
         <FilterSelect
           id="cmd-priority"
-          label="Priority (placeholder)"
+          label="Priority"
           value={priority}
           onChange={setPriority}
           options={[

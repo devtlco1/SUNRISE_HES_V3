@@ -19,6 +19,12 @@ import {
   formatPhaseTypeLong,
   formatRelayStatus,
 } from "@/lib/meters/format"
+import {
+  operationalSheetBodyScroll,
+  operationalSheetContentNarrow,
+  operationalSheetHeader,
+  operationalSheetHeaderPlaceholder,
+} from "@/lib/ui/operational"
 import type { MeterListRow } from "@/types/meter"
 
 type MeterDetailsSheetProps = {
@@ -41,19 +47,19 @@ export function MeterDetailsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md md:max-w-lg"
+        className={operationalSheetContentNarrow}
         showCloseButton
       >
         {meter ? (
           <>
-            <SheetHeader className="border-b border-border px-5 py-4 text-left">
-              <SheetTitle className="text-base">Meter details</SheetTitle>
-              <SheetDescription className="text-sm">
+            <SheetHeader className={operationalSheetHeader}>
+              <SheetTitle>Meter details</SheetTitle>
+              <SheetDescription>
                 {meter.serialNumber} · {meter.customerName}
               </SheetDescription>
             </SheetHeader>
 
-            <div className="flex flex-col gap-5 px-5 py-4">
+            <div className={operationalSheetBodyScroll}>
               <DetailBlock title="Identity">
                 <DlGrid
                   items={[
@@ -153,9 +159,9 @@ export function MeterDetailsSheet({
             </div>
           </>
         ) : (
-          <SheetHeader className="px-5 py-4 text-left">
+          <SheetHeader className={operationalSheetHeaderPlaceholder}>
             <SheetTitle>Meter details</SheetTitle>
-            <SheetDescription>Select a meter to inspect.</SheetDescription>
+            <SheetDescription>Select a meter row to inspect.</SheetDescription>
           </SheetHeader>
         )}
       </SheetContent>

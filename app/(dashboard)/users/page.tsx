@@ -7,7 +7,7 @@ export default function UsersPage() {
     <div className="space-y-6">
       <PageHeader
         title="Users"
-        subtitle="Operator and admin directory — roles, scopes, and status are mock-only until identity is integrated."
+        subtitle="Console operators and administrators. Roles, scopes, and sign-in state are illustrative until identity is integrated."
         actions={
           <>
             <Button type="button" size="sm" variant="outline" disabled>

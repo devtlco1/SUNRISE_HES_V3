@@ -10,6 +10,7 @@ import { TableShell } from "@/components/data-table/table-shell"
 import { TableToolbar } from "@/components/data-table/table-toolbar"
 import { FilterBar } from "@/components/shared/filter-bar"
 import { FilterSelect } from "@/components/shared/filter-select"
+import { OperationalActionStrip } from "@/components/shared/operational-action-strip"
 import { SectionCard } from "@/components/shared/section-card"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { UserDetailsSheet } from "@/components/users/user-details-sheet"
@@ -32,6 +33,12 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { mockUserListRows } from "@/lib/mock/users"
+import {
+  operationalListPageStackClass,
+  operationalMonoIdTriggerClass,
+  operationalRowActionTriggerClass,
+} from "@/lib/ui/operational"
+import { cn } from "@/lib/utils"
 import { formatUserRole, formatUserStatus } from "@/lib/users/format"
 import type { UserListRow } from "@/types/user"
 
@@ -41,14 +48,14 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 function UsersTableHeaderRow() {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead className="min-w-[160px] bg-muted/25">User</TableHead>
-      <TableHead className="min-w-[200px] bg-muted/25">Email / Username</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">Role</TableHead>
-      <TableHead className="min-w-[200px] bg-muted/25">Team / Scope</TableHead>
-      <TableHead className="w-[104px] bg-muted/25">Status</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">Last Active</TableHead>
-      <TableHead className="w-[104px] bg-muted/25">Created</TableHead>
-      <TableHead className="w-[72px] bg-muted/25 text-right">Actions</TableHead>
+      <TableHead className="min-w-[160px]">User</TableHead>
+      <TableHead className="min-w-[200px]">Email / Username</TableHead>
+      <TableHead className="w-[120px]">Role</TableHead>
+      <TableHead className="min-w-[200px]">Team / Scope</TableHead>
+      <TableHead className="w-[104px]">Status</TableHead>
+      <TableHead className="w-[120px]">Last Active</TableHead>
+      <TableHead className="w-[104px]">Created</TableHead>
+      <TableHead className="w-[72px] text-right">Actions</TableHead>
     </TableRow>
   )
 }
@@ -159,35 +166,30 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
   const noResults = !emptyCatalog && filtered.length === 0
 
   return (
-    <>
-      <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Directory
-        </span>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" disabled>
-            Add user
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled>
-            Invite user
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled>
-            Disable selected
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={clearFilters}
-            disabled={!filtersActive}
-          >
-            Clear filters
-          </Button>
-          <Button type="button" size="sm" variant="secondary" disabled>
-            Export
-          </Button>
-        </div>
-      </div>
+    <div className={operationalListPageStackClass}>
+      <OperationalActionStrip label="Directory">
+        <Button type="button" size="sm" disabled>
+          Add user
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled>
+          Invite user
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled>
+          Disable selected
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={clearFilters}
+          disabled={!filtersActive}
+        >
+          Clear filters
+        </Button>
+        <Button type="button" size="sm" variant="secondary" disabled>
+          Export
+        </Button>
+      </OperationalActionStrip>
 
       <FilterBar>
         <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -262,7 +264,7 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
 
       <SectionCard
         title="Operator directory"
-        description="HES console accounts — mock data only; no identity provider attached."
+        description="Console accounts with role, scope, and status. Directory data is mock until identity is integrated."
       >
         <TableShell>
           <TableToolbar
@@ -274,7 +276,7 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
                 />
                 <Input
                   className="h-8 pl-8"
-                  placeholder="Search name, email, username, team, scope…"
+                  placeholder="Search name, email, username, team, assigned scope…"
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value)
@@ -327,7 +329,10 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
                             <button
                               type="button"
                               onClick={() => openDetails(row)}
-                              className="font-mono text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                              className={cn(
+                                operationalMonoIdTriggerClass,
+                                "text-xs text-muted-foreground hover:text-foreground"
+                              )}
                             >
                               {row.id}
                             </button>
@@ -365,7 +370,7 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
                           <TableCell className="align-top text-right">
                             <DropdownMenu>
                               <DropdownMenuTrigger
-                                className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                className={operationalRowActionTriggerClass}
                                 aria-label={`Actions for ${row.username}`}
                               >
                                 <MoreHorizontalIcon className="size-4" />
@@ -408,14 +413,14 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
           {!loading && emptyCatalog ? (
             <TableEmpty
               title="No users in directory"
-              description="Provision accounts to populate this list. Pass an empty rows prop to verify this state."
+              description="Provisioned accounts will appear here. Use an empty rows prop to verify this layout."
             />
           ) : null}
 
           {!loading && noResults ? (
             <TableEmpty
               title="No users match filters"
-              description="Clear filters or broaden role and team criteria."
+              description="Clear filters or widen role, team, and scope criteria."
               action={
                 <Button
                   type="button"
@@ -449,6 +454,6 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
         open={sheetOpen}
         onOpenChange={onSheetOpenChange}
       />
-    </>
+    </div>
   )
 }

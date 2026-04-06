@@ -33,6 +33,11 @@ import {
 } from "@/components/ui/table"
 import { mockMeterListRows } from "@/lib/mock/meters"
 import {
+  operationalListPageStackClass,
+  operationalMonoIdTriggerClass,
+  operationalRowActionTriggerClass,
+} from "@/lib/ui/operational"
+import {
   formatAlarmState,
   formatCommStatus,
   formatPhaseType,
@@ -46,20 +51,20 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 function MeterTableHeaderRow() {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead className="w-[200px] bg-muted/25">Meter</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">Serial No.</TableHead>
-      <TableHead className="min-w-[200px] bg-muted/25">
+      <TableHead className="w-[200px]">Meter</TableHead>
+      <TableHead className="w-[120px]">Serial No.</TableHead>
+      <TableHead className="min-w-[200px]">
         Location / Feeder
       </TableHead>
-      <TableHead className="min-w-[160px] bg-muted/25">
+      <TableHead className="min-w-[160px]">
         Manufacturer / Model
       </TableHead>
-      <TableHead className="w-[110px] bg-muted/25">Comm</TableHead>
-      <TableHead className="w-[110px] bg-muted/25">Relay</TableHead>
-      <TableHead className="w-[128px] bg-muted/25">Last reading</TableHead>
-      <TableHead className="w-[128px] bg-muted/25">Last comm</TableHead>
-      <TableHead className="w-[100px] bg-muted/25">Alarm</TableHead>
-      <TableHead className="w-[72px] bg-muted/25 text-right">Actions</TableHead>
+      <TableHead className="w-[110px]">Comm</TableHead>
+      <TableHead className="w-[110px]">Relay</TableHead>
+      <TableHead className="w-[128px]">Last reading</TableHead>
+      <TableHead className="w-[128px]">Last comm</TableHead>
+      <TableHead className="w-[100px]">Alarm</TableHead>
+      <TableHead className="w-[72px] text-right">Actions</TableHead>
     </TableRow>
   )
 }
@@ -170,7 +175,7 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
   const noResults = !emptyCatalog && filtered.length === 0
 
   return (
-    <>
+    <div className={operationalListPageStackClass}>
       <FilterBar>
         <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="grid w-full gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -248,7 +253,7 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
 
       <SectionCard
         title="Meter registry"
-        description="Operational list layout — filters and pagination are client-side mock only."
+        description="Installed meters with comm, relay, and alarm context. Filters and pagination run client-side on mock data."
       >
         <TableShell>
           <TableToolbar
@@ -260,7 +265,7 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
                 />
                 <Input
                   className="h-8 pl-8"
-                  placeholder="Search ID, serial, customer, feeder, zone…"
+                  placeholder="Search meter ID, serial, customer, feeder, zone…"
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value)
@@ -307,11 +312,11 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
                       const alarm = formatAlarmState(row.alarmState)
                       return (
                         <TableRow key={row.id}>
-                          <TableCell className="align-top font-medium">
+                          <TableCell className="align-top">
                             <button
                               type="button"
                               onClick={() => openDetails(row)}
-                              className="text-left font-medium text-foreground underline-offset-4 hover:underline"
+                              className={operationalMonoIdTriggerClass}
                             >
                               {row.id}
                             </button>
@@ -360,7 +365,7 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
                           <TableCell className="align-top text-right">
                             <DropdownMenu>
                               <DropdownMenuTrigger
-                                className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                className={operationalRowActionTriggerClass}
                                 aria-label={`Actions for ${row.serialNumber}`}
                               >
                                 <MoreHorizontalIcon className="size-4" />
@@ -402,14 +407,14 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
           {!loading && emptyCatalog ? (
             <TableEmpty
               title="No meters in registry"
-              description="Import or register meters to populate this list. Swap mock data to an empty array to verify this state during development."
+              description="Registered meters will appear here. Use an empty rows prop to verify this layout."
             />
           ) : null}
 
           {!loading && noResults ? (
             <TableEmpty
-              title="No meters match the current filters"
-              description="Try clearing search text or widening filter criteria."
+              title="No meters match filters"
+              description="Clear search or widen comm, relay, and alarm filters."
               action={
                 <Button
                   type="button"
@@ -443,6 +448,6 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
         open={sheetOpen}
         onOpenChange={onSheetOpenChange}
       />
-    </>
+    </div>
   )
 }

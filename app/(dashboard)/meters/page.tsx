@@ -7,14 +7,14 @@ export default function MetersPage() {
     <div className="space-y-6">
       <PageHeader
         title="Meters"
-        subtitle="Fleet registry with communication, relay, and alarm context — mock data and client-side filters only."
+        subtitle="Installed meter registry with communication, relay, and alarm context. Data is mock; filters run client-side only."
         actions={
           <>
-            <Button type="button" size="sm" variant="outline">
-              Export
+            <Button type="button" size="sm" variant="outline" disabled>
+              Export (mock)
             </Button>
-            <Button type="button" size="sm">
-              Add meter
+            <Button type="button" size="sm" disabled>
+              Add meter (mock)
             </Button>
           </>
         }

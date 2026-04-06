@@ -7,7 +7,7 @@ export default function AlarmsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Alarms"
-        subtitle="Monitor, filter, and triage fleet alarms — mock feed only; no realtime or backend integration."
+        subtitle="Review and triage alarms by severity, state, and ownership. The feed is mock; there is no realtime pipeline in this build."
         actions={
           <>
             <Button type="button" size="sm" variant="outline" disabled>

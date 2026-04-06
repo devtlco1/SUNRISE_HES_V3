@@ -33,7 +33,7 @@ export function CommandJobDetailContent({ job }: CommandJobDetailContentProps) {
     return (
       <EmptyState
         title="No job selected"
-        description="Choose a row in Recent command jobs to inspect the request, queue state, and per-meter outcomes."
+        description="Select a row in Recent command jobs to review the request, queue state, and per-meter outcomes."
         icon={<ListTreeIcon className="size-5" aria-hidden />}
         className="border-0 bg-transparent py-10"
       />
@@ -45,8 +45,9 @@ export function CommandJobDetailContent({ job }: CommandJobDetailContentProps) {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-dashed border-border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
-        One command request can target many meters. Each meter is tracked
-        independently below — outcomes often differ within the same batch.
+        A single request may target many meters. Each row below reflects that
+        meter&apos;s outcome; mixed success and failure in one batch is
+        expected.
       </div>
 
       <DetailBlock title="Job identity">
@@ -125,15 +126,11 @@ export function CommandJobDetailContent({ job }: CommandJobDetailContentProps) {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="bg-muted/25">Meter ID</TableHead>
-                <TableHead className="bg-muted/25">Serial</TableHead>
-                <TableHead className="bg-muted/25">State</TableHead>
-                <TableHead className="min-w-[200px] bg-muted/25">
-                  Response summary
-                </TableHead>
-                <TableHead className="bg-muted/25 text-right">
-                  Updated
-                </TableHead>
+                <TableHead>Meter ID</TableHead>
+                <TableHead>Serial</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead className="min-w-[200px]">Response summary</TableHead>
+                <TableHead className="text-right">Updated</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

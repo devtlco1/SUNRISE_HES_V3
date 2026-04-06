@@ -7,11 +7,11 @@ export default function ConnectivityPage() {
     <div className="space-y-6">
       <PageHeader
         title="Connectivity"
-        subtitle="Live-style monitoring of routes, gateways, and session health — mock data and client-side filters only."
+        subtitle="Route and session posture by meter. Values are mock; there is no live polling in this build."
         actions={
           <>
-            <Button type="button" size="sm" variant="outline">
-              Export
+            <Button type="button" size="sm" variant="outline" disabled>
+              Export (mock)
             </Button>
             <Button type="button" size="sm" variant="secondary" disabled>
               Run poll (mock)

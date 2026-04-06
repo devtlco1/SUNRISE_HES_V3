@@ -51,7 +51,7 @@ export default function DashboardHomePage() {
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        subtitle="Operational snapshot of the fleet — mock data for layout validation only."
+        subtitle="Fleet snapshot for console review. Figures and events are illustrative until integrations are attached."
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -68,7 +68,7 @@ export default function DashboardHomePage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <SectionCard
           title="Recent activity"
-          description="Latest operational events (illustrative)."
+          description="Cross-cutting events across meters, connectivity, and commands (illustrative)."
         >
           <ul className="divide-y divide-border rounded-md border border-border">
             {mockRecentActivity.map((item) => (
@@ -98,12 +98,12 @@ export default function DashboardHomePage() {
 
         <SectionCard
           title="Latest commands"
-          description="Recent command submissions — same table chrome as list pages."
+          description="Recent submissions using the same table chrome as the Commands workspace."
         >
           <TableShell>
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="hover:bg-transparent">
                   <TableHead>Command</TableHead>
                   <TableHead>Meter</TableHead>
                   <TableHead>Status</TableHead>

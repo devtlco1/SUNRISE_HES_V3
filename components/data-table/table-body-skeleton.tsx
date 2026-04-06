@@ -16,7 +16,7 @@ export function TableBodySkeleton({
       {Array.from({ length: rows }).map((_, ri) => (
         <tr key={ri} className="border-b border-border">
           {Array.from({ length: columns }).map((_, ci) => (
-            <td key={ci} className="p-2 align-middle">
+            <td key={ci} className="px-3 py-2.5 align-middle">
               <div
                 className="h-4 max-w-full animate-pulse rounded-md bg-muted"
                 style={{ width: ci === 0 ? "70%" : ci === columns - 1 ? "40%" : "85%" }}

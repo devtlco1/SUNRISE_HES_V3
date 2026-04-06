@@ -2,6 +2,11 @@
 
 import { CommandJobDetailContent } from "@/components/commands/command-job-detail-content"
 import {
+  operationalSheetBodyScroll,
+  operationalSheetContentWide,
+  operationalSheetHeader,
+} from "@/lib/ui/operational"
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -25,16 +30,16 @@ export function CommandJobDetailsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md md:max-w-xl lg:max-w-2xl"
+        className={operationalSheetContentWide}
         showCloseButton
       >
-        <SheetHeader className="border-b border-border px-5 py-4 text-left">
-          <SheetTitle className="text-base">Command job</SheetTitle>
-          <SheetDescription className="text-sm">
-            {job ? job.id : "No job loaded"}
+        <SheetHeader className={operationalSheetHeader}>
+          <SheetTitle>Command job</SheetTitle>
+          <SheetDescription>
+            {job ? job.id : "Select a job to inspect"}
           </SheetDescription>
         </SheetHeader>
-        <div className="px-5 py-4">
+        <div className={operationalSheetBodyScroll}>
           <CommandJobDetailContent job={job} />
         </div>
       </SheetContent>

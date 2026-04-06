@@ -7,7 +7,7 @@ export default function CommandsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Commands"
-        subtitle="Compose batch requests, review job history, and drill into per-meter outcomes — mock workflow only; no execution or queues."
+        subtitle="Draft batch requests, review job history, and inspect per-meter outcomes. Workflow is mock; execution and queues are not connected."
         actions={
           <>
             <Button type="button" size="sm" variant="outline" disabled>

@@ -13,7 +13,7 @@ export function FilterBar({ children, className }: FilterBarProps) {
   return (
     <div
       className={cn(
-        "flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-muted/25 px-3 py-2",
+        "flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-muted/25 px-3 py-2.5",
         className
       )}
     >

@@ -14,6 +14,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { formatUserRole, formatUserStatus } from "@/lib/users/format"
+import {
+  operationalSheetBodyScroll,
+  operationalSheetContentNarrow,
+  operationalSheetHeader,
+  operationalSheetHeaderPlaceholder,
+} from "@/lib/ui/operational"
 import type { UserListRow } from "@/types/user"
 
 type UserDetailsSheetProps = {
@@ -34,19 +40,19 @@ export function UserDetailsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md md:max-w-lg"
+        className={operationalSheetContentNarrow}
         showCloseButton
       >
         {user ? (
           <>
-            <SheetHeader className="border-b border-border px-5 py-4 text-left">
-              <SheetTitle className="text-base">User details</SheetTitle>
-              <SheetDescription className="text-sm">
+            <SheetHeader className={operationalSheetHeader}>
+              <SheetTitle>User details</SheetTitle>
+              <SheetDescription>
                 {user.fullName} · {user.email}
               </SheetDescription>
             </SheetHeader>
 
-            <div className="flex flex-col gap-5 px-5 py-4">
+            <div className={operationalSheetBodyScroll}>
               <DetailBlock title="Identity">
                 <DlGrid
                   items={[
@@ -85,7 +91,8 @@ export function UserDetailsSheet({
 
               <DetailBlock title="Activity summary">
                 <p className="text-sm text-muted-foreground">
-                  Last sign-in and command activity will aggregate here (mock).
+                  Recent sign-in and command activity will aggregate here once
+                  telemetry is attached.
                 </p>
                 <DlGrid
                   items={[
@@ -135,17 +142,17 @@ export function UserDetailsSheet({
 
               <DetailBlock title="Permissions (placeholder)">
                 <p className="text-sm text-muted-foreground">
-                  Fine-grained permissions and policy groups will display here
-                  after identity integration. Role above is the coarse HES
+                  Fine-grained entitlements and policy groups will appear after
+                  identity integration. The role above is the coarse HES
                   mapping.
                 </p>
               </DetailBlock>
             </div>
           </>
         ) : (
-          <SheetHeader className="px-5 py-4 text-left">
+          <SheetHeader className={operationalSheetHeaderPlaceholder}>
             <SheetTitle>User details</SheetTitle>
-            <SheetDescription>Select a user to inspect.</SheetDescription>
+            <SheetDescription>Select a user row to inspect.</SheetDescription>
           </SheetHeader>
         )}
       </SheetContent>

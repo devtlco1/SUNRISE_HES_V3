@@ -15,6 +15,12 @@ import {
 } from "@/components/ui/sheet"
 import { formatHealthState } from "@/lib/connectivity/format"
 import { formatCommStatus } from "@/lib/meters/format"
+import {
+  operationalSheetBodyScroll,
+  operationalSheetContentNarrow,
+  operationalSheetHeader,
+  operationalSheetHeaderPlaceholder,
+} from "@/lib/ui/operational"
 import type { ConnectivityListRow } from "@/types/connectivity"
 
 type ConnectivityDetailsSheetProps = {
@@ -36,19 +42,19 @@ export function ConnectivityDetailsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md md:max-w-lg"
+        className={operationalSheetContentNarrow}
         showCloseButton
       >
         {row ? (
           <>
-            <SheetHeader className="border-b border-border px-5 py-4 text-left">
-              <SheetTitle className="text-base">Connectivity details</SheetTitle>
-              <SheetDescription className="text-sm">
+            <SheetHeader className={operationalSheetHeader}>
+              <SheetTitle>Connectivity details</SheetTitle>
+              <SheetDescription>
                 {row.serialNumber} · {row.networkType}
               </SheetDescription>
             </SheetHeader>
 
-            <div className="flex flex-col gap-5 px-5 py-4">
+            <div className={operationalSheetBodyScroll}>
               <DetailBlock title="Identity">
                 <DlGrid
                   items={[
@@ -116,8 +122,8 @@ export function ConnectivityDetailsSheet({
 
               <DetailBlock title="Health / retry">
                 <p className="text-sm text-foreground">
-                  Session health is derived from poll success, ACK latency, and
-                  retry budget (illustrative).
+                  Session health summarizes poll success, acknowledgement
+                  latency, and retry budget (illustrative).
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {health ? (
@@ -149,9 +155,9 @@ export function ConnectivityDetailsSheet({
             </div>
           </>
         ) : (
-          <SheetHeader className="px-5 py-4 text-left">
+          <SheetHeader className={operationalSheetHeaderPlaceholder}>
             <SheetTitle>Connectivity details</SheetTitle>
-            <SheetDescription>Select an endpoint to inspect.</SheetDescription>
+            <SheetDescription>Select an endpoint row to inspect.</SheetDescription>
           </SheetHeader>
         )}
       </SheetContent>

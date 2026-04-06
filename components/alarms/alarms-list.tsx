@@ -11,6 +11,7 @@ import { TableShell } from "@/components/data-table/table-shell"
 import { TableToolbar } from "@/components/data-table/table-toolbar"
 import { FilterBar } from "@/components/shared/filter-bar"
 import { FilterSelect } from "@/components/shared/filter-select"
+import { OperationalActionStrip } from "@/components/shared/operational-action-strip"
 import { SectionCard } from "@/components/shared/section-card"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
@@ -36,6 +37,11 @@ import {
   formatAlarmSeverity,
   formatAlarmState,
 } from "@/lib/alarms/format"
+import {
+  operationalListPageStackClass,
+  operationalMonoIdTriggerClass,
+  operationalRowActionTriggerClass,
+} from "@/lib/ui/operational"
 import { mockAlarmListRows } from "@/lib/mock/alarms"
 import type { AlarmListRow } from "@/types/alarm"
 
@@ -46,17 +52,17 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 function AlarmsTableHeaderRow() {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead className="w-[120px] bg-muted/25">Alarm</TableHead>
-      <TableHead className="min-w-[140px] bg-muted/25">Meter / Serial</TableHead>
-      <TableHead className="min-w-[200px] bg-muted/25">Location / Feeder</TableHead>
-      <TableHead className="min-w-[140px] bg-muted/25">Type</TableHead>
-      <TableHead className="w-[92px] bg-muted/25">Severity</TableHead>
-      <TableHead className="w-[112px] bg-muted/25">State</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">First Seen</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">Last Seen</TableHead>
-      <TableHead className="w-[72px] bg-muted/25 text-right">Count</TableHead>
-      <TableHead className="w-[130px] bg-muted/25">Acknowledgement</TableHead>
-      <TableHead className="w-[72px] bg-muted/25 text-right">Actions</TableHead>
+      <TableHead className="w-[120px]">Alarm</TableHead>
+      <TableHead className="min-w-[140px]">Meter / Serial</TableHead>
+      <TableHead className="min-w-[200px]">Location / Feeder</TableHead>
+      <TableHead className="min-w-[140px]">Type</TableHead>
+      <TableHead className="w-[92px]">Severity</TableHead>
+      <TableHead className="w-[112px]">State</TableHead>
+      <TableHead className="w-[120px]">First Seen</TableHead>
+      <TableHead className="w-[120px]">Last Seen</TableHead>
+      <TableHead className="w-[72px] text-right">Count</TableHead>
+      <TableHead className="w-[130px]">Acknowledgement</TableHead>
+      <TableHead className="w-[72px] text-right">Actions</TableHead>
     </TableRow>
   )
 }
@@ -191,32 +197,27 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
   const noResults = !emptyCatalog && filtered.length === 0
 
   return (
-    <>
-      <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Triage
-        </span>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" disabled>
-            Acknowledge selected
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled>
-            Assign selected
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={clearFilters}
-            disabled={!filtersActive}
-          >
-            Clear filters
-          </Button>
-          <Button type="button" size="sm" variant="secondary" disabled>
-            Export
-          </Button>
-        </div>
-      </div>
+    <div className={operationalListPageStackClass}>
+      <OperationalActionStrip label="Triage">
+        <Button type="button" size="sm" disabled>
+          Acknowledge selected
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled>
+          Assign selected
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={clearFilters}
+          disabled={!filtersActive}
+        >
+          Clear filters
+        </Button>
+        <Button type="button" size="sm" variant="secondary" disabled>
+          Export
+        </Button>
+      </OperationalActionStrip>
 
       <FilterBar>
         <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -307,7 +308,7 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
 
       <SectionCard
         title="Active alarms"
-        description="Operational alarm feed — filters and triage actions are mock-only."
+        description="Alarm queue with filters and bulk triage. Data and actions are mock until the feed is connected."
       >
         <TableShell>
           <TableToolbar
@@ -370,7 +371,7 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
                             <button
                               type="button"
                               onClick={() => openDetails(row)}
-                              className="text-left font-mono text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                              className={operationalMonoIdTriggerClass}
                             >
                               {row.id}
                             </button>
@@ -415,7 +416,7 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
                           <TableCell className="align-top text-right">
                             <DropdownMenu>
                               <DropdownMenuTrigger
-                                className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                className={operationalRowActionTriggerClass}
                                 aria-label={`Actions for ${row.id}`}
                               >
                                 <MoreHorizontalIcon className="size-4" />
@@ -456,14 +457,14 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
           {!loading && emptyCatalog ? (
             <TableEmpty
               title="No active alarms"
-              description="When the alarm feed is connected, rows will use this layout. Pass an empty list to verify this state."
+              description="The connected feed will populate this table. Use an empty rows prop to verify this layout."
             />
           ) : null}
 
           {!loading && noResults ? (
             <TableEmpty
               title="No alarms match filters"
-              description="Clear filters or broaden severity and state criteria."
+              description="Clear filters or widen severity, state, and assignment criteria."
               action={
                 <Button
                   type="button"
@@ -497,6 +498,6 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
         open={sheetOpen}
         onOpenChange={onSheetOpenChange}
       />
-    </>
+    </div>
   )
 }

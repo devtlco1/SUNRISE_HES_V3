@@ -39,6 +39,10 @@ import {
   jobMatchesResultFilter,
 } from "@/lib/commands/format"
 import { mockCommandJobs } from "@/lib/mock/commands"
+import {
+  operationalMonoIdTriggerClass,
+  operationalRowActionTriggerClass,
+} from "@/lib/ui/operational"
 import type { CommandJobRow } from "@/types/command"
 
 const ALL = "all"
@@ -47,14 +51,14 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 function JobsTableHeaderRow() {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead className="w-[148px] bg-muted/25">Job</TableHead>
-      <TableHead className="min-w-[160px] bg-muted/25">Command</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">Scope / Targets</TableHead>
-      <TableHead className="min-w-[180px] bg-muted/25">Submitted By</TableHead>
-      <TableHead className="w-[128px] bg-muted/25">Submitted At</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">Queue State</TableHead>
-      <TableHead className="min-w-[140px] bg-muted/25">Result Summary</TableHead>
-      <TableHead className="w-[72px] bg-muted/25 text-right">Actions</TableHead>
+      <TableHead className="w-[148px]">Job</TableHead>
+      <TableHead className="min-w-[160px]">Command</TableHead>
+      <TableHead className="w-[120px]">Scope / Targets</TableHead>
+      <TableHead className="min-w-[180px]">Submitted By</TableHead>
+      <TableHead className="w-[128px]">Submitted At</TableHead>
+      <TableHead className="w-[120px]">Queue State</TableHead>
+      <TableHead className="min-w-[140px]">Result Summary</TableHead>
+      <TableHead className="w-[72px] text-right">Actions</TableHead>
     </TableRow>
   )
 }
@@ -191,7 +195,7 @@ export function CommandsWorkspace({
         <CommandRequestPanel
           onQueued={(ref) => {
             setQueueNotice(
-              `Request ${ref} recorded (mock). No queue or execution.`
+              `Request ${ref} logged in the UI only — no queue or execution.`
             )
             window.setTimeout(() => setQueueNotice(null), 8000)
           }}
@@ -283,7 +287,7 @@ export function CommandsWorkspace({
 
         <SectionCard
           title="Recent command jobs"
-          description="Batch requests with queue position and per-meter outcomes — mock history only."
+          description="Batch jobs with queue state and per-meter outcomes. History is mock until execution is integrated."
         >
           <TableShell>
             <TableToolbar
@@ -351,7 +355,7 @@ export function CommandsWorkspace({
                               <button
                                 type="button"
                                 onClick={() => selectJob(row)}
-                                className="text-left font-mono text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                                className={operationalMonoIdTriggerClass}
                               >
                                 {row.id}
                               </button>
@@ -382,7 +386,7 @@ export function CommandsWorkspace({
                             <TableCell className="align-top text-right">
                               <DropdownMenu>
                                 <DropdownMenuTrigger
-                                  className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                  className={operationalRowActionTriggerClass}
                                   aria-label={`Actions for ${row.id}`}
                                 >
                                   <MoreHorizontalIcon className="size-4" />
@@ -426,14 +430,14 @@ export function CommandsWorkspace({
             {!loading && emptyCatalog ? (
               <TableEmpty
                 title="No command jobs"
-                description="Submitted batches will appear here. Pass an empty jobs list to verify this state."
+                description="Submitted batches will list here. Use an empty jobs prop to verify this layout."
               />
             ) : null}
 
             {!loading && noResults ? (
               <TableEmpty
                 title="No jobs match filters"
-                description="Widen command type, queue, or result filters."
+                description="Clear filters or widen command type, queue, and outcome criteria."
                 action={
                   <Button
                     type="button"
@@ -464,7 +468,7 @@ export function CommandsWorkspace({
 
         <SectionCard
           title="Selected job — details & per-meter results"
-          description="Inspect one batch: queue summary and individual meter outcomes."
+          description="Queue summary and per-meter outcomes for the job selected in the table above."
         >
           <CommandJobDetailContent job={selectedJob} />
         </SectionCard>

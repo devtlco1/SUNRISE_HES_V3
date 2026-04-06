@@ -1,50 +1,74 @@
-# UI foundation — internal guidelines
+# UI foundation — HES operational dashboard
 
-This document captures Day-1 layout rules so pages stay consistent. Prefer editing shared primitives over one-off Tailwind on screens.
+Guidelines for layout, rhythm, and shared primitives. Prefer editing tokens in `lib/ui/operational.ts` and shared components over one-off Tailwind on screens.
 
-## Spacing rhythm
+## Page canvas
 
-- **Page canvas**: `space-y-6` between major vertical blocks inside the dashboard main area (shell provides `px-4 py-6` / `sm:px-6`).
-- **Section internals**: default `SectionCard` body uses `px-5 py-4`; keep nested components aligned to that padding rather than adding extra outer margins.
-- **Dense controls** (toolbar, filter bar): vertical padding around `py-2` / `py-2.5`; horizontal `px-3` for table chrome.
-- **Gaps**: use `gap-2` for control clusters, `gap-4` for stat grids, `gap-6` for two-column sections.
+- **Main column**: The shell provides horizontal padding (`px-4 py-6` / `sm:px-6`). Inside the route, stack major blocks with `space-y-6` (typically `PageHeader` then page body).
+- **List / filter pages**: Wrap the action strip (if any), `FilterBar`, and primary `SectionCard` in `operationalListPageStackClass` (`flex flex-col gap-4`) so spacing matches across Meters, Connectivity, Alarms, Users, and the Commands jobs column.
 
-## Page structure order
+## Page headers (`PageHeader`)
 
-1. `PageHeader` (title, optional subtitle, optional actions).
-2. `FilterBar` when the screen is primarily a list or filterable view.
-3. One or more `SectionCard` blocks wrapping primary content.
-4. Inside list sections: `TableShell` → `TableToolbar` → table or `TableEmpty` → `TablePagination`.
+- **Title**: `text-xl font-semibold tracking-tight`.
+- **Subtitle**: `text-sm` muted, relaxed line height, `text-pretty`, up to `max-w-3xl`. Operational, calm wording; state clearly when data is mock or disconnected.
+- **Actions**: `size="sm"` buttons, `gap-2`, right-aligned and wrapping on small viewports. Placeholder actions stay real `Button` components (often `disabled`) for consistent height and focus rings.
 
-## Card usage
+## Operational action strips (`OperationalActionStrip`)
 
-- **SectionCard**: default wrapper for page content blocks (titles, descriptions, primary actions in the header row).
-- **StatCard**: KPI tiles only; keep labels short and values tabular.
-- **TableShell**: list/table chrome only; do not nest arbitrary marketing-style cards inside it.
+- Use for compact bulk or directory chrome **above** the `FilterBar` (Alarms triage, Users directory).
+- Uppercase label (`text-xs font-semibold tracking-wide text-muted-foreground`) + `gap-2` control row; container matches `rounded-lg border border-border bg-muted/15 px-3 py-2.5` with responsive `sm:flex-row sm:items-center sm:justify-between`.
 
-## Table usage
+## Filters (`FilterBar`)
 
-- Always compose list UIs with `TableShell` + `TableToolbar` + shadcn `Table` + `TablePagination`.
-- Empty datasets: use `TableEmpty` (built on `EmptyState`) so empty and filled states share width and tone.
-- **Connectivity** is the **canonical** operational table: dense columns, `FilterBar` + toolbar search, row actions, details sheet, skeleton loading, pagination with rows-per-page, empty and no-match states. **Meters** follows the same pattern for registry-specific fields.
-- **Commands** adds a **workflow layout**: request panel + jobs table (same table chrome as Connectivity) + inline selected-job detail with per-meter results; use this when the screen is process-oriented, not list-only.
-- **Alarms** uses the **Connectivity-style** list + **compact triage strip** above filters (bulk actions disabled until selection logic exists); detail **sheet** matches other operational panels.
-- **Users** completes the shell: same table + filter + pagination pattern, **compact directory strip** (add / invite / bulk actions mock), and **user detail sheet** for identity and scope review.
-- Shared detail layout primitives: `DetailBlock` and `DlGrid` in `components/shared/entity-detail-blocks.tsx`.
+- Dashed border panel: `min-h-10`, `gap-2`, `px-3 py-2.5`, `bg-muted/25`.
+- Inner layout: `gap-3` grids for `FilterSelect` columns; optional outline **Clear filters** aligned to the end on large screens (same pattern as list pages).
+
+## Tables
+
+- **Composition**: `SectionCard` → `TableShell` → `TableToolbar` → `Table` (or skeleton / empty) → `TablePagination`.
+- **Toolbar**: `border-b`, `bg-muted/20`, `px-3 py-2.5`, search `Input` height `h-8`, icon offset `left-2.5`.
+- **Primitives** (`components/ui/table.tsx`): Header cells use `h-10`, `bg-muted/25`, `px-3`, `text-sm font-medium`. Body cells use `px-3 py-2.5`, `text-sm`. Do **not** repeat `bg-muted/25` on individual `TableHead` cells.
+- **Horizontal scroll**: Wrap wide tables in `relative min-w-0` + inner `min-w-[…px]` to keep pagination and shell aligned.
+- **Header row**: `TableRow className="hover:bg-transparent"` on operational tables.
+- **Actions column**: `DropdownMenuTrigger` uses `operationalRowActionTriggerClass` (8×8 kebab control).
+- **Technical IDs** (meter, alarm, job, user id as row links): `operationalMonoIdTriggerClass`; secondary-line IDs may add `cn(..., "text-xs text-muted-foreground hover:text-foreground")`.
+- **Pagination** (`TablePagination`): `border-t`, `px-3 py-2.5`, summary text `text-sm`, controls `size="sm"`.
+
+## Empty and loading states
+
+- **Empty / no results**: `TableEmpty` (shared width and tone with filled tables). Copy should be short, operational, and mention how to verify the state (e.g. empty props) where helpful.
+- **Loading**: `TableBodySkeleton` cell padding aligns with table body (`px-3 py-2.5`).
+
+## Detail sheets (right edge)
+
+- **Tokens** (`lib/ui/operational.ts`):
+  - `operationalSheetContentNarrow` — default entity inspection (`sm:max-w-md md:max-w-lg`).
+  - `operationalSheetContentWide` — nested tables (command job).
+  - `operationalSheetHeader` — bordered title block (`border-b`, `px-5 py-4`, `text-left`).
+  - `operationalSheetHeaderPlaceholder` — no selection (`px-5 py-4`, no border).
+  - `operationalSheetBodyScroll` — scrollable body (`flex flex-col gap-5 px-5 py-4`).
+- **Title / description**: Use default `SheetTitle` / `SheetDescription` (semibold title, muted description). Empty states: “Select a … row to inspect.”
+- **Body**: `DetailBlock` + `DlGrid` from `entity-detail-blocks.tsx`; `Separator` between sections. Keep badge clusters in `flex flex-wrap gap-2`.
+
+## Workflow pages (Commands)
+
+- **Layout**: Request panel in a narrow column; filters + jobs table + inline selected-job card in the wider column; `gap-6` between major blocks inside the grid.
+- **Queue notice**: Neutral bordered banner after mock submit; copy states UI-only logging.
 
 ## Badges
 
-- Use **StatusBadge** for operational states (online, pending, failed, etc.).
-- Map domain states to variants: `success`, `warning`, `danger`, `neutral`, `info`. Avoid raw `Badge` on operational screens unless there is a strong reason.
+- **StatusBadge** for operational states. Map domain enums to `success`, `warning`, `danger`, `neutral`, `info`. Avoid raw `Badge` on operational screens unless necessary.
 
-## Buttons
+## Buttons and disabled placeholders
 
-- Primary actions: `Button` default variant, `size="sm"` in headers and toolbars.
-- Secondary actions: `variant="outline"` or `variant="secondary"`; keep pairs aligned in `PageHeader` actions or toolbar right slot.
-- Disabled placeholders are acceptable in the foundation phase; still use real `Button` components for consistent height and focus rings.
+- Toolbars and strips: `size="sm"`. Mock-only header actions include `(mock)` in the label when enabled buttons would imply real side effects.
 
-## No ad-hoc per-page styling
+## Microcopy
 
-- Do not introduce new card borders, radii, or shadow styles on individual pages.
-- If a pattern repeats twice, extract it to `components/shared` or `components/data-table`.
-- Prefer design tokens (`border-border`, `bg-card`, `text-muted-foreground`) over raw hex or one-off grays.
+- Prefer clear, enterprise tone: what the screen is for, what is mock, what will connect later. Avoid consumer-style or flashy language.
+
+## No ad-hoc chrome
+
+- Do not introduce new card radii, shadows, or border styles per page.
+- If a pattern appears twice, move it to `components/shared`, `components/data-table`, or `lib/ui/operational.ts`.
+- Use design tokens (`border-border`, `bg-card`, `text-muted-foreground`) instead of raw grays.

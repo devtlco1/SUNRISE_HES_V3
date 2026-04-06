@@ -18,6 +18,12 @@ import {
   formatAlarmSeverity,
   formatAlarmState,
 } from "@/lib/alarms/format"
+import {
+  operationalSheetBodyScroll,
+  operationalSheetContentNarrow,
+  operationalSheetHeader,
+  operationalSheetHeaderPlaceholder,
+} from "@/lib/ui/operational"
 import type { AlarmListRow } from "@/types/alarm"
 
 type AlarmDetailsSheetProps = {
@@ -39,19 +45,19 @@ export function AlarmDetailsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md md:max-w-lg"
+        className={operationalSheetContentNarrow}
         showCloseButton
       >
         {alarm ? (
           <>
-            <SheetHeader className="border-b border-border px-5 py-4 text-left">
-              <SheetTitle className="text-base">Alarm details</SheetTitle>
-              <SheetDescription className="text-sm">
+            <SheetHeader className={operationalSheetHeader}>
+              <SheetTitle>Alarm details</SheetTitle>
+              <SheetDescription>
                 {alarm.id} · {alarm.serialNumber}
               </SheetDescription>
             </SheetHeader>
 
-            <div className="flex flex-col gap-5 px-5 py-4">
+            <div className={operationalSheetBodyScroll}>
               <DetailBlock title="Identity">
                 <DlGrid
                   items={[
@@ -165,17 +171,20 @@ export function AlarmDetailsSheet({
                     <span className="tabular-nums text-foreground">
                       {alarm.lastSeen}
                     </span>{" "}
-                    — Last occurrence recorded (mock)
+                    — Last occurrence (illustrative)
                   </li>
-                  <li>Correlation and audit trail will attach here.</li>
+                  <li>
+                    Correlation, acknowledgement history, and audit events will
+                    follow the live feed.
+                  </li>
                 </ul>
               </DetailBlock>
             </div>
           </>
         ) : (
-          <SheetHeader className="px-5 py-4 text-left">
+          <SheetHeader className={operationalSheetHeaderPlaceholder}>
             <SheetTitle>Alarm details</SheetTitle>
-            <SheetDescription>Select an alarm to inspect.</SheetDescription>
+            <SheetDescription>Select an alarm row to inspect.</SheetDescription>
           </SheetHeader>
         )}
       </SheetContent>

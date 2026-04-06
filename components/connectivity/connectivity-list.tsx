@@ -33,6 +33,11 @@ import {
 } from "@/components/ui/table"
 import { formatHealthState } from "@/lib/connectivity/format"
 import { mockConnectivityListRows } from "@/lib/mock/connectivity"
+import {
+  operationalListPageStackClass,
+  operationalMonoIdTriggerClass,
+  operationalRowActionTriggerClass,
+} from "@/lib/ui/operational"
 import { formatCommStatus } from "@/lib/meters/format"
 import type { ConnectivityListRow } from "@/types/connectivity"
 
@@ -42,16 +47,16 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 function ConnectivityTableHeaderRow() {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead className="w-[168px] bg-muted/25">Meter</TableHead>
-      <TableHead className="w-[120px] bg-muted/25">Serial No.</TableHead>
-      <TableHead className="min-w-[160px] bg-muted/25">Network / Route</TableHead>
-      <TableHead className="w-[104px] bg-muted/25">Comm Status</TableHead>
-      <TableHead className="w-[100px] bg-muted/25">Health</TableHead>
-      <TableHead className="w-[128px] bg-muted/25">Last Communication</TableHead>
-      <TableHead className="w-[128px] bg-muted/25">Last Successful Read</TableHead>
-      <TableHead className="min-w-[140px] bg-muted/25">Signal / Quality</TableHead>
-      <TableHead className="min-w-[180px] bg-muted/25">Endpoint / Gateway</TableHead>
-      <TableHead className="w-[72px] bg-muted/25 text-right">Actions</TableHead>
+      <TableHead className="w-[168px]">Meter</TableHead>
+      <TableHead className="w-[120px]">Serial No.</TableHead>
+      <TableHead className="min-w-[160px]">Network / Route</TableHead>
+      <TableHead className="w-[104px]">Comm Status</TableHead>
+      <TableHead className="w-[100px]">Health</TableHead>
+      <TableHead className="w-[128px]">Last Communication</TableHead>
+      <TableHead className="w-[128px]">Last Successful Read</TableHead>
+      <TableHead className="min-w-[140px]">Signal / Quality</TableHead>
+      <TableHead className="min-w-[180px]">Endpoint / Gateway</TableHead>
+      <TableHead className="w-[72px] text-right">Actions</TableHead>
     </TableRow>
   )
 }
@@ -172,7 +177,7 @@ export function ConnectivityList({
   const noResults = !emptyCatalog && filtered.length === 0
 
   return (
-    <>
+    <div className={operationalListPageStackClass}>
       <FilterBar>
         <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="grid w-full gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -245,7 +250,7 @@ export function ConnectivityList({
 
       <SectionCard
         title="Communication endpoints"
-        description="Canonical operational table pattern — mock telemetry and routes only."
+        description="Per-meter routes, gateways, and session posture. Values are mock telemetry for layout review."
       >
         <TableShell>
           <TableToolbar
@@ -307,7 +312,7 @@ export function ConnectivityList({
                             <button
                               type="button"
                               onClick={() => openDetails(row)}
-                              className="text-left font-medium text-foreground underline-offset-4 hover:underline"
+                              className={operationalMonoIdTriggerClass}
                             >
                               {row.id}
                             </button>
@@ -353,7 +358,7 @@ export function ConnectivityList({
                           <TableCell className="align-top text-right">
                             <DropdownMenu>
                               <DropdownMenuTrigger
-                                className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                className={operationalRowActionTriggerClass}
                                 aria-label={`Actions for ${row.serialNumber}`}
                               >
                                 <MoreHorizontalIcon className="size-4" />
@@ -395,14 +400,14 @@ export function ConnectivityList({
           {!loading && emptyCatalog ? (
             <TableEmpty
               title="No connectivity endpoints"
-              description="When meters register communication paths, they will appear here. Pass an empty rows prop to verify this state."
+              description="Registered communication paths will list here. Use an empty rows prop to verify this layout."
             />
           ) : null}
 
           {!loading && noResults ? (
             <TableEmpty
-              title="No endpoints match the current filters"
-              description="Clear filters or broaden communication and health criteria."
+              title="No endpoints match filters"
+              description="Clear filters or widen communication, network, and health criteria."
               action={
                 <Button
                   type="button"
@@ -436,6 +441,6 @@ export function ConnectivityList({
         open={sheetOpen}
         onOpenChange={onSheetOpenChange}
       />
-    </>
+    </div>
   )
 }
