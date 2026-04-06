@@ -12,7 +12,11 @@ export const dynamic = "force-dynamic"
  */
 export async function GET() {
   const cfg = loadMeterIngressConfig()
-  const status = getMeterIngressPublicStatus(cfg.enabled)
+  const status = getMeterIngressPublicStatus(
+    cfg.enabled,
+    cfg.sessionMode,
+    cfg.sessionModeConfigError
+  )
   const profile = loadInboundMeterProtocolProfile()
   return NextResponse.json(
     {
@@ -23,6 +27,8 @@ export async function GET() {
         port: cfg.port,
         socketTimeoutSeconds: cfg.socketTimeoutSeconds,
         configError: cfg.configError,
+        sessionMode: cfg.sessionMode,
+        sessionModeConfigError: cfg.sessionModeConfigError,
       },
       protocolProfile: {
         sessionEnabled: profile.sessionEnabled,

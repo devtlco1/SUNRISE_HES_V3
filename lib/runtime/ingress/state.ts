@@ -1,13 +1,53 @@
 import { INGRESS_MVP_AMI_TOPOLOGY_COMPARISON } from "@/lib/runtime/ingress/mvp-ami-topology-note"
-import type { IngressSessionClass, MeterIngressPublicStatus } from "@/lib/runtime/ingress/types"
+import type {
+  IngressSessionClass,
+  IngressTcpSessionMode,
+  MeterIngressPublicStatus,
+  StagedIngressExperimentPublic,
+} from "@/lib/runtime/ingress/types"
 import { markNewIngressProtocolSession } from "@/lib/runtime/ingress/protocol-trace"
-import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
+import {
+  getIngressProcessRuntime,
+  type StagedIngressRuntimeState,
+} from "@/lib/runtime/ingress/runtime-global"
 
 const DISCLAIMER =
   "TCP accept and byte counts are transport-level. Association and identity fields are true only when parsed on-wire (HDLC FCS, AARE result, GET-Response). Inbound success does not imply relay or other COSEM operations."
 
 function diagnostics() {
   return getIngressProcessRuntime().diagnostics
+}
+
+function buildStagedIngressExperimentPublic(
+  st: StagedIngressRuntimeState
+): StagedIngressExperimentPublic {
+  const open = Boolean(st.socket && !st.socket.destroyed)
+  return {
+    stagedSocketPresent: Boolean(st.socket && open),
+    stagedRemoteAddress: st.remoteAddress,
+    stagedRemotePort: st.remotePort,
+    stagedAcceptedAtIso: st.acceptedAtIso,
+    stagedSocketOpen: open,
+    lastStagedReplacementAtIso: st.lastReplacementAtIso,
+    lastStagedReplacementReason: st.lastReplacementReason,
+    startSessionInvokeTotal: st.startSessionInvokeTotal,
+    startSessionInProgress: st.triggerInProgress,
+    lastStartSessionInvokedAtIso: st.lastInvokedAtIso,
+    lastStartSessionFinishedAtIso: st.lastFinishedAtIso,
+    lastStartSessionResult: st.lastResult,
+    lastStartSessionError: st.lastError,
+    lastTriggerIecAttempted: st.lastIecAttempted,
+    lastTriggerIecSkippedReason: st.lastIecSkippedReason,
+    lastTriggerAckSent: st.lastAckSent,
+    lastTriggerAckHexChosen: st.lastAckHexChosen,
+    lastTriggerAckSkippedReason: st.lastAckSkippedReason,
+    lastTriggerDelayMs: st.lastDelayMs,
+    lastTriggerDelayCompleted: st.lastDelayCompleted,
+    lastTriggerDlmsAssociationStarted: st.lastDlmsAssociationStarted,
+    lastTriggerAssociationAttempted: st.lastAssociationAttempted,
+    lastTriggerIdentityReadAttempted: st.lastIdentityReadAttempted,
+    lastTriggerTraceSteps: [...st.lastTriggerTraceSteps],
+  }
 }
 
 function resetLastSessionProtocolFields(): void {
@@ -167,11 +207,16 @@ export function setInboundIdentityOutcome(params: {
 }
 
 export function getMeterIngressPublicStatus(
-  ingressEnabledFromEnv: boolean
+  ingressEnabledFromEnv: boolean,
+  ingressSessionMode: IngressTcpSessionMode,
+  ingressSessionModeConfigError: string | null
 ): MeterIngressPublicStatus {
   const s = diagnostics()
+  const rt = getIngressProcessRuntime()
   return {
     ingressEnabled: ingressEnabledFromEnv,
+    ingressSessionMode,
+    ingressSessionModeConfigError,
     listenerAttempted: s.listenerAttempted,
     listening: s.listening,
     bindHost: s.bindHost,
@@ -203,6 +248,10 @@ export function getMeterIngressPublicStatus(
     inboundLastProtocolDetail: s.inboundLastProtocolDetail,
     inboundProtocolTrace: s.inboundProtocolTrace,
     mvpAmiTopologyComparison: INGRESS_MVP_AMI_TOPOLOGY_COMPARISON,
+    stagedIngressExperiment:
+      ingressSessionMode === "staged_triggered_session"
+        ? buildStagedIngressExperimentPublic(rt.staged)
+        : null,
     disclaimer: DISCLAIMER,
   }
 }

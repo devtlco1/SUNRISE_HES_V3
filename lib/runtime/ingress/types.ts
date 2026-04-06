@@ -198,6 +198,46 @@ export type IngressMvpAmiTopologyComparisonPublic = {
   recommendedNextDirection: string
 }
 
+/**
+ * How inbound TCP sockets run the DLMS experiment after accept.
+ * - `auto_associate_on_accept`: legacy SUNRISE behavior (read first, then HDLC/DLMS).
+ * - `staged_triggered_session`: hold socket until `POST .../start-session` (MVP-AMI TCP POC–style ordering).
+ */
+export type IngressTcpSessionMode = "auto_associate_on_accept" | "staged_triggered_session"
+
+/** Operator-facing snapshot of the staged-socket experiment (no secrets). */
+export type StagedIngressExperimentPublic = {
+  /** True when a non-destroyed staged socket is registered. */
+  stagedSocketPresent: boolean
+  stagedRemoteAddress: string | null
+  stagedRemotePort: number | null
+  stagedAcceptedAtIso: string | null
+  stagedSocketOpen: boolean
+  /** Last time an older staged socket was replaced (ISO), if any. */
+  lastStagedReplacementAtIso: string | null
+  lastStagedReplacementReason: string | null
+  startSessionInvokeTotal: number
+  /** True while `POST .../start-session` is running DLMS on the staged socket. */
+  startSessionInProgress: boolean
+  lastStartSessionInvokedAtIso: string | null
+  lastStartSessionFinishedAtIso: string | null
+  /** `ok` | `error` | `no_staged_socket` | `busy` | `profile_invalid` | `idle` (never invoked). */
+  lastStartSessionResult: string
+  lastStartSessionError: string | null
+  lastTriggerIecAttempted: boolean
+  lastTriggerIecSkippedReason: string | null
+  lastTriggerAckSent: boolean
+  lastTriggerAckHexChosen: string | null
+  lastTriggerAckSkippedReason: string | null
+  lastTriggerDelayMs: number | null
+  lastTriggerDelayCompleted: boolean
+  lastTriggerDlmsAssociationStarted: boolean
+  lastTriggerAssociationAttempted: boolean
+  lastTriggerIdentityReadAttempted: boolean
+  /** Compact ordered steps from the last triggered run (VPS-friendly). */
+  lastTriggerTraceSteps: string[]
+}
+
 export type MeterIngressConfig = {
   enabled: boolean
   host: string
@@ -206,11 +246,18 @@ export type MeterIngressConfig = {
   /** True when env shape is valid for starting a listener (may still fail to bind). */
   valid: boolean
   configError: string | null
+  /** Session runner timing model (default: auto on accept). */
+  sessionMode: IngressTcpSessionMode
+  sessionModeConfigError: string | null
 }
 
 export type MeterIngressPublicStatus = {
   /** Inbound listener feature enabled via env. */
   ingressEnabled: boolean
+  /** TCP ingress DLMS trigger model (`RUNTIME_TCP_METER_INGRESS_SESSION_MODE`). */
+  ingressSessionMode: IngressTcpSessionMode
+  /** Non-null when session mode env is invalid (listener may still run in a safe default). */
+  ingressSessionModeConfigError: string | null
   /** Env valid and listener was started (may not be listening if bind failed). */
   listenerAttempted: boolean
   listening: boolean
@@ -248,5 +295,7 @@ export type MeterIngressPublicStatus = {
   inboundProtocolTrace: IngressProtocolTracePublic | null
   /** MVP-AMI repository transport/session comparison (architecture; not live socket-derived). */
   mvpAmiTopologyComparison: IngressMvpAmiTopologyComparisonPublic
+  /** Present when mode is `staged_triggered_session` (experiment diagnostics). */
+  stagedIngressExperiment: StagedIngressExperimentPublic | null
   disclaimer: string
 }

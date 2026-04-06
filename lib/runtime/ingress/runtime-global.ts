@@ -38,10 +38,66 @@ export type IngressDiagnosticsState = {
   inboundProtocolTrace: IngressProtocolTracePublic | null
 }
 
+/** Mutable staged-socket experiment (single slot). Socket lives here, not in diagnostics JSON. */
+export type StagedIngressRuntimeState = {
+  socket: net.Socket | null
+  remoteAddress: string | null
+  remotePort: number | null
+  acceptedAtIso: string | null
+  lastReplacementAtIso: string | null
+  lastReplacementReason: string | null
+  startSessionInvokeTotal: number
+  lastInvokedAtIso: string | null
+  lastFinishedAtIso: string | null
+  lastResult: string
+  lastError: string | null
+  lastIecAttempted: boolean
+  lastIecSkippedReason: string | null
+  lastAckSent: boolean
+  lastAckHexChosen: string | null
+  lastAckSkippedReason: string | null
+  lastDelayMs: number | null
+  lastDelayCompleted: boolean
+  lastDlmsAssociationStarted: boolean
+  lastAssociationAttempted: boolean
+  lastIdentityReadAttempted: boolean
+  lastTriggerTraceSteps: string[]
+  triggerInProgress: boolean
+}
+
+function createInitialStagedState(): StagedIngressRuntimeState {
+  return {
+    socket: null,
+    remoteAddress: null,
+    remotePort: null,
+    acceptedAtIso: null,
+    lastReplacementAtIso: null,
+    lastReplacementReason: null,
+    startSessionInvokeTotal: 0,
+    lastInvokedAtIso: null,
+    lastFinishedAtIso: null,
+    lastResult: "idle",
+    lastError: null,
+    lastIecAttempted: false,
+    lastIecSkippedReason: null,
+    lastAckSent: false,
+    lastAckHexChosen: null,
+    lastAckSkippedReason: null,
+    lastDelayMs: null,
+    lastDelayCompleted: false,
+    lastDlmsAssociationStarted: false,
+    lastAssociationAttempted: false,
+    lastIdentityReadAttempted: false,
+    lastTriggerTraceSteps: [],
+    triggerInProgress: false,
+  }
+}
+
 export type IngressProcessRuntime = {
   diagnostics: IngressDiagnosticsState
   tcpServer: net.Server | null
   bootstrapInvoked: boolean
+  staged: StagedIngressRuntimeState
 }
 
 function createInitialDiagnostics(): IngressDiagnosticsState {
@@ -93,6 +149,7 @@ export function getIngressProcessRuntime(): IngressProcessRuntime {
       diagnostics: createInitialDiagnostics(),
       tcpServer: null,
       bootstrapInvoked: false,
+      staged: createInitialStagedState(),
     }
   }
   return g[KEY]

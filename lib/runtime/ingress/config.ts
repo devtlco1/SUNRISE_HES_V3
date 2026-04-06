@@ -1,4 +1,4 @@
-import type { MeterIngressConfig } from "@/lib/runtime/ingress/types"
+import type { IngressTcpSessionMode, MeterIngressConfig } from "@/lib/runtime/ingress/types"
 
 function truthyEnv(v: string | undefined): boolean {
   if (v === undefined) return false
@@ -6,11 +6,35 @@ function truthyEnv(v: string | undefined): boolean {
   return t === "1" || t === "true" || t === "yes"
 }
 
+const SESSION_MODE_ENV = "RUNTIME_TCP_METER_INGRESS_SESSION_MODE" as const
+
+/**
+ * DLMS session timing on accepted TCP sockets. Invalid values fall back to auto with a config error.
+ */
+export function loadMeterIngressSessionMode(): {
+  mode: IngressTcpSessionMode
+  configError: string | null
+} {
+  const raw = process.env[SESSION_MODE_ENV]?.trim().toLowerCase()
+  if (raw === undefined || raw === "" || raw === "auto" || raw === "auto_associate_on_accept") {
+    return { mode: "auto_associate_on_accept", configError: null }
+  }
+  if (raw === "staged" || raw === "staged_triggered_session") {
+    return { mode: "staged_triggered_session", configError: null }
+  }
+  const shown = process.env[SESSION_MODE_ENV]?.trim() ?? ""
+  return {
+    mode: "auto_associate_on_accept",
+    configError: `Invalid ${SESSION_MODE_ENV}="${shown}". Use auto_associate_on_accept or staged_triggered_session.`,
+  }
+}
+
 /**
  * Reads inbound meter TCP ingress settings. Never contains hardcoded production endpoints.
  */
 export function loadMeterIngressConfig(): MeterIngressConfig {
   const enabled = truthyEnv(process.env.RUNTIME_TCP_METER_INGRESS_ENABLED)
+  const { mode: sessionMode, configError: sessionModeConfigError } = loadMeterIngressSessionMode()
 
   const hostRaw = process.env.RUNTIME_TCP_METER_INGRESS_HOST?.trim()
   const host = hostRaw === undefined || hostRaw === "" ? "0.0.0.0" : hostRaw
@@ -35,6 +59,8 @@ export function loadMeterIngressConfig(): MeterIngressConfig {
         : 120,
       valid: true,
       configError: null,
+      sessionMode,
+      sessionModeConfigError,
     }
   }
 
@@ -49,6 +75,8 @@ export function loadMeterIngressConfig(): MeterIngressConfig {
       valid: false,
       configError:
         "RUNTIME_TCP_METER_INGRESS_PORT must be set to an integer 1–65535 when ingress is enabled.",
+      sessionMode,
+      sessionModeConfigError,
     }
   }
 
@@ -61,6 +89,8 @@ export function loadMeterIngressConfig(): MeterIngressConfig {
       valid: false,
       configError:
         "RUNTIME_TCP_METER_INGRESS_SOCKET_TIMEOUT_SECONDS must be a positive integer when set.",
+      sessionMode,
+      sessionModeConfigError,
     }
   }
 
@@ -71,6 +101,8 @@ export function loadMeterIngressConfig(): MeterIngressConfig {
     socketTimeoutSeconds,
     valid: true,
     configError: null,
+    sessionMode,
+    sessionModeConfigError,
   }
 }
 

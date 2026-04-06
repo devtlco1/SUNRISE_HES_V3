@@ -4,6 +4,7 @@ import { classifyInboundPreview } from "@/lib/runtime/ingress/classify"
 import { runInboundDlmsOnSocket } from "@/lib/runtime/ingress/inbound-dlms-session"
 import { loadInboundMeterProtocolProfile } from "@/lib/runtime/ingress/inbound-profile"
 import { loadMeterIngressConfig } from "@/lib/runtime/ingress/config"
+import { stashStagedMeterSocket } from "@/lib/runtime/ingress/staged-socket"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
 import {
   applyInboundProfileDiagnostics,
@@ -61,7 +62,11 @@ function attachPassivePreview(socket: net.Socket, socketTimeoutMs: number, addre
   })
 }
 
-function handleMeterSocket(socket: net.Socket, socketTimeoutMs: number): void {
+function handleMeterSocket(
+  socket: net.Socket,
+  socketTimeoutMs: number,
+  ingressCfg: ReturnType<typeof loadMeterIngressConfig>
+): void {
   const { address, port } = remoteKey(socket)
   onConnectionAccepted(address, port)
   console.info(`${LOG_PREFIX} accepted ${address}:${port}`)
@@ -73,6 +78,15 @@ function handleMeterSocket(socket: net.Socket, socketTimeoutMs: number): void {
     profileError: profile.configError,
     authMode: profile.auth,
   })
+
+  if (
+    profile.sessionEnabled &&
+    profile.valid &&
+    ingressCfg.sessionMode === "staged_triggered_session"
+  ) {
+    stashStagedMeterSocket(socket, socketTimeoutMs)
+    return
+  }
 
   if (profile.sessionEnabled && profile.valid) {
     let closeAccounted = false
@@ -137,7 +151,7 @@ export function startMeterTcpIngress(): void {
   const socketTimeoutMs = cfg.socketTimeoutSeconds * 1000
 
   const server = net.createServer((socket) => {
-    handleMeterSocket(socket, socketTimeoutMs)
+    handleMeterSocket(socket, socketTimeoutMs, cfg)
   })
 
   server.on("error", (err) => {
