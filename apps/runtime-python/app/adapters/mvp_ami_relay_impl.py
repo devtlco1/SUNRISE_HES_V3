@@ -142,20 +142,27 @@ def _relay_ok(
 
 
 def _parse_relay_state_from_row(row: dict) -> str:
-    """Normalize to on | off | unknown (IEC disconnect-control output_state is meter-specific)."""
+    """
+    Legacy normalizer for generic MVP-AMI rows (e.g. GXDLMSData reads on 0.0.96.*).
+    Python bool subclasses int — handle bool before int.
+    """
     if row.get("error"):
         return "unknown"
     v = row.get("value")
     vs = str(row.get("value_str") or "").strip().lower()
-    # Blue book style: 1=disconnected, 2=connected (internal supply).
-    if isinstance(v, (int, float)):
+    if isinstance(v, bool):
+        return "on" if v else "off"
+    if vs in ("true", "false"):
+        return "on" if vs == "true" else "off"
+    if isinstance(v, (int, float)) and not isinstance(v, bool):  # bool subclasses int
         vi = int(v)
+        # Blue book style (common on generic Data decodes): 1=disconnected, 2=connected.
         if vi == 2:
             return "on"
         if vi == 1:
             return "off"
         if vi == 0:
-            return "unknown"
+            return "off"
     if "disconnect" in vs or vs in ("off", "open"):
         return "off"
     if "connect" in vs or vs in ("on", "closed", "close"):
@@ -165,14 +172,163 @@ def _parse_relay_state_from_row(row: dict) -> str:
     return "unknown"
 
 
+def _relay_state_from_disconnect_control_row(row: dict) -> str:
+    """Row from _read_disconnect_control_row: output_state (bool) and/or control_state (int enum)."""
+    if row.get("error"):
+        return "unknown"
+    ob = row.get("output_state")
+    if isinstance(ob, bool):
+        return "on" if ob else "off"
+    cs = row.get("control_state")
+    if cs is not None and isinstance(cs, (int, float)) and not isinstance(cs, bool):
+        ci = int(cs)
+        # Gurux ControlState: DISCONNECTED=0, CONNECTED=1, READY_FOR_RECONNECTION=2 (still off).
+        if ci == 1:
+            return "on"
+        if ci in (0, 2):
+            return "off"
+    return _parse_relay_state_from_row(row)
+
+
+def _relay_state_and_raw_from_row(row: dict) -> Tuple[str, str]:
+    if not isinstance(row, dict):
+        return "unknown", ""
+    if row.get("strategy") == "disconnect_control":
+        st = _relay_state_from_disconnect_control_row(row)
+        raw = str(row.get("value_str") or "").strip()
+        if not raw:
+            parts = []
+            if "output_state" in row and row.get("output_state") is not None:
+                parts.append(f"outputState={row.get('output_state')!r}")
+            if "control_state" in row and row.get("control_state") is not None:
+                parts.append(f"controlState={row.get('control_state')!r}")
+            raw = "; ".join(parts) or str(row.get("value") or "")
+        return st, raw
+    st = _parse_relay_state_from_row(row)
+    raw = str(row.get("value_str") or row.get("value") or "").strip()
+    return st, raw
+
+
 def _state_and_raw_from_meter_result(result: Any, ln: str) -> Tuple[str, str]:
     pv = getattr(result, "parsed_values", None) or {}
     row = pv.get(ln) if isinstance(pv, dict) else None
     if not isinstance(row, dict):
         return "unknown", ""
-    st = _parse_relay_state_from_row(row)
-    raw = str(row.get("value_str") or row.get("value") or "").strip()
-    return st, raw
+    return _relay_state_and_raw_from_row(row)
+
+
+def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln: str) -> dict[str, Any]:
+    """
+    Read class 70 disconnect control as GXDLMSDisconnectControl — not GXDLMSData@2
+    (MVP-AMI phase1 uses Data for 0.0.96.*, which mis-reads this LN).
+    Tries attribute 2 (outputState, boolean) then 3 (controlState, enum).
+    """
+    from gurux_dlms.objects.GXDLMSDisconnectControl import GXDLMSDisconnectControl
+
+    dc = GXDLMSDisconnectControl(ln)
+    row: dict[str, Any] = {
+        "strategy": "disconnect_control",
+        "error": None,
+    }
+    _v2, e2 = meter_client._gurux_read_attribute(transport, gx, dc, 2)
+    out_b = getattr(dc, "outputState", None)
+    if e2 is None and isinstance(out_b, bool):
+        row["output_state"] = out_b
+        row["value"] = out_b
+        row["value_str"] = "true" if out_b else "false"
+        log.info(
+            "relay_disconnect_control_attr2",
+            extra={"ln": ln, "outputState": out_b, "err": e2},
+        )
+        return row
+
+    _v3, e3 = meter_client._gurux_read_attribute(transport, gx, dc, 3)
+    cs = getattr(dc, "controlState", None)
+    if e3 is None and cs is not None:
+        try:
+            ci = int(cs)
+        except (TypeError, ValueError):
+            ci = None
+        if ci is not None:
+            row["control_state"] = ci
+            row["value"] = ci
+            row["value_str"] = str(cs)
+            log.info(
+                "relay_disconnect_control_attr3",
+                extra={"ln": ln, "controlState": ci, "err": e3},
+            )
+            return row
+
+    row["error"] = "; ".join(
+        x for x in (f"attr2={e2}" if e2 else None, f"attr3={e3}" if e3 else None) if x
+    ) or "disconnect_control_read_failed"
+    log.warning(
+        "relay_disconnect_control_read_failed",
+        extra={"ln": ln, "attr2_err": e2, "attr3_err": e3},
+    )
+    return row
+
+
+def _finalize_relay_read_status(
+    *,
+    request: ReadIdentityRequest,
+    started: datetime,
+    ln: str,
+    row: dict[str, Any],
+    transport_attempted: bool,
+    association_attempted: bool,
+    association_failed: bool,
+    message_prefix: str,
+    detail_ok: str,
+    detail_unverified: str,
+    fail_details: Optional[dict] = None,
+    endpoint_note: Optional[str] = None,
+) -> RuntimeResponseEnvelope:
+    finished = datetime.now(timezone.utc)
+    if association_failed:
+        return _relay_fail(
+            meter_id=request.meterId,
+            operation="relayReadStatus",
+            started=started,
+            finished=finished,
+            message=f"{message_prefix}: association failed before disconnect-control read.",
+            code="RELAY_ASSOC_FAILED",
+            details=fail_details,
+            transport_attempted=transport_attempted,
+            association_attempted=association_attempted,
+        )
+    if row.get("error"):
+        return _relay_fail(
+            meter_id=request.meterId,
+            operation="relayReadStatus",
+            started=started,
+            finished=finished,
+            message=f"{message_prefix}: disconnect-control read failed ({row.get('error')}).",
+            code="RELAY_STATUS_DISCONNECT_READ_FAILED",
+            details={**(fail_details or {}), "detail": row.get("error"), "logicalName": ln},
+            transport_attempted=transport_attempted,
+            association_attempted=association_attempted,
+        )
+    st, raw = _relay_state_and_raw_from_row(row)
+    ok_wire = st != "unknown"
+    payload = RelayControlPayload(
+        relayState=st,  # type: ignore[arg-type]
+        rawDisplay=raw or None,
+        logicalName=ln,
+    )
+    ep = f" ({endpoint_note})" if endpoint_note else ""
+    return _relay_ok(
+        meter_id=request.meterId,
+        operation="relayReadStatus",
+        started=started,
+        finished=finished,
+        message=f"{message_prefix} {ln!r}{ep} (normalized={st!r}).",
+        payload=payload,
+        transport_attempted=transport_attempted,
+        association_attempted=association_attempted,
+        verified=ok_wire,
+        detail_code=detail_ok if ok_wire else detail_unverified,
+    )
 
 
 def _disconnect_control_method_packets(gx: Any, dc: Any, method_index: int) -> Any:
@@ -355,22 +511,31 @@ def relay_read_status(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
             else settings.tcp_client_connect_timeout_seconds
         )
         endpoint = f"{host}:{int(port)}"
-        run_tcp = getattr(client, "run_phase1_tcp_socket", None)
-        if run_tcp is None:
-            finished = datetime.now(timezone.utc)
-            return _relay_fail(
-                meter_id=request.meterId,
-                operation="relayReadStatus",
-                started=started,
-                finished=finished,
-                message="MVP-AMI MeterClient has no run_phase1_tcp_socket.",
-                code="MVP_AMI_TCP_SOCKET_API_MISSING",
-                details={"mvpAmiRoot": boot.root},
-            )
         sock: Optional[socket.socket] = None
+        row: dict[str, Any] = {}
         try:
             sock = socket.create_connection((host, int(port)), timeout=timeout)
-            result = run_tcp(sock, obis_list=[ln])
+            transport, gx, errc = _tcp_assoc(client, sock)
+            if errc:
+                return _finalize_relay_read_status(
+                    request=request,
+                    started=started,
+                    ln=ln,
+                    row={},
+                    transport_attempted=True,
+                    association_attempted=True,
+                    association_failed=True,
+                    message_prefix="Relay status",
+                    detail_ok="RELAY_STATUS_OK",
+                    detail_unverified="RELAY_STATUS_UNVERIFIED",
+                    fail_details={"phase": errc, "tcpEndpoint": endpoint},
+                )
+            row = _read_disconnect_control_row(client, transport, gx, ln)
+            if gx is not None:
+                try:
+                    client._try_gurux_disconnect(transport, gx)
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as exc:  # noqa: BLE001
             finished = datetime.now(timezone.utc)
             return _relay_fail(
@@ -389,9 +554,45 @@ def relay_read_status(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
                     sock.close()
                 except Exception:  # noqa: BLE001
                     pass
+        return _finalize_relay_read_status(
+            request=request,
+            started=started,
+            ln=ln,
+            row=row,
+            transport_attempted=True,
+            association_attempted=True,
+            association_failed=False,
+            message_prefix="Disconnect-control read",
+            detail_ok="RELAY_STATUS_OK",
+            detail_unverified="RELAY_STATUS_UNVERIFIED",
+            fail_details={"tcpEndpoint": endpoint},
+            endpoint_note=endpoint,
+        )
     else:
+        row = {}
+        ser: Any = None
         try:
-            result = client.run_phase1(obis_list=[ln])
+            ser, gx, _port, errc = _serial_assoc(client)
+            if errc:
+                return _finalize_relay_read_status(
+                    request=request,
+                    started=started,
+                    ln=ln,
+                    row={},
+                    transport_attempted=True,
+                    association_attempted=True,
+                    association_failed=True,
+                    message_prefix="Relay status",
+                    detail_ok="RELAY_STATUS_OK",
+                    detail_unverified="RELAY_STATUS_UNVERIFIED",
+                    fail_details={"phase": errc},
+                )
+            row = _read_disconnect_control_row(client, ser, gx, ln)
+            if gx is not None:
+                try:
+                    client._try_gurux_disconnect(ser, gx)
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as exc:  # noqa: BLE001
             finished = datetime.now(timezone.utc)
             return _relay_fail(
@@ -404,27 +605,26 @@ def relay_read_status(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
                 details={"error": str(exc)},
                 transport_attempted=True,
             )
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
-    finished = datetime.now(timezone.utc)
-    st, raw = _state_and_raw_from_meter_result(result, ln)
-    ok_wire = bool(getattr(result, "success", False)) and st != "unknown"
-    payload = RelayControlPayload(
-        relayState=st,  # type: ignore[arg-type]
-        rawDisplay=raw or None,
-        logicalName=ln,
-    )
-    return _relay_ok(
-        meter_id=request.meterId,
-        operation="relayReadStatus",
-        started=started,
-        finished=finished,
-        message=f"Disconnect-control read {ln!r} (normalized={st!r}).",
-        payload=payload,
-        transport_attempted=True,
-        association_attempted=True,
-        verified=ok_wire,
-        detail_code="RELAY_STATUS_OK" if ok_wire else "RELAY_STATUS_UNVERIFIED",
-    )
+        return _finalize_relay_read_status(
+            request=request,
+            started=started,
+            ln=ln,
+            row=row,
+            transport_attempted=True,
+            association_attempted=True,
+            association_failed=False,
+            message_prefix="Disconnect-control read",
+            detail_ok="RELAY_STATUS_OK",
+            detail_unverified="RELAY_STATUS_UNVERIFIED",
+            fail_details=None,
+        )
 
 
 def relay_read_status_inbound(
@@ -464,21 +664,32 @@ def relay_read_status_inbound(
             details={"error": str(exc), "transportMode": "tcp_inbound"},
         )
 
-    run_tcp = getattr(client, "run_phase1_tcp_socket", None)
-    if run_tcp is None:
-        finished = datetime.now(timezone.utc)
-        return _relay_fail(
-            meter_id=request.meterId,
-            operation="relayReadStatus",
-            started=started,
-            finished=finished,
-            message="MVP-AMI MeterClient has no run_phase1_tcp_socket.",
-            code="MVP_AMI_TCP_SOCKET_API_MISSING",
-            details={"transportMode": "tcp_inbound", "mvpAmiRoot": boot.root},
-        )
-
     try:
-        result = run_tcp(sock, obis_list=[ln])
+        transport, gx, errc = _tcp_assoc(client, sock)
+        if errc:
+            return _finalize_relay_read_status(
+                request=request,
+                started=started,
+                ln=ln,
+                row={},
+                transport_attempted=True,
+                association_attempted=True,
+                association_failed=True,
+                message_prefix="Inbound relay status",
+                detail_ok="RELAY_STATUS_INBOUND_OK",
+                detail_unverified="RELAY_STATUS_INBOUND_UNVERIFIED",
+                fail_details={
+                    "phase": errc,
+                    "tcpEndpoint": remote_endpoint,
+                    "transportMode": "tcp_inbound",
+                },
+            )
+        row = _read_disconnect_control_row(client, transport, gx, ln)
+        if gx is not None:
+            try:
+                client._try_gurux_disconnect(transport, gx)
+            except Exception:  # noqa: BLE001
+                pass
     except Exception as exc:  # noqa: BLE001
         finished = datetime.now(timezone.utc)
         return _relay_fail(
@@ -492,25 +703,23 @@ def relay_read_status_inbound(
             transport_attempted=True,
         )
 
-    finished = datetime.now(timezone.utc)
-    st, raw = _state_and_raw_from_meter_result(result, ln)
-    ok_wire = bool(getattr(result, "success", False)) and st != "unknown"
-    payload = RelayControlPayload(
-        relayState=st,  # type: ignore[arg-type]
-        rawDisplay=raw or None,
-        logicalName=ln,
-    )
-    return _relay_ok(
-        meter_id=request.meterId,
-        operation="relayReadStatus",
+    fd = {
+        "tcpEndpoint": remote_endpoint,
+        "transportMode": "tcp_inbound",
+    }
+    return _finalize_relay_read_status(
+        request=request,
         started=started,
-        finished=finished,
-        message=f"Inbound disconnect-control read {ln!r} ({remote_endpoint}).",
-        payload=payload,
+        ln=ln,
+        row=row,
         transport_attempted=True,
         association_attempted=True,
-        verified=ok_wire,
-        detail_code="RELAY_STATUS_INBOUND_OK" if ok_wire else "RELAY_STATUS_INBOUND_UNVERIFIED",
+        association_failed=False,
+        message_prefix="Inbound disconnect-control read",
+        detail_ok="RELAY_STATUS_INBOUND_OK",
+        detail_unverified="RELAY_STATUS_INBOUND_UNVERIFIED",
+        fail_details=fd,
+        endpoint_note=remote_endpoint,
     )
 
 
