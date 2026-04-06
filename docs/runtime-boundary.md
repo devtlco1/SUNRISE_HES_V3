@@ -4,7 +4,7 @@
 
 Live inbound TCP experiments reached **strict UA** and **Gurux-aligned AARQ** with **no post-AARQ RX** in both auto and staged modes — see **`docs/runtime-ingress.md`** and the architecture handoff **`docs/protocol-runtime-handoff.md`**. The **stub/real adapter** contracts below remain the right **UI-facing** shape; **on-wire execution** for production reads should move toward a **separate protocol service** (e.g. Python/MVP-AMI-class sidecar) rather than further ingress tuning in this repo.
 
-A **Python FastAPI sidecar** lives under **`apps/runtime-python/`**; Next.js can proxy synchronous reads, **association-view discovery** (`/api/internal/python-runtime/discover-supported-obis`), and **v1 async read jobs** (`/api/internal/python-runtime/jobs/*`) when **`RUNTIME_PYTHON_SIDECAR_URL`** is set — see **`docs/architecture-control-plane-python.md`**, **`docs/runtime-python-discovery.md`**, and **`docs/job-queue-foundation.md`** (v1 queue is in-process / not durable).
+A **Python FastAPI sidecar** lives under **`apps/runtime-python/`**; Next.js can proxy synchronous reads, **association-view discovery** and **persisted discovery snapshots** (`/api/internal/python-runtime/discover-supported-obis`, `/api/internal/python-runtime/discovery-snapshots/...`), and **v1 async read jobs** (`/api/internal/python-runtime/jobs/*`) when **`RUNTIME_PYTHON_SIDECAR_URL`** is set — see **`docs/architecture-control-plane-python.md`**, **`docs/runtime-python-discovery.md`**, and **`docs/job-queue-foundation.md`** (v1 queue is in-process / not durable).
 
 ## Purpose
 

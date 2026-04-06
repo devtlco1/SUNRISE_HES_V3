@@ -45,3 +45,4 @@ next-env.d.ts
 apps/runtime-python/.venv/
 apps/runtime-python/**/__pycache__/
 apps/runtime-python/**/*.pyc
+apps/runtime-python/data/discovery-snapshots/

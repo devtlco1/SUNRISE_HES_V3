@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     basic_registers_obis: str = "0.0.1.0.0.255,1.0.1.8.0.255,1.0.32.7.0.255"
     """Association LN logical name whose attribute 2 (object list) is read for discovery."""
     discovery_association_ln: str = "0.0.40.0.0.255"
+    """Directory for JSON discovery snapshots (per-meter subfolders). Default under sidecar `data/`."""
+    discovery_snapshot_dir: str = ""
+    """After successful on-wire discovery, write `latest.json` + history copy."""
+    discovery_snapshot_autosave: bool = True
+    """Max history JSON files per meter (oldest deleted)."""
+    discovery_snapshot_max_history: int = 32
 
 
 @lru_cache

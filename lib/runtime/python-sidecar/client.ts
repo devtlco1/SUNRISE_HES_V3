@@ -1,5 +1,7 @@
 import type {
   BasicRegistersPayload,
+  DiscoverySnapshotListResponse,
+  DiscoverySnapshotRecord,
   DiscoverSupportedObisPayload,
   IdentityPayload,
   RuntimeResponseEnvelope,
@@ -153,6 +155,82 @@ export async function postDiscoverSupportedObisToPythonSidecar(
   }
 
   return json as RuntimeResponseEnvelope<DiscoverSupportedObisPayload>
+}
+
+/**
+ * Server-only: GET latest persisted discovery snapshot for a meter.
+ */
+export async function getLatestDiscoverySnapshotFromSidecar(
+  meterId: string
+): Promise<DiscoverySnapshotRecord> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {}
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/discovery-snapshots/${encodeURIComponent(meterId)}/latest`
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as DiscoverySnapshotRecord
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as DiscoverySnapshotRecord
+}
+
+/**
+ * Server-only: list stored discovery snapshots (history + latest fallback).
+ */
+export async function listDiscoverySnapshotsFromSidecar(
+  meterId: string
+): Promise<DiscoverySnapshotListResponse> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {}
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/discovery-snapshots/${encodeURIComponent(meterId)}`
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as DiscoverySnapshotListResponse
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as DiscoverySnapshotListResponse
 }
 
 /** v1 local sidecar queue — enqueue response (202). */

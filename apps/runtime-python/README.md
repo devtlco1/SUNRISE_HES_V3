@@ -18,6 +18,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 - **Read basic registers:** `POST http://127.0.0.1:8766/v1/runtime/read-basic-registers`  
   Same body shape; `mvp_ami` uses `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` (see `docs/runtime-python-mvp-ami-adapter.md`).
 - **Discover association object list:** `POST /v1/runtime/discover-supported-obis` — see **`../../docs/runtime-python-discovery.md`**.
+- **Read persisted discovery snapshots:** `GET /v1/runtime/discovery-snapshots/{meterId}/latest`, `GET /v1/runtime/discovery-snapshots/{meterId}` (file-backed JSON under `data/discovery-snapshots` by default).
 - **Async read jobs (v1, in-process):**  
   `POST /v1/jobs/read-identity` / `POST /v1/jobs/read-basic-registers` → **202** + `jobId`;  
   `GET /v1/jobs/{jobId}` → status + `result` envelope. Not durable. See **`../../docs/job-queue-foundation.md`**.
@@ -34,6 +35,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 | `SUNRISE_RUNTIME_MVP_AMI_CONFIG_PATH` | Optional path to MVP-AMI `config.json` (default `<root>/config.json`) |
 | `SUNRISE_RUNTIME_IDENTITY_OBIS` | Optional identity OBIS for `run_phase1` (default `0.0.96.1.1.255`) |
 | `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` | Comma-separated OBIS for `read-basic-registers` (sensible defaults in `app/config.py`) |
+| `SUNRISE_RUNTIME_DISCOVERY_SNAPSHOT_DIR` | Optional root for JSON discovery snapshots (default `data/discovery-snapshots` under this app) |
+| `SUNRISE_RUNTIME_DISCOVERY_SNAPSHOT_AUTOSAVE` | `true`/`false` — autosave after successful on-wire discovery (default `true`) |
+| `SUNRISE_RUNTIME_DISCOVERY_SNAPSHOT_MAX_HISTORY` | Max history files per meter (default `32`) |
 | `SUNRISE_RUNTIME_SERVICE_TOKEN` | If set, `POST /v1/*` requires `Authorization: Bearer <token>`. `GET /health` stays open. |
 
 Full setup and failure codes: **`../../docs/runtime-python-mvp-ami-adapter.md`**.

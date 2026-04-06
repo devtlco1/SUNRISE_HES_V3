@@ -186,6 +186,32 @@ export interface DiscoverSupportedObisPayload {
   source?: string
 }
 
+/** File-backed discovery snapshot (Python `DiscoverySnapshotRecord`). */
+export interface DiscoverySnapshotRecord {
+  schemaVersion: string
+  meterId: string
+  capturedAtUtc: string
+  associationLogicalName: string
+  totalCount: number
+  objects: DiscoveredObjectRow[]
+  source: string
+  profileFingerprint: string
+  simulated: boolean
+  runtimeAdapter: string
+  channelContext?: Record<string, unknown>
+  discoveryFinishedAt?: string
+}
+
+export interface DiscoverySnapshotListItem {
+  capturedAtUtc: string
+  storedAs: string
+}
+
+export interface DiscoverySnapshotListResponse {
+  meterId: string
+  snapshots: DiscoverySnapshotListItem[]
+}
+
 export interface RelaySimulatedPayload {
   /**
    * Simulated relay posture for UX/contracts only.

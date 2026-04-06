@@ -1,7 +1,7 @@
 """
 Normalize Gurux `GXDLMSObject` entries from an association `objectList` into JSON-safe rows.
 
-No persistence here — see `snapshot_placeholder.py` for a future disk/DB hook.
+Persistence: `app/catalog/discovery_snapshot_store.py` (file-backed JSON).
 """
 
 from __future__ import annotations

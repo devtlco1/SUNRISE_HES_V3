@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.logging_setup import configure_logging
+from app.routes.discovery_snapshots_v1 import router as discovery_snapshots_router
 from app.routes.health import router as health_router
 from app.routes.jobs_v1 import router as jobs_v1_router
 from app.routes.runtime_v1 import router as runtime_v1_router
@@ -45,4 +46,5 @@ app = FastAPI(
 
 app.include_router(health_router)
 app.include_router(runtime_v1_router)
+app.include_router(discovery_snapshots_router)
 app.include_router(jobs_v1_router)
