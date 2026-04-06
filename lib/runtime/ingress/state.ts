@@ -2,10 +2,26 @@ import type { IngressSessionClass, MeterIngressPublicStatus } from "@/lib/runtim
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
 
 const DISCLAIMER =
-  "Inbound TCP bytes are captured for diagnostics only. Listener activity does not imply verified DLMS association, COSEM reads, or relay execution."
+  "TCP accept and byte counts are transport-level. Association and identity fields are true only when parsed on-wire (HDLC FCS, AARE result, GET-Response). Inbound success does not imply relay or other COSEM operations."
 
 function diagnostics() {
   return getIngressProcessRuntime().diagnostics
+}
+
+function resetLastSessionProtocolFields(): void {
+  const s = diagnostics()
+  s.lastBytesReceivedOnLastSession = 0
+  s.lastSessionClass = "tcp_connected"
+  s.lastInboundPreviewHex = null
+  s.lastInboundProtocolPhase = "connected"
+  s.inboundAssociationAttempted = false
+  s.inboundAssociationVerifiedOnWire = false
+  s.inboundAssociationResultEnum = null
+  s.inboundAareApduHex = null
+  s.inboundIdentityReadAttempted = false
+  s.inboundIdentityReadVerifiedOnWire = false
+  s.inboundIdentityValueHex = null
+  s.inboundLastProtocolDetail = ""
 }
 
 export function resetIngressStateForTestsOnly(): void {
@@ -27,6 +43,19 @@ export function resetIngressStateForTestsOnly(): void {
     lastSessionClass: "idle" as IngressSessionClass,
     lastIngressError: null,
     lastInboundPreviewHex: null,
+    inboundDlmsSessionEnabled: false,
+    inboundProtocolProfileValid: true,
+    inboundProtocolProfileError: null,
+    inboundAuthMode: "LOW",
+    lastInboundProtocolPhase: "idle",
+    inboundAssociationAttempted: false,
+    inboundAssociationVerifiedOnWire: false,
+    inboundAssociationResultEnum: null,
+    inboundAareApduHex: null,
+    inboundIdentityReadAttempted: false,
+    inboundIdentityReadVerifiedOnWire: false,
+    inboundIdentityValueHex: null,
+    inboundLastProtocolDetail: "",
   })
 }
 
@@ -66,9 +95,7 @@ export function onConnectionAccepted(remoteAddress: string, remotePort: number):
   s.lastConnectionAtIso = new Date().toISOString()
   s.lastRemoteAddress = remoteAddress
   s.lastRemotePort = remotePort
-  s.lastSessionClass = "tcp_connected"
-  s.lastBytesReceivedOnLastSession = 0
-  s.lastInboundPreviewHex = null
+  resetLastSessionProtocolFields()
 }
 
 export function onConnectionClosed(): void {
@@ -90,6 +117,49 @@ export function onSessionData(
 
 export function onIngressError(message: string): void {
   diagnostics().lastIngressError = message
+}
+
+export function applyInboundProfileDiagnostics(params: {
+  sessionEnabled: boolean
+  profileValid: boolean
+  profileError: string | null
+  authMode: string
+}): void {
+  const s = diagnostics()
+  s.inboundDlmsSessionEnabled = params.sessionEnabled
+  s.inboundProtocolProfileValid = params.profileValid
+  s.inboundProtocolProfileError = params.profileError
+  s.inboundAuthMode = params.authMode
+}
+
+export function setInboundProtocolPhase(phase: string, detail?: string): void {
+  const s = diagnostics()
+  s.lastInboundProtocolPhase = phase
+  if (detail !== undefined) s.inboundLastProtocolDetail = detail
+}
+
+export function setInboundAssociationOutcome(params: {
+  attempted: boolean
+  verifiedOnWire: boolean
+  resultEnum: number | null
+  aareApduHex: string | null
+}): void {
+  const s = diagnostics()
+  s.inboundAssociationAttempted = params.attempted
+  s.inboundAssociationVerifiedOnWire = params.verifiedOnWire
+  s.inboundAssociationResultEnum = params.resultEnum
+  s.inboundAareApduHex = params.aareApduHex
+}
+
+export function setInboundIdentityOutcome(params: {
+  attempted: boolean
+  verifiedOnWire: boolean
+  valueHex: string | null
+}): void {
+  const s = diagnostics()
+  s.inboundIdentityReadAttempted = params.attempted
+  s.inboundIdentityReadVerifiedOnWire = params.verifiedOnWire
+  s.inboundIdentityValueHex = params.valueHex
 }
 
 export function getMeterIngressPublicStatus(
@@ -114,6 +184,19 @@ export function getMeterIngressPublicStatus(
     lastSessionClass: s.lastSessionClass,
     lastIngressError: s.lastIngressError,
     lastInboundPreviewHex: s.lastInboundPreviewHex,
+    inboundDlmsSessionEnabled: s.inboundDlmsSessionEnabled,
+    inboundProtocolProfileValid: s.inboundProtocolProfileValid,
+    inboundProtocolProfileError: s.inboundProtocolProfileError,
+    inboundAuthMode: s.inboundAuthMode,
+    lastInboundProtocolPhase: s.lastInboundProtocolPhase,
+    inboundAssociationAttempted: s.inboundAssociationAttempted,
+    inboundAssociationVerifiedOnWire: s.inboundAssociationVerifiedOnWire,
+    inboundAssociationResultEnum: s.inboundAssociationResultEnum,
+    inboundAareApduHex: s.inboundAareApduHex,
+    inboundIdentityReadAttempted: s.inboundIdentityReadAttempted,
+    inboundIdentityReadVerifiedOnWire: s.inboundIdentityReadVerifiedOnWire,
+    inboundIdentityValueHex: s.inboundIdentityValueHex,
+    inboundLastProtocolDetail: s.inboundLastProtocolDetail,
     disclaimer: DISCLAIMER,
   }
 }

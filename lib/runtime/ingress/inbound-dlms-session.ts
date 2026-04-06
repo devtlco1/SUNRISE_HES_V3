@@ -1,0 +1,380 @@
+import type net from "node:net"
+
+import { classifyInboundPreview } from "@/lib/runtime/ingress/classify"
+import type { InboundMeterProtocolProfile } from "@/lib/runtime/ingress/inbound-profile"
+import {
+  onIngressError,
+  onSessionData,
+  setInboundAssociationOutcome,
+  setInboundIdentityOutcome,
+  setInboundProtocolPhase,
+} from "@/lib/runtime/ingress/state"
+import { buildAarqLlsLnPayload } from "@/lib/runtime/real/dlms-aarq-lls"
+import {
+  buildAarqPayload,
+  parseAareAssociationResult,
+  stripLeadingLlcReply,
+} from "@/lib/runtime/real/dlms-apdu"
+import {
+  buildGetRequestNormalPayload,
+  obisStringToSixBytes,
+  parseGetResponseNormal,
+} from "@/lib/runtime/real/dlms-get-normal"
+import {
+  buildHdlcIFrame,
+  buildHdlcUFrame,
+  HDLC_DISC,
+  HDLC_I_FRAME_FIRST,
+  HDLC_I_FRAME_SECOND,
+  HDLC_SNRM,
+  HDLC_UA,
+  parseHdlcFrameWithAddressWidths,
+  splitHdlcFrames,
+} from "@/lib/runtime/real/hdlc-frame-variable"
+import { readSocketBurst, writeAll } from "@/lib/runtime/real/dlms-transport-session"
+
+import type { IngressSessionClass } from "@/lib/runtime/ingress/types"
+
+/** Avoid Node 20+ Buffer/Uint8Array `ArrayBufferLike` assignability noise in this module. */
+type Acc = Uint8Array<ArrayBuffer>
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function previewClassFromBytes(accum: Uint8Array): IngressSessionClass {
+  const slice = accum.subarray(0, Math.min(512, accum.length))
+  const heur = classifyInboundPreview(Buffer.from(slice))
+  return heur === "hdlc_candidate" ? "dlms_not_verified" : heur
+}
+
+function touchAccum(accum: Uint8Array): void {
+  const prev = accum.subarray(0, Math.min(512, accum.length))
+  onSessionData(accum.length, Buffer.from(prev), previewClassFromBytes(accum))
+}
+
+function bufferPrefixMatch(buf: Uint8Array, prefix: Buffer): boolean {
+  if (buf.length < prefix.length) return false
+  for (let i = 0; i < prefix.length; i++) {
+    if (buf[i] !== prefix[i]) return false
+  }
+  return true
+}
+
+type ParsedUv = NonNullable<ReturnType<typeof tryParseUAny>>
+
+function tryParseUAny(frame: Uint8Array) {
+  for (const pair of [
+    [4, 1],
+    [1, 4],
+    [1, 1],
+  ] as const) {
+    const p = parseHdlcFrameWithAddressWidths(frame, pair[0], pair[1])
+    if (p?.kind === "u") return p
+  }
+  return null
+}
+
+function tryParseIAny(frame: Uint8Array) {
+  for (const pair of [
+    [4, 1],
+    [1, 4],
+    [1, 1],
+  ] as const) {
+    const p = parseHdlcFrameWithAddressWidths(frame, pair[0], pair[1])
+    if (p?.kind === "i") return p
+  }
+  return null
+}
+
+function findUa(accum: Uint8Array): boolean {
+  for (const raw of splitHdlcFrames(accum)) {
+    const p = tryParseUAny(raw)
+    if (p && p.control === HDLC_UA) return true
+  }
+  return false
+}
+
+function findMeterSnrm(accum: Uint8Array): ParsedUv | null {
+  for (const raw of splitHdlcFrames(accum)) {
+    const p = tryParseUAny(raw)
+    if (p && p.control === HDLC_SNRM) return p
+  }
+  return null
+}
+
+function findAare(accum: Uint8Array): { result: number; apdu: Buffer } | null {
+  for (const raw of splitHdlcFrames(accum)) {
+    const p = tryParseIAny(raw)
+    if (!p || p.kind !== "i") continue
+    const apdu = stripLeadingLlcReply(p.llcAndApdu)
+    const hit = parseAareAssociationResult(apdu)
+    if (hit) return { result: hit.result, apdu: Buffer.from(apdu) }
+  }
+  return null
+}
+
+function findGetResponse(accum: Uint8Array): ReturnType<typeof parseGetResponseNormal> | null {
+  for (const raw of splitHdlcFrames(accum)) {
+    const p = tryParseIAny(raw)
+    if (!p || p.kind !== "i") continue
+    const apdu = stripLeadingLlcReply(p.llcAndApdu)
+    const g = parseGetResponseNormal(apdu)
+    if (g.verified) return g
+  }
+  return null
+}
+
+function capHex(hex: string, max = 512): string {
+  return hex.length <= max ? hex : `${hex.slice(0, max)}…`
+}
+
+async function extendAccum(
+  socket: net.Socket,
+  accum: Acc,
+  profile: InboundMeterProtocolProfile
+): Promise<Acc> {
+  const chunk = await readSocketBurst(
+    socket,
+    profile.dlmsReadTimeoutMs,
+    profile.dlmsReadIdleMs
+  )
+  const next = new Uint8Array(accum.length + chunk.length)
+  next.set(accum, 0)
+  next.set(chunk, accum.length)
+  touchAccum(next)
+  return Uint8Array.from(next) as Acc
+}
+
+/**
+ * Vendor-style inbound DLMS on an already-accepted TCP socket (meter-initiated connect).
+ * Caller must pass a valid profile with sessionEnabled true. Always destroys the socket when done.
+ */
+export async function runInboundDlmsOnSocket(
+  socket: net.Socket,
+  profile: InboundMeterProtocolProfile
+): Promise<void> {
+  if (!profile.sessionEnabled || !profile.valid) return
+
+  socket.setTimeout(0)
+
+  const meter = profile.meterServerAddress
+  const client = profile.clientAddressWire
+  let accum = new Uint8Array(0) as Acc
+
+  try {
+    setInboundProtocolPhase("initial_read", "")
+    const first = await readSocketBurst(
+      socket,
+      profile.dlmsReadTimeoutMs,
+      profile.dlmsReadIdleMs
+    )
+    accum = Uint8Array.from(first) as Acc
+    touchAccum(accum)
+
+    const ackHit = profile.iecAckHexCandidates.find((c) => bufferPrefixMatch(accum, c))
+    if (ackHit && profile.afterIecSleepMs > 0) {
+      setInboundProtocolPhase("iec_ack_matched", ackHit.toString("hex"))
+      await sleep(profile.afterIecSleepMs)
+    }
+
+    const meterSnrm = findMeterSnrm(accum)
+    if (meterSnrm) {
+      setInboundProtocolPhase("meter_snrm_seen", "")
+      const uaDest = Buffer.from(meterSnrm.src)
+      const uaSrc = profile.uaSwapAddresses
+        ? Buffer.from(meterSnrm.dest)
+        : profile.clientAddressWire
+      await writeAll(socket, buildHdlcUFrame(uaDest, uaSrc, HDLC_UA))
+      setInboundProtocolPhase("ua_sent_after_meter_snrm", "")
+      accum = await extendAccum(socket, accum, profile)
+    } else if (
+      profile.useBroadcastSnrmFirst &&
+      profile.broadcastSnrm &&
+      profile.broadcastSnrm.length > 0
+    ) {
+      setInboundProtocolPhase("broadcast_snrm_sent", "")
+      await writeAll(socket, profile.broadcastSnrm)
+      accum = await extendAccum(socket, accum, profile)
+    } else {
+      setInboundProtocolPhase("targeted_snrm_sent", "")
+      await writeAll(socket, buildHdlcUFrame(meter, client, HDLC_SNRM))
+      accum = await extendAccum(socket, accum, profile)
+    }
+
+    setInboundProtocolPhase("awaiting_ua", "")
+    for (let i = 0; i < 8 && !findUa(accum); i++) {
+      accum = await extendAccum(socket, accum, profile)
+    }
+    if (!findUa(accum)) {
+      setInboundProtocolPhase("ua_missing", "no verifiable HDLC UA after SNRM/broadcast")
+      onIngressError("inbound_ua_missing")
+      onSessionData(
+        accum.length,
+        Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
+        "inbound_session_failed"
+      )
+      return
+    }
+
+    const aarq =
+      profile.auth === "LOW" && profile.password
+        ? buildAarqLlsLnPayload(profile.password)
+        : buildAarqPayload()
+
+    setInboundProtocolPhase("aarq_sent", "")
+    setInboundAssociationOutcome({
+      attempted: true,
+      verifiedOnWire: false,
+      resultEnum: null,
+      aareApduHex: null,
+    })
+
+    await writeAll(
+      socket,
+      buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq)
+    )
+    accum = await extendAccum(socket, accum, profile)
+
+    let aareHit = findAare(accum)
+    for (let i = 0; i < 8 && !aareHit; i++) {
+      accum = await extendAccum(socket, accum, profile)
+      aareHit = findAare(accum)
+    }
+
+    if (!aareHit) {
+      setInboundProtocolPhase("aare_missing", "no parseable AARE")
+      setInboundAssociationOutcome({
+        attempted: true,
+        verifiedOnWire: false,
+        resultEnum: null,
+        aareApduHex: null,
+      })
+      onIngressError("inbound_aare_missing")
+      onSessionData(
+        accum.length,
+        Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
+        "inbound_session_failed"
+      )
+      return
+    }
+
+    if (aareHit.result !== 0) {
+      setInboundProtocolPhase("aare_rejected", `association-result=${aareHit.result}`)
+      setInboundAssociationOutcome({
+        attempted: true,
+        verifiedOnWire: false,
+        resultEnum: aareHit.result,
+        aareApduHex: capHex(aareHit.apdu.toString("hex")),
+      })
+      onIngressError(`inbound_aare_rejected_${aareHit.result}`)
+      onSessionData(
+        accum.length,
+        Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
+        "inbound_session_failed"
+      )
+      return
+    }
+
+    setInboundProtocolPhase("association_accepted", "")
+    setInboundAssociationOutcome({
+      attempted: true,
+      verifiedOnWire: true,
+      resultEnum: 0,
+      aareApduHex: capHex(aareHit.apdu.toString("hex")),
+    })
+    onSessionData(
+      accum.length,
+      Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
+      "inbound_association_verified"
+    )
+
+    const obis = obisStringToSixBytes(profile.identityObis)
+    if (!obis) {
+      setInboundProtocolPhase("identity_obis_invalid", profile.identityObis)
+      setInboundIdentityOutcome({
+        attempted: false,
+        verifiedOnWire: false,
+        valueHex: null,
+      })
+      onIngressError("inbound_identity_obis_invalid")
+      return
+    }
+
+    const getPdu = buildGetRequestNormalPayload(
+      profile.identityClassId,
+      obis,
+      profile.identityAttributeId
+    )
+
+    setInboundProtocolPhase("identity_get_sent", profile.identityObis)
+    setInboundIdentityOutcome({
+      attempted: true,
+      verifiedOnWire: false,
+      valueHex: null,
+    })
+
+    await writeAll(
+      socket,
+      buildHdlcIFrame(meter, client, HDLC_I_FRAME_SECOND, getPdu)
+    )
+    accum = await extendAccum(socket, accum, profile)
+
+    let getHit = findGetResponse(accum)
+    for (let i = 0; i < 8 && !getHit?.verified; i++) {
+      accum = await extendAccum(socket, accum, profile)
+      getHit = findGetResponse(accum)
+    }
+
+    if (!getHit?.verified) {
+      setInboundProtocolPhase("identity_get_unverified", getHit?.note ?? "no_get_response")
+      setInboundIdentityOutcome({
+        attempted: true,
+        verifiedOnWire: false,
+        valueHex: null,
+      })
+      onIngressError("inbound_identity_get_failed")
+      onSessionData(
+        accum.length,
+        Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
+        "inbound_association_verified"
+      )
+      return
+    }
+
+    setInboundProtocolPhase("identity_read_verified", getHit.note)
+    setInboundIdentityOutcome({
+      attempted: true,
+      verifiedOnWire: true,
+      valueHex: getHit.valueHex,
+    })
+    onSessionData(
+      accum.length,
+      Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
+      "inbound_identity_read_verified"
+    )
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    setInboundProtocolPhase("session_error", msg)
+    onIngressError(`inbound_session_error: ${msg}`)
+    onSessionData(
+      accum.length,
+      Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
+      "inbound_session_failed"
+    )
+  } finally {
+    if (profile.sendDiscBeforeClose) {
+      try {
+        await writeAll(socket, buildHdlcUFrame(meter, client, HDLC_DISC))
+        await readSocketBurst(
+          socket,
+          Math.max(300, profile.discDrainTimeoutMs),
+          Math.min(150, profile.dlmsReadIdleMs)
+        )
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (!socket.destroyed) socket.destroy()
+  }
+}

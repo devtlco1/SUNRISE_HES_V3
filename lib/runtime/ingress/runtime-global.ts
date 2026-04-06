@@ -21,6 +21,20 @@ export type IngressDiagnosticsState = {
   lastSessionClass: IngressSessionClass
   lastIngressError: string | null
   lastInboundPreviewHex: string | null
+  /** Whether inbound DLMS session machine is enabled (env) for the last profile evaluation. */
+  inboundDlmsSessionEnabled: boolean
+  inboundProtocolProfileValid: boolean
+  inboundProtocolProfileError: string | null
+  inboundAuthMode: string
+  lastInboundProtocolPhase: string
+  inboundAssociationAttempted: boolean
+  inboundAssociationVerifiedOnWire: boolean
+  inboundAssociationResultEnum: number | null
+  inboundAareApduHex: string | null
+  inboundIdentityReadAttempted: boolean
+  inboundIdentityReadVerifiedOnWire: boolean
+  inboundIdentityValueHex: string | null
+  inboundLastProtocolDetail: string
 }
 
 export type IngressProcessRuntime = {
@@ -47,6 +61,19 @@ function createInitialDiagnostics(): IngressDiagnosticsState {
     lastSessionClass: "idle",
     lastIngressError: null,
     lastInboundPreviewHex: null,
+    inboundDlmsSessionEnabled: false,
+    inboundProtocolProfileValid: true,
+    inboundProtocolProfileError: null,
+    inboundAuthMode: "LOW",
+    lastInboundProtocolPhase: "idle",
+    inboundAssociationAttempted: false,
+    inboundAssociationVerifiedOnWire: false,
+    inboundAssociationResultEnum: null,
+    inboundAareApduHex: null,
+    inboundIdentityReadAttempted: false,
+    inboundIdentityReadVerifiedOnWire: false,
+    inboundIdentityValueHex: null,
+    inboundLastProtocolDetail: "",
   }
 }
 

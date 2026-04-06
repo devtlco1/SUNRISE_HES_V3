@@ -6,19 +6,41 @@ This deployment expects the **meter (or field gateway) to open the TCP connectio
 
 - Field topology: meter is configured with server IP/port and **initiates** TCP.
 - The web UI does **not** speak DLMS; the Node runtime owns the socket lifecycle.
-- **Inbound bytes are not proof of DLMS association** until a real parser validates AARQ/AARE and COSEM on that stream.
+- **TCP bytes alone are not proof** of HDLC FCS validity, association, or COSEM reads. Use `/api/runtime/ingress/status` fields that are explicitly named `verifiedOnWire` / `verified` semantics.
 
-## Environment variables
+## Environment variables — listener
 
 | Variable | Purpose |
 | -------- | ------- |
 | `RUNTIME_TCP_METER_INGRESS_ENABLED` | `true` / `1` / `yes` to start the listener at process boot (via `instrumentation.ts`). |
 | `RUNTIME_TCP_METER_INGRESS_HOST` | Bind address; default `0.0.0.0` if unset (all IPv4 interfaces). |
 | `RUNTIME_TCP_METER_INGRESS_PORT` | **Required** when ingress is enabled: TCP port 1–65535. |
-| `RUNTIME_TCP_METER_INGRESS_SOCKET_TIMEOUT_SECONDS` | Idle timeout per accepted socket (default `120`). |
+| `RUNTIME_TCP_METER_INGRESS_SOCKET_TIMEOUT_SECONDS` | Idle timeout for **passive** preview sockets (default `120`). Active DLMS sessions clear the per-socket idle timer at start. |
 | `INTERNAL_API_TOKEN` | Reserved for future authenticated internal ingest/API hooks (not required for ingress status today). |
 
-Do **not** commit production host/port values. Configure on the VPS only (PM2, systemd, or gitignored env file).
+## Environment variables — inbound DLMS session (vendor profile)
+
+When ingress is enabled, a **vendor-style DLMS session** runs on each accepted socket unless disabled. Baseline defaults match the documented MVP-AMI profile; **override on the VPS** via env. **Do not commit** `RUNTIME_INGRESS_DLMS_PASSWORD` or production endpoints.
+
+| Variable | Purpose |
+| -------- | ------- |
+| `RUNTIME_INGRESS_DLMS_SESSION_ENABLED` | Set to `false` / `0` to disable the session runner (passive byte preview only). Default: on when ingress is enabled. |
+| `RUNTIME_INGRESS_DLMS_AUTH` | `LOW` (default) or `NONE`. `LOW` requires `RUNTIME_INGRESS_DLMS_PASSWORD` on the server. |
+| `RUNTIME_INGRESS_DLMS_PASSWORD` | LLS password (server env only). |
+| `RUNTIME_INGRESS_DLMS_CLIENT_LOGICAL` | Client logical address (default `1`). |
+| `RUNTIME_INGRESS_DLMS_METER_ADDRESS_HEX` | Meter HDLC destination address (hex), e.g. `0002046303`. |
+| `RUNTIME_INGRESS_VENDOR_USE_BROADCAST_SNRM_FIRST` | `true`/`false`; default follows MVP baseline (broadcast SNRM first). |
+| `RUNTIME_INGRESS_VENDOR_BROADCAST_SNRM_HEX` | Full broadcast SNRM frame (hex). |
+| `RUNTIME_INGRESS_VENDOR_IEC_ACK_HEX_LIST` | Comma-separated IEC ACK candidates (hex) for TCP preamble matching. |
+| `RUNTIME_INGRESS_VENDOR_AFTER_IEC_SLEEP_MS` | Sleep after IEC ACK match (ms). |
+| `RUNTIME_INGRESS_DLMS_READ_TIMEOUT_SECONDS` | Max wait per read burst (seconds, default `2.5`). |
+| `RUNTIME_INGRESS_DLMS_READ_IDLE_MS` | Idle gap to end a read burst (default `120`). |
+| `RUNTIME_INGRESS_VENDOR_UA_SWAP_ADDRESSES` | Experimental UA addressing when answering meter SNRM. |
+| `RUNTIME_INGRESS_VENDOR_SEND_DISC_BEFORE_CLOSE` | Send DISC before closing socket (default true). |
+| `RUNTIME_INGRESS_VENDOR_DISC_DRAIN_TIMEOUT_SECONDS` | Drain window after DISC. |
+| `RUNTIME_INGRESS_IDENTITY_OBIS` | Identity object OBIS (default `0.0.96.1.1.255`). |
+| `RUNTIME_INGRESS_IDENTITY_CLASS_ID` | COSEM class ID (default `1`). |
+| `RUNTIME_INGRESS_IDENTITY_ATTRIBUTE_ID` | Attribute id (default `2`). |
 
 ## Process model
 
@@ -29,12 +51,18 @@ Do **not** commit production host/port values. Configure on the VPS only (PM2, s
 
 ## Diagnostics
 
-- **GET** `/api/runtime/ingress/status` — JSON with env-derived `config` and live `status` (listener state, last remote peer, byte counts, heuristic session class, disclaimer).
+- **GET** `/api/runtime/ingress/status` — `config` (listener), `protocolProfile` (non-secret profile snapshot), and `status` (listener + last-session protocol outcomes).
 - Server logs prefixed with `[meter-ingress]` for bind, accept, close, and errors.
 
-### Session classification (heuristic only)
+### On-wire truth fields (status)
 
-Observational values include: `tcp_connected`, `bytes_received`, `hdlc_unclassified`, `hdlc_candidate`, `dlms_not_verified` (when `0x7E` suggests possible HDLC—still **not** verified DLMS). **Association is not attempted** on the inbound path in this release.
+- `inboundAssociationAttempted` / `inboundAssociationVerifiedOnWire` — `true` only when an AARE was found inside a **valid HDLC I-frame** (FCS checked) and `association-result` enum is **0**.
+- `inboundIdentityReadAttempted` / `inboundIdentityReadVerifiedOnWire` — `true` only when a **GET-Response-Normal**–shaped APDU is parsed after association (best-effort BER walk; may not cover all meters).
+- `lastInboundProtocolPhase` — coarse state machine position for the last connection.
+
+### Session classification (`lastSessionClass`)
+
+Includes heuristic classes (`hdlc_candidate`, `dlms_not_verified`, …) and, when the session runner completes steps, `inbound_association_verified` / `inbound_identity_read_verified` / `inbound_session_failed`.
 
 ## Verify on the VPS
 
@@ -51,17 +79,18 @@ Observational values include: `tcp_connected`, `bytes_received`, `hdlc_unclassif
    curl -sS "http://127.0.0.1:<app-port>/api/runtime/ingress/status" | jq .
    ```
 
-   Expect `status.listening: true` when bind succeeded, `status.ingressEnabled: true`, and `status.disclaimer` explaining that bytes ≠ association.
-
-4. When a meter connects, expect `totalConnectionsAccepted` to increase and `lastRemoteAddress` / `lastSessionClass` to update.
+4. When a meter connects, expect counters and protocol fields to update. Confirm `inboundAssociationVerifiedOnWire` and `inboundIdentityReadVerifiedOnWire` only if the meter actually completes those steps on wire.
 
 ## Code layout
 
-- `lib/runtime/ingress/` — config, state, classifier, TCP listener, future handoff stub (`inbound-handoff.ts`).
-- Outbound probe / DLMS harness remains under `lib/runtime/real/` (unchanged as the diagnostic path).
+- `lib/runtime/ingress/` — listener, profile (`inbound-profile.ts`), inbound session (`inbound-dlms-session.ts`), diagnostics state.
+- `lib/runtime/real/hdlc-frame-variable.ts` — variable-width HDLC U/I frames (broadcast + 4-byte server address path).
+- `lib/runtime/real/dlms-aarq-lls.ts` — LLS AARQ payload builder.
+- `lib/runtime/real/dlms-get-normal.ts` — GET-Request-Normal + response scrape.
+- Outbound probe under `lib/runtime/real/` remains the **diagnostic** TCP client path.
 
-## Next implementation steps (not done here)
+## Next implementation steps
 
-- HDLC deframing on the inbound socket.
-- IEC 62056 / DLMS association and COSEM reads.
-- Internal reading ingest (persistence) behind a separate boundary from protocol execution.
+- Stronger COSEM/APDU parsing (invoke-id–aware GET-Response, segmentation, RR/RNR).
+- Internal reading ingest (persistence) behind `INTERNAL_API_TOKEN` or a dedicated worker boundary.
+- IEC optical/serial wake parameters for non-TCP media when applicable.

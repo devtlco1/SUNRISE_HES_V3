@@ -1,10 +1,12 @@
 import net from "node:net"
 
 import { classifyInboundPreview } from "@/lib/runtime/ingress/classify"
-import { handoffInboundMeterSocketForFutureDlms } from "@/lib/runtime/ingress/inbound-handoff"
+import { runInboundDlmsOnSocket } from "@/lib/runtime/ingress/inbound-dlms-session"
+import { loadInboundMeterProtocolProfile } from "@/lib/runtime/ingress/inbound-profile"
 import { loadMeterIngressConfig } from "@/lib/runtime/ingress/config"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
 import {
+  applyInboundProfileDiagnostics,
   markListenFailed,
   markListenerConfigured,
   markListenerStopped,
@@ -24,12 +26,7 @@ function remoteKey(socket: net.Socket): { address: string; port: number } {
   return { address: a, port: p }
 }
 
-function handleMeterSocket(socket: net.Socket, socketTimeoutMs: number): void {
-  const { address, port } = remoteKey(socket)
-  onConnectionAccepted(address, port)
-  handoffInboundMeterSocketForFutureDlms(socket)
-  console.info(`${LOG_PREFIX} accepted ${address}:${port}`)
-
+function attachPassivePreview(socket: net.Socket, socketTimeoutMs: number, address: string, port: number): void {
   let received = 0
   let previewBuf = Buffer.alloc(0)
 
@@ -49,8 +46,7 @@ function handleMeterSocket(socket: net.Socket, socketTimeoutMs: number): void {
       ])
     }
     const heur = classifyInboundPreview(previewBuf)
-    const sessionClass =
-      heur === "hdlc_candidate" ? "dlms_not_verified" : heur
+    const sessionClass = heur === "hdlc_candidate" ? "dlms_not_verified" : heur
     onSessionData(received, previewBuf, sessionClass)
   })
 
@@ -63,6 +59,50 @@ function handleMeterSocket(socket: net.Socket, socketTimeoutMs: number): void {
     onConnectionClosed()
     console.info(`${LOG_PREFIX} closed ${address}:${port} bytes=${received}`)
   })
+}
+
+function handleMeterSocket(socket: net.Socket, socketTimeoutMs: number): void {
+  const { address, port } = remoteKey(socket)
+  onConnectionAccepted(address, port)
+  console.info(`${LOG_PREFIX} accepted ${address}:${port}`)
+
+  const profile = loadInboundMeterProtocolProfile()
+  applyInboundProfileDiagnostics({
+    sessionEnabled: profile.sessionEnabled,
+    profileValid: profile.valid,
+    profileError: profile.configError,
+    authMode: profile.auth,
+  })
+
+  if (profile.sessionEnabled && profile.valid) {
+    let closeAccounted = false
+    const finish = () => {
+      if (closeAccounted) return
+      closeAccounted = true
+      onConnectionClosed()
+      console.info(`${LOG_PREFIX} closed ${address}:${port}`)
+    }
+    socket.on("error", (err) => {
+      console.warn(`${LOG_PREFIX} socket error ${address}:${port}`, err.message)
+      onIngressError(`socket_error ${address}:${port}: ${err.message}`)
+      finish()
+    })
+    socket.on("close", finish)
+    void runInboundDlmsOnSocket(socket, profile).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`${LOG_PREFIX} inbound session error ${address}:${port}`, msg)
+      onIngressError(`inbound_session_async: ${msg}`)
+      if (!socket.destroyed) socket.destroy()
+    })
+    return
+  }
+
+  if (profile.sessionEnabled && !profile.valid) {
+    console.warn(`${LOG_PREFIX} inbound profile invalid: ${profile.configError}`)
+    onIngressError(profile.configError ?? "inbound_profile_invalid")
+  }
+
+  attachPassivePreview(socket, socketTimeoutMs, address, port)
 }
 
 export function startMeterTcpIngress(): void {

@@ -12,6 +12,9 @@ export type IngressSessionClass =
   | "hdlc_candidate"
   | "dlms_not_verified"
   | "association_not_attempted"
+  | "inbound_association_verified"
+  | "inbound_identity_read_verified"
+  | "inbound_session_failed"
 
 export type MeterIngressConfig = {
   enabled: boolean
@@ -44,5 +47,20 @@ export type MeterIngressPublicStatus = {
   lastIngressError: string | null
   /** Hex preview of first captured bytes on last session (capped); null if none. */
   lastInboundPreviewHex: string | null
+  /** Inbound DLMS session runner enabled (env); false if disabled or ingress off. */
+  inboundDlmsSessionEnabled: boolean
+  inboundProtocolProfileValid: boolean
+  inboundProtocolProfileError: string | null
+  inboundAuthMode: string
+  lastInboundProtocolPhase: string
+  inboundAssociationAttempted: boolean
+  inboundAssociationVerifiedOnWire: boolean
+  inboundAssociationResultEnum: number | null
+  /** Truncated AARE APDU hex when association was parsed (diagnostics). */
+  inboundAareApduHex: string | null
+  inboundIdentityReadAttempted: boolean
+  inboundIdentityReadVerifiedOnWire: boolean
+  inboundIdentityValueHex: string | null
+  inboundLastProtocolDetail: string
   disclaimer: string
 }

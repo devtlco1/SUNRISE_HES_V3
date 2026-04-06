@@ -1,4 +1,5 @@
 import { loadMeterIngressConfig } from "@/lib/runtime/ingress/config"
+import { loadInboundMeterProtocolProfile } from "@/lib/runtime/ingress/inbound-profile"
 import { getMeterIngressPublicStatus } from "@/lib/runtime/ingress/state"
 import { NextResponse } from "next/server"
 
@@ -12,6 +13,7 @@ export const dynamic = "force-dynamic"
 export async function GET() {
   const cfg = loadMeterIngressConfig()
   const status = getMeterIngressPublicStatus(cfg.enabled)
+  const profile = loadInboundMeterProtocolProfile()
   return NextResponse.json(
     {
       config: {
@@ -21,6 +23,22 @@ export async function GET() {
         port: cfg.port,
         socketTimeoutSeconds: cfg.socketTimeoutSeconds,
         configError: cfg.configError,
+      },
+      protocolProfile: {
+        sessionEnabled: profile.sessionEnabled,
+        valid: profile.valid,
+        configError: profile.configError,
+        auth: profile.auth,
+        passwordConfigured: profile.password !== null && profile.password.length > 0,
+        clientLogical: profile.clientLogical,
+        meterAddressHex: profile.meterServerAddress.toString("hex"),
+        useBroadcastSnrmFirst: profile.useBroadcastSnrmFirst,
+        broadcastSnrmConfigured:
+          profile.broadcastSnrm !== null && profile.broadcastSnrm.length > 0,
+        identityObis: profile.identityObis,
+        identityClassId: profile.identityClassId,
+        identityAttributeId: profile.identityAttributeId,
+        dlmsReadTimeoutMs: profile.dlmsReadTimeoutMs,
       },
       status,
     },
