@@ -9,6 +9,7 @@ export type AlarmLifecycleState =
 
 export type AlarmAckState = "unacknowledged" | "acknowledged" | "assigned"
 
+/** Operational alarm queue row (read-only API + UI filters). */
 export type AlarmListRow = {
   id: string
   meterId: string

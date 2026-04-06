@@ -33,6 +33,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
+  ALARMS_FETCH_NETWORK_ERROR,
+  fetchAlarms,
+} from "@/lib/alarms/api"
+import {
   formatAlarmAck,
   formatAlarmSeverity,
   formatAlarmState,
@@ -42,7 +46,6 @@ import {
   operationalMonoIdTriggerClass,
   operationalRowActionTriggerClass,
 } from "@/lib/ui/operational"
-import { mockAlarmListRows } from "@/lib/mock/alarms"
 import type { AlarmListRow } from "@/types/alarm"
 
 const ALL = "all"
@@ -68,6 +71,10 @@ function AlarmsTableHeaderRow() {
 }
 
 type AlarmsListProps = {
+  /**
+   * When provided, skips `/api/alarms` (e.g. `NEXT_PUBLIC_ALARMS_USE_MOCK` or tests).
+   * Pass `[]` to exercise an empty catalog without the API.
+   */
   rows?: AlarmListRow[]
 }
 
@@ -90,8 +97,15 @@ function matchesSearch(row: AlarmListRow, q: string) {
     .includes(n)
 }
 
-export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListProps) {
-  const [loading, setLoading] = useState(true)
+export function AlarmsList({ rows: rowsProp }: AlarmsListProps) {
+  const staticMode = rowsProp !== undefined
+  const [fetchedRows, setFetchedRows] = useState<AlarmListRow[]>([])
+  const [loadKey, setLoadKey] = useState(0)
+  const [loading, setLoading] = useState(rowsProp === undefined)
+  const [error, setError] = useState<string | null>(null)
+
+  const sourceRows = rowsProp !== undefined ? rowsProp : fetchedRows
+
   const [search, setSearch] = useState("")
   const [severityFilter, setSeverityFilter] = useState<string>(ALL)
   const [typeFilter, setTypeFilter] = useState<string>(ALL)
@@ -104,9 +118,43 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
   const [selected, setSelected] = useState<AlarmListRow | null>(null)
 
   useEffect(() => {
-    const t = window.setTimeout(() => setLoading(false), 380)
-    return () => window.clearTimeout(t)
-  }, [])
+    if (staticMode) return
+
+    const ac = new AbortController()
+    let stale = false
+
+    fetchAlarms(ac.signal)
+      .then((result) => {
+        if (stale) return
+        setLoading(false)
+        if (!result.ok) {
+          setError(result.error)
+          setFetchedRows([])
+          return
+        }
+        setError(null)
+        setFetchedRows(result.rows)
+      })
+      .catch((e) => {
+        if (e instanceof Error && e.name === "AbortError") return
+        if (stale) return
+        setLoading(false)
+        setError(ALARMS_FETCH_NETWORK_ERROR)
+        setFetchedRows([])
+      })
+
+    return () => {
+      stale = true
+      ac.abort()
+    }
+  }, [staticMode, loadKey])
+
+  function reload() {
+    if (staticMode) return
+    setLoading(true)
+    setError(null)
+    setLoadKey((k) => k + 1)
+  }
 
   const resetPage = useCallback(() => setPage(1), [])
 
@@ -193,8 +241,10 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
     if (!open) setSelected(null)
   }
 
-  const emptyCatalog = sourceRows.length === 0
-  const noResults = !emptyCatalog && filtered.length === 0
+  const fetchFailed = !staticMode && !loading && error !== null
+  const emptyCatalog = !fetchFailed && sourceRows.length === 0
+  const noResults =
+    !fetchFailed && !emptyCatalog && filtered.length === 0
 
   return (
     <div className={operationalListPageStackClass}>
@@ -308,7 +358,11 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
 
       <SectionCard
         title="Active alarms"
-        description="Alarm queue with filters and bulk triage. Data and actions are mock until the feed is connected."
+        description={
+          staticMode
+            ? "Static catalog — filters and pagination run client-side."
+            : "Served from GET /api/alarms. Filters and pagination run client-side on the fetched row set."
+        }
       >
         <TableShell>
           <TableToolbar
@@ -332,7 +386,13 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
             }
             right={
               <>
-                <Button type="button" variant="outline" size="sm" disabled>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={staticMode || loading}
+                  onClick={reload}
+                >
                   Refresh
                 </Button>
                 <Button type="button" variant="secondary" size="sm" disabled>
@@ -353,7 +413,7 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
                 </Table>
               </div>
             </div>
-          ) : emptyCatalog || noResults ? null : (
+          ) : fetchFailed ? null : emptyCatalog || noResults ? null : (
             <div className="relative min-w-0">
               <div className="min-w-[1280px]">
                 <Table>
@@ -454,14 +514,35 @@ export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListP
             </div>
           )}
 
-          {!loading && emptyCatalog ? (
+          {!loading && fetchFailed ? (
             <TableEmpty
-              title="No active alarms"
-              description="The connected feed will populate this table. Use an empty rows prop to verify this layout."
+              title="Unable to load catalog"
+              description={error ?? "Request failed."}
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={reload}
+                >
+                  Retry
+                </Button>
+              }
             />
           ) : null}
 
-          {!loading && noResults ? (
+          {!loading && !fetchFailed && emptyCatalog ? (
+            <TableEmpty
+              title="No active alarms"
+              description={
+                staticMode
+                  ? "Use an empty rows prop to verify this layout."
+                  : "The catalog source returned no rows. If this is unexpected, verify data/alarms.json or the upstream feed."
+              }
+            />
+          ) : null}
+
+          {!loading && !fetchFailed && noResults ? (
             <TableEmpty
               title="No alarms match filters"
               description="Clear filters or widen severity, state, and assignment criteria."
