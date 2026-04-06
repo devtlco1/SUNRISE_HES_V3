@@ -1,0 +1,446 @@
+meter_model: ST34-HW08
+source: "User Manual 3PH ST34-HW08"
+notes:
+  - "This list contains the OBIS codes explicitly listed in the manual tables."
+  - "Where x appears, it means tariff index 1..4."
+  - "Suspicious entries are preserved literally from the manual."
+
+obis_catalog:
+  - group: "Metering OBIS"
+    items:
+      - obis: "1.0.1.8.x.255"
+        description: "Total import active energy and energy by tariff"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.2.8.x.255"
+        description: "Total export active energy and energy by tariff"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.3.8.x.255"
+        description: "Total import reactive energy and energy by tariff"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.4.8.x.255"
+        description: "Total export reactive energy and energy by tariff"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.5.8.x.255"
+        description: "Total first quadrant reactive energy and energy by tariff"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.6.8.x.255"
+        description: "Total second quadrant reactive energy and energy by tariff"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.7.8.x.255"
+        description: "Total third quadrant reactive energy and energy by tariff"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.8.8.x.255"
+        description: "Total fourth quadrant reactive energy and energy by tariff"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.15.8.x.255"
+        description: "Total absolute active energy and energy by tariff"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.21.8.0.255"
+        description: "Import active energy L1"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.41.8.0.255"
+        description: "Import active energy L2"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.61.8.0.255"
+        description: "Import active energy L3"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.22.8.0.255"
+        description: "Export active energy L1"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.42.8.0.255"
+        description: "Export active energy L2"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.62.8.0.255"
+        description: "Export active energy L3"
+        unit: "kWh"
+        scaler: -3
+
+  - group: "Net Energy"
+    items:
+      - obis: "1.0.1.9.x.255"
+        description: "Net import active energy total and by tariff for the current month"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.2.9.x.255"
+        description: "Net export active energy total and by tariff for the current month"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.3.9.x.255"
+        description: "Net import reactive energy total and by tariff for the current month"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.4.9.x.255"
+        description: "Net export reactive energy total and by tariff for the current month"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.15.9.x.255"
+        description: "Total net absolute active energy and by tariffs for the current month"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.1.29.x.255"
+        description: "Net import active energy total and by tariff in Load Profile 1"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.2.29.x.255"
+        description: "Net export active energy total and by tariff in Load Profile 1"
+        unit: "kWh"
+        scaler: -3
+      - obis: "1.0.3.29.x.255"
+        description: "Net import reactive energy total and by tariff in Load Profile 1"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.4.29.x.255"
+        description: "Net export reactive energy total and by tariff in Load Profile 1"
+        unit: "kvarh"
+        scaler: -3
+      - obis: "1.0.15.29.x.255"
+        description: "Total net absolute active energy and by tariffs in Load Profile 1"
+        unit: "kWh"
+        scaler: -3
+
+  - group: "Instantaneous Value"
+    items:
+      - obis: "1.0.32.7.0.255"
+        description: "L1 voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.52.7.0.255"
+        description: "L2 voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.72.7.0.255"
+        description: "L3 voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.31.7.0.255"
+        description: "L1 current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.51.7.0.255"
+        description: "L2 current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.71.7.0.255"
+        description: "L3 current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.91.7.0.255"
+        description: "Neutral line current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.1.7.0.255"
+        description: "Active forward power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.2.7.0.255"
+        description: "Active reverse power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.3.7.0.255"
+        description: "Reactive forward power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.4.7.0.255"
+        description: "Reactive reverse power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.9.7.0.255"
+        description: "Apparent forward power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.10.7.0.255"
+        description: "Apparent reverse power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.14.7.0.255"
+        description: "Frequency"
+        unit: "Hz"
+        scaler: -2
+      - obis: "1.0.13.7.0.255"
+        description: "Total power factor"
+        unit: null
+        scaler: -3
+      - obis: "1.0.33.7.0.255"
+        description: "L1 power factor"
+        unit: null
+        scaler: -3
+      - obis: "1.0.53.7.0.255"
+        description: "L2 power factor"
+        unit: null
+        scaler: -3
+      - obis: "1.0.73.7.0.255"
+        description: "L3 power factor"
+        unit: null
+        scaler: -3
+      - obis: "1.0.21.7.0.255"
+        description: "L1 active forward power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.22.7.0.255"
+        description: "L1 active reverse power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.23.7.0.255"
+        description: "L1 reactive forward power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.24.7.0.255"
+        description: "L1 reactive reverse power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.41.7.0.255"
+        description: "L2 active forward power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.42.7.0.255"
+        description: "L2 active reverse power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.43.7.0.255"
+        description: "L2 reactive forward power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.44.7.0.255"
+        description: "L2 reactive reverse power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.61.7.0.255"
+        description: "L3 active forward power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.62.7.0.255"
+        description: "L3 active reverse power"
+        unit: "W"
+        scaler: -3
+      - obis: "1.0.63.7.0.255"
+        description: "L3 reactive forward power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.64.7.0.255"
+        description: "L3 reactive reverse power"
+        unit: "var"
+        scaler: -3
+      - obis: "1.0.29.7.0.255"
+        description: "L1 apparent forward power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.30.7.0.255"
+        description: "L1 apparent reverse power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.49.7.0.255"
+        description: "L2 apparent forward power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.50.7.0.255"
+        description: "L2 apparent reverse power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.69.7.0.255"
+        description: "L3 apparent forward power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.70.7.0.255"
+        description: "L3 apparent reverse power"
+        unit: "kVA"
+        scaler: -3
+      - obis: "1.0.81.7.10.255"
+        description: "Angle UA_UB"
+        unit: "°"
+        scaler: -1
+      - obis: "1.0.81.7.20.255"
+        description: "Angle UA_UC"
+        unit: "°"
+        scaler: -1
+      - obis: "1.0.81.7.21.255"
+        description: "Angle UB_UC"
+        unit: "°"
+        scaler: -1
+      - obis: "81.7.40.255"
+        description: "Angle UA_IA"
+        unit: "°"
+        scaler: -1
+        note: "Literal from manual; looks suspicious / possibly incomplete"
+      - obis: "81.7.51.255"
+        description: "Angle UA_IB"
+        unit: "°"
+        scaler: -1
+        note: "Literal from manual; looks suspicious / possibly incomplete"
+      - obis: "81.7.62.255"
+        description: "Angle UA_IC"
+        unit: "°"
+        scaler: -1
+        note: "Literal from manual; looks suspicious / possibly incomplete"
+      - obis: "0.0.96.9.0.255"
+        description: "Meter temperature"
+        unit: "℃"
+        scaler: -2
+      - obis: "1.0.91.7.131.25"
+        description: "Differential current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.131.7.0.255"
+        description: "Power factor reactive energy"
+        unit: null
+        scaler: null
+      - obis: "1.0.96.6.3.255"
+        description: "Battery voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.96.6.11.255"
+        description: "RTC battery voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "0.0.96.8.0.255"
+        description: "Meter total operating time"
+        unit: "Hour"
+        scaler: null
+
+  - group: "Max and Min Value"
+    items:
+      - obis: "1.0.32.6.0.255"
+        description: "L1 maximum voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.52.6.0.255"
+        description: "L2 maximum voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.72.6.0.255"
+        description: "L3 maximum voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.31.6.0.255"
+        description: "L1 maximum current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.51.6.0.255"
+        description: "L2 maximum current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.71.6.0.255"
+        description: "L3 maximum current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.32.3.0.255"
+        description: "L1 minimum voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.52.3.0.255"
+        description: "L2 minimum voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.72.3.0.255"
+        description: "L3 minimum voltage"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.31.3.0.255"
+        description: "L1 minimum current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.51.3.0.255"
+        description: "L2 minimum current"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.71.3.0.255"
+        description: "L3 minimum current"
+        unit: "A"
+        scaler: -3
+
+  - group: "Average Value"
+    items:
+      - obis: "1.0.32.25.0.255"
+        description: "L1 average voltage in load profile 1"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.52.25.0.255"
+        description: "L2 average voltage in load profile 1"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.72.25.0.255"
+        description: "L3 average voltage in load profile 1"
+        unit: "V"
+        scaler: -2
+      - obis: "1.0.31.25.0.255"
+        description: "L1 average current in load profile 1"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.51.25.0.255"
+        description: "L2 average current in load profile 1"
+        unit: "A"
+        scaler: -3
+      - obis: "1.0.71.6.0.255"
+        description: "L3 average current in load profile 1"
+        unit: "A"
+        scaler: -3
+        note: "Literal from manual; looks suspicious because suffix matches max-current pattern, not average-value pattern"
+      - obis: "1.0.1.25.0.255"
+        description: "Average import active power in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.2.25.0.255"
+        description: "Average export active power in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.3.25.0.255"
+        description: "Average import reactive power in load profile 1"
+        unit: "Var"
+        scaler: -1
+      - obis: "1.0.4.25.0.255"
+        description: "Average export reactive power in load profile 1"
+        unit: "Var"
+        scaler: -1
+      - obis: "1.0.21.25.0.255"
+        description: "Average import active power L1 in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.22.25.0.255"
+        description: "Average export active power L1 in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.41.25.0.255"
+        description: "Average import active power L2 in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.42.25.0.255"
+        description: "Average export active power L2 in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.61.25.0.255"
+        description: "Average import active power L3 in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.62.25.0.255"
+        description: "Average export active power L3 in load profile 1"
+        unit: "W"
+        scaler: -1
+      - obis: "1.0.13.25.0.255"
+        description: "Power factor in load profile 1"
+        unit: null
+        scaler: -3
+      - obis: "1.0.33.25.0.255"
+        description: "Average power factor L1 in load profile 1"
+        unit: null
+        scaler: -3
+      - obis: "1.0.53.25.0.255"
+        description: "Average power factor L2 in load profile 1"
+        unit: null
+        scaler: -3
+      - obis: "1.0.73.25.0.255"
+        description: "Average power factor L3 in load profile 1"
+        unit: null
+        scaler: -3
