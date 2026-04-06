@@ -6,6 +6,7 @@ import { flushIngressTraceToFile } from "@/lib/runtime/ingress/protocol-trace-fi
 import {
   traceAareHuntStep,
   traceMeterAccumSnapshot,
+  traceOutboundAarqDiagnostic,
   traceOutboundFrame,
   traceProtocolStep,
 } from "@/lib/runtime/ingress/protocol-trace"
@@ -19,6 +20,10 @@ import {
 import { buildAarqLlsLnPayload } from "@/lib/runtime/real/dlms-aarq-lls"
 import { buildAarqPayload, listLlcStripVariantsForMeterReply } from "@/lib/runtime/real/dlms-apdu"
 import { buildAareSearchReport, findAareInMeterAccum } from "@/lib/runtime/real/dlms-aare-hunt"
+import {
+  describeOutboundAarqPayload,
+  type AarqBuilderKind,
+} from "@/lib/runtime/real/dlms-aarq-diag"
 import {
   buildGetRequestNormalPayload,
   obisStringToSixBytes,
@@ -217,22 +222,36 @@ export async function runInboundDlmsOnSocket(
       aareApduHex: null,
     })
 
-    const accumLenBeforePostAarq = accum.length
+    const postAarqRxBoundary = accum.length
+    const aarqBuilder: AarqBuilderKind =
+      profile.auth === "LOW" && profile.password ? "LOW_LLS_LN" : "LN_MINIMAL_NO_AUTH"
+    const aarqDiag = describeOutboundAarqPayload(aarq, aarqBuilder)
+    traceOutboundAarqDiagnostic({
+      ...aarqDiag,
+      meterAddressHexForIframe: meter.toString("hex"),
+      clientAddressHexForIframe: client.toString("hex"),
+    })
+    traceProtocolStep(
+      "aarq_iframe_sent",
+      `builder=${aarqBuilder}_meter=${meter.toString("hex")}_client=${client.toString("hex")}_llc_ref_ok=${String(aarqDiag.llcMatchesReference)}_pwd_wire_utf8_len=${aarqDiag.passwordUtf8ByteLength ?? "n/a"}`
+    )
     await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq), "aarq_iframe")
-    traceProtocolStep("aarq_iframe_sent", `meter=${meter.toString("hex")}_client=${client.toString("hex")}`)
     accum = await extendAccum(socket, accum, profile, "after_aarq")
-    traceAareHuntStep("after_aarq", accum, accumLenBeforePostAarq)
+    traceAareHuntStep("after_aarq", accum, postAarqRxBoundary, postAarqRxBoundary)
 
-    let aareHit = findAareInMeterAccum(accum)
+    let aareHit = findAareInMeterAccum(accum, postAarqRxBoundary)
     for (let i = 0; i < 8 && !aareHit; i++) {
       const lenBeforeBurst = accum.length
       accum = await extendAccum(socket, accum, profile, `await_aare_${i}`)
-      traceAareHuntStep(`await_aare_${i}`, accum, lenBeforeBurst)
-      aareHit = findAareInMeterAccum(accum)
+      traceAareHuntStep(`await_aare_${i}`, accum, lenBeforeBurst, postAarqRxBoundary)
+      aareHit = findAareInMeterAccum(accum, postAarqRxBoundary)
     }
 
     if (!aareHit) {
-      const rep = buildAareSearchReport(accum, { maxRows: 12 })
+      const rep = buildAareSearchReport(accum, {
+        maxRows: 12,
+        onlyFromByteOffset: postAarqRxBoundary,
+      })
       traceProtocolStep(
         "aare_missing_final",
         `${rep.code}|${rep.summary}|see_lastAareHuntReport_and_aarqAareSteps`
@@ -244,7 +263,11 @@ export async function runInboundDlmsOnSocket(
         resultEnum: null,
         aareApduHex: null,
       })
-      onIngressError("inbound_aare_missing")
+      onIngressError(
+        rep.code === "post_aarq_zero_rx"
+          ? "inbound_aare_no_rx_after_aarq"
+          : "inbound_aare_missing"
+      )
       onSessionData(
         accum.length,
         Buffer.from(accum.subarray(0, Math.min(512, accum.length))),

@@ -4,6 +4,7 @@
  */
 
 import type { GuruxEaFrameDiagnostics } from "@/lib/runtime/real/hdlc-frame-gurux-ea"
+import type { OutboundAarqPayloadDiag } from "@/lib/runtime/real/dlms-aarq-diag"
 
 /** Observational session state for an inbound connection (not verified COSEM). */
 export type IngressSessionClass =
@@ -39,6 +40,16 @@ export type IngressAareHuntReportPublic = {
   completeHdlcFrameCount: number
   iFrameVariantCount: number
   rows: IngressAareHuntRowPublic[]
+  /** Accumulator index where post-AARQ RX slice starts; null if full-buffer hunt. */
+  postAarqBoundary: number | null
+  /** Bytes in slice `accum[boundary..]` when boundary set. */
+  rxSliceByteLength: number
+}
+
+/** Outbound AARQ payload + HDLC address context (secrets may appear in AC hex). */
+export type IngressOutboundAarqDiagPublic = OutboundAarqPayloadDiag & {
+  meterAddressHexForIframe: string
+  clientAddressHexForIframe: string
 }
 
 /** Bounded last-session protocol evidence for operator debugging (no secrets). */
@@ -99,9 +110,13 @@ export type IngressProtocolTracePublic = {
     huntCode: string
     huntSummary: string
     rowCount: number
+    postAarqBoundary: number
+    rxSliceByteLength: number
   }>
   /** Full latest hunt snapshot (rows capped inside builder). */
   lastAareHuntReport: IngressAareHuntReportPublic | null
+  /** Payload breakdown for the last transmitted AARQ I-frame (may embed password in AC TLV hex). */
+  lastOutboundAarqDiagnostic: IngressOutboundAarqDiagPublic | null
 }
 
 export type MeterIngressConfig = {

@@ -1,5 +1,6 @@
 import type {
   IngressAareHuntReportPublic,
+  IngressOutboundAarqDiagPublic,
   IngressProtocolTracePublic,
 } from "@/lib/runtime/ingress/types"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
@@ -36,6 +37,7 @@ export function emptyIngressProtocolTrace(): IngressProtocolTracePublic {
     lastAarqAareSummary: null,
     aarqAareSteps: [],
     lastAareHuntReport: null,
+    lastOutboundAarqDiagnostic: null,
   }
 }
 
@@ -62,19 +64,26 @@ const MAX_AARE_HUNT_STEPS = 24
 /**
  * After each inbound burst following AARQ: record rx delta, HDLC segment count, and AARE hunt outcome.
  * `accumLenBeforeBurst` must be accum.length before the read that produced the current `accum`.
+ * `postAarqRxBoundary` = accum.length immediately before the AARQ I-frame was transmitted (search only `accum[boundary..]`).
  */
 export function traceAareHuntStep(
   phase: string,
   accum: Uint8Array,
-  accumLenBeforeBurst: number
+  accumLenBeforeBurst: number,
+  postAarqRxBoundary: number
 ): void {
   const t = trace()
-  const rep = buildAareSearchReport(accum, { maxRows: 8 })
+  const rep = buildAareSearchReport(accum, {
+    maxRows: 8,
+    onlyFromByteOffset: postAarqRxBoundary,
+  })
   const pub: IngressAareHuntReportPublic = {
     code: rep.code,
     summary: rep.summary,
     completeHdlcFrameCount: rep.completeHdlcFrameCount,
     iFrameVariantCount: rep.iFrameVariantCount,
+    postAarqBoundary: rep.postAarqBoundary,
+    rxSliceByteLength: rep.rxSliceByteLength,
     rows: rep.rows.map((r) => ({
       frameHexCapped: r.frameHexCapped,
       addressModel: r.addressModel,
@@ -101,7 +110,13 @@ export function traceAareHuntStep(
     huntCode: rep.code,
     huntSummary: rep.summary,
     rowCount: rep.rows.length,
+    postAarqBoundary: postAarqRxBoundary,
+    rxSliceByteLength: rep.rxSliceByteLength,
   })
+}
+
+export function traceOutboundAarqDiagnostic(diag: IngressOutboundAarqDiagPublic): void {
+  trace().lastOutboundAarqDiagnostic = diag
 }
 
 export function traceOutboundFrame(phase: string, data: Buffer): void {
