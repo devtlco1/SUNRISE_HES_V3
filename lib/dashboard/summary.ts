@@ -3,12 +3,24 @@ import type {
   ActivityItem,
   DashboardStat,
   RecentAlarmDigestRow,
+  RecentCommandDigestRow,
 } from "@/types/dashboard"
+import type { CommandJobRow } from "@/types/command"
 import type { ConnectivityListRow } from "@/types/connectivity"
 import type { MeterCommStatus, MeterListRow } from "@/types/meter"
 
 const ACTIVITY_LIMIT = 8
 const RECENT_ALARMS_LIMIT = 6
+const RECENT_COMMANDS_LIMIT = 5
+
+function isPendingCommandJob(job: CommandJobRow): boolean {
+  const inFlight =
+    job.queueState === "submitted" ||
+    job.queueState === "queued" ||
+    job.queueState === "dispatching" ||
+    job.queueState === "running"
+  return inFlight || job.pendingCount > 0
+}
 
 function isActiveAlarm(row: AlarmListRow): boolean {
   return row.state !== "cleared" && row.state !== "suppressed"
@@ -38,20 +50,23 @@ function compareOccurredAt(a: string, b: string): number {
 
 /**
  * Derives dashboard KPIs, a merged activity feed, and a short alarm digest
- * from normalized catalog rows (same sources as /api/meters, /api/connectivity, /api/alarms).
+ * from normalized catalog rows (same sources as the read-only domain APIs).
  */
 export function buildDashboardSnapshot(
   meters: MeterListRow[],
   connectivity: ConnectivityListRow[],
-  alarms: AlarmListRow[]
+  alarms: AlarmListRow[],
+  commandJobs: CommandJobRow[]
 ): {
   stats: DashboardStat[]
   activity: ActivityItem[]
   recentAlarms: RecentAlarmDigestRow[]
+  recentCommandJobs: RecentCommandDigestRow[]
 } {
   const totalMeters = meters.length
   const onlineMeters = meters.filter((m) => m.commStatus === "online").length
   const activeAlarms = alarms.filter(isActiveAlarm).length
+  const pendingCommands = commandJobs.filter(isPendingCommandJob).length
 
   const stats: DashboardStat[] = [
     {
@@ -66,8 +81,9 @@ export function buildDashboardSnapshot(
     },
     {
       label: "Pending Commands",
-      value: "—",
-      description: "Placeholder — command jobs API not integrated yet",
+      value: pendingCommands.toLocaleString(),
+      description:
+        "Jobs queued, dispatching, running, submitted, or with pending meter work",
     },
     {
       label: "Active Alarms",
@@ -111,5 +127,16 @@ export function buildDashboardSnapshot(
       lastSeen: a.lastSeen,
     }))
 
-  return { stats, activity, recentAlarms }
+  const recentCommandJobs: RecentCommandDigestRow[] = [...commandJobs]
+    .sort((a, b) => compareOccurredAt(a.submittedAt, b.submittedAt))
+    .slice(0, RECENT_COMMANDS_LIMIT)
+    .map((j) => ({
+      id: j.id,
+      templateName: j.templateName,
+      queueState: j.queueState,
+      submittedAt: j.submittedAt,
+      resultSummary: j.resultSummary,
+    }))
+
+  return { stats, activity, recentAlarms, recentCommandJobs }
 }

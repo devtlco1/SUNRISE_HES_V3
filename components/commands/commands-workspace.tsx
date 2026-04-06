@@ -34,11 +34,14 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
+  COMMANDS_FETCH_NETWORK_ERROR,
+  fetchCommandJobs,
+} from "@/lib/commands/api"
+import {
   type JobResultFilter,
   formatQueueState,
   jobMatchesResultFilter,
 } from "@/lib/commands/format"
-import { mockCommandJobs } from "@/lib/mock/commands"
 import {
   operationalMonoIdTriggerClass,
   operationalRowActionTriggerClass,
@@ -64,6 +67,10 @@ function JobsTableHeaderRow() {
 }
 
 type CommandsWorkspaceProps = {
+  /**
+   * When provided, skips `/api/commands` (e.g. `NEXT_PUBLIC_COMMANDS_USE_MOCK` or tests).
+   * Pass `[]` to exercise an empty catalog without the API.
+   */
   jobs?: CommandJobRow[]
 }
 
@@ -82,10 +89,15 @@ function matchesJobSearch(row: CommandJobRow, q: string) {
     .includes(n)
 }
 
-export function CommandsWorkspace({
-  jobs: sourceRows = mockCommandJobs,
-}: CommandsWorkspaceProps) {
-  const [loading, setLoading] = useState(true)
+export function CommandsWorkspace({ jobs: jobsProp }: CommandsWorkspaceProps) {
+  const staticMode = jobsProp !== undefined
+  const [fetchedRows, setFetchedRows] = useState<CommandJobRow[]>([])
+  const [loadKey, setLoadKey] = useState(0)
+  const [loading, setLoading] = useState(jobsProp === undefined)
+  const [error, setError] = useState<string | null>(null)
+
+  const sourceRows = jobsProp !== undefined ? jobsProp : fetchedRows
+
   const [search, setSearch] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>(ALL)
   const [queueFilter, setQueueFilter] = useState<string>(ALL)
@@ -99,9 +111,43 @@ export function CommandsWorkspace({
   const [queueNotice, setQueueNotice] = useState<string | null>(null)
 
   useEffect(() => {
-    const t = window.setTimeout(() => setLoading(false), 380)
-    return () => window.clearTimeout(t)
-  }, [])
+    if (staticMode) return
+
+    const ac = new AbortController()
+    let stale = false
+
+    fetchCommandJobs(ac.signal)
+      .then((result) => {
+        if (stale) return
+        setLoading(false)
+        if (!result.ok) {
+          setError(result.error)
+          setFetchedRows([])
+          return
+        }
+        setError(null)
+        setFetchedRows(result.rows)
+      })
+      .catch((e) => {
+        if (e instanceof Error && e.name === "AbortError") return
+        if (stale) return
+        setLoading(false)
+        setError(COMMANDS_FETCH_NETWORK_ERROR)
+        setFetchedRows([])
+      })
+
+    return () => {
+      stale = true
+      ac.abort()
+    }
+  }, [staticMode, loadKey])
+
+  function reload() {
+    if (staticMode) return
+    setLoading(true)
+    setError(null)
+    setLoadKey((k) => k + 1)
+  }
 
   const resetPage = useCallback(() => setPage(1), [])
 
@@ -185,8 +231,10 @@ export function CommandsWorkspace({
     if (!open) setSheetJob(null)
   }
 
-  const emptyCatalog = sourceRows.length === 0
-  const noResults = !emptyCatalog && filtered.length === 0
+  const fetchFailed = !staticMode && !loading && error !== null
+  const emptyCatalog = !fetchFailed && sourceRows.length === 0
+  const noResults =
+    !fetchFailed && !emptyCatalog && filtered.length === 0
 
   return (
     <>
@@ -287,7 +335,11 @@ export function CommandsWorkspace({
 
         <SectionCard
           title="Recent command jobs"
-          description="Batch jobs with queue state and per-meter outcomes. History is mock until execution is integrated."
+          description={
+            staticMode
+              ? "Static catalog — filters and pagination run client-side."
+              : "Served from GET /api/commands. Read-only job history; request panel does not enqueue work."
+          }
         >
           <TableShell>
             <TableToolbar
@@ -311,6 +363,15 @@ export function CommandsWorkspace({
               }
               right={
                 <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={staticMode || loading}
+                    onClick={reload}
+                  >
+                    Refresh
+                  </Button>
                   <Button type="button" variant="outline" size="sm" disabled>
                     Export jobs
                   </Button>
@@ -332,7 +393,7 @@ export function CommandsWorkspace({
                   </Table>
                 </div>
               </div>
-            ) : emptyCatalog || noResults ? null : (
+            ) : fetchFailed ? null : emptyCatalog || noResults ? null : (
               <div className="relative min-w-0">
                 <div className="min-w-[960px]">
                   <Table>
@@ -427,14 +488,35 @@ export function CommandsWorkspace({
               </div>
             )}
 
-            {!loading && emptyCatalog ? (
+            {!loading && fetchFailed ? (
               <TableEmpty
-                title="No command jobs"
-                description="Submitted batches will list here. Use an empty jobs prop to verify this layout."
+                title="Unable to load catalog"
+                description={error ?? "Request failed."}
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={reload}
+                  >
+                    Retry
+                  </Button>
+                }
               />
             ) : null}
 
-            {!loading && noResults ? (
+            {!loading && !fetchFailed && emptyCatalog ? (
+              <TableEmpty
+                title="No command jobs"
+                description={
+                  staticMode
+                    ? "Use an empty jobs prop to verify this layout."
+                    : "The catalog source returned no rows. If this is unexpected, verify data/commands.json or the upstream feed."
+                }
+              />
+            ) : null}
+
+            {!loading && !fetchFailed && noResults ? (
               <TableEmpty
                 title="No jobs match filters"
                 description="Clear filters or widen command type, queue, and outcome criteria."

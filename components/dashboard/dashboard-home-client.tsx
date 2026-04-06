@@ -23,6 +23,7 @@ import {
   fetchDashboard,
 } from "@/lib/dashboard/api"
 import { formatAlarmSeverity } from "@/lib/alarms/format"
+import { formatQueueState } from "@/lib/commands/format"
 import type { DashboardSnapshot } from "@/types/dashboard"
 
 function StatGridSkeleton() {
@@ -40,9 +41,12 @@ function StatGridSkeleton() {
 
 function SectionsSkeleton() {
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <div className="h-72 animate-pulse rounded-lg border border-border bg-muted/25" />
-      <div className="h-72 animate-pulse rounded-lg border border-border bg-muted/25" />
+    <div className="space-y-6">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="h-72 animate-pulse rounded-lg border border-border bg-muted/25" />
+        <div className="h-72 animate-pulse rounded-lg border border-border bg-muted/25" />
+      </div>
+      <div className="h-52 animate-pulse rounded-lg border border-border bg-muted/25" />
     </div>
   )
 }
@@ -93,7 +97,7 @@ export function DashboardHomeClient() {
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        subtitle="Aggregated from read-only meter, connectivity, and alarm catalogs. Command queue metrics stay a placeholder until that API exists."
+        subtitle="Aggregated from read-only meter, connectivity, alarm, and command job catalogs. Pending commands counts in-flight queue states and open meter work."
       />
 
       {loading ? (
@@ -218,6 +222,55 @@ export function DashboardHomeClient() {
               </TableShell>
             </SectionCard>
           </div>
+
+          <SectionCard
+            title="Recent command jobs"
+            description="Latest submissions by submitted-at from the read-only command job catalog."
+          >
+            <TableShell>
+              {snapshot.recentCommandJobs.length === 0 ? (
+                <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  No command jobs in the current catalog.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Job</TableHead>
+                      <TableHead>Command</TableHead>
+                      <TableHead>Queue state</TableHead>
+                      <TableHead className="text-right">Submitted</TableHead>
+                      <TableHead className="min-w-[140px]">Summary</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {snapshot.recentCommandJobs.map((row) => {
+                      const q = formatQueueState(row.queueState)
+                      return (
+                        <TableRow key={row.id}>
+                          <TableCell className="max-w-[148px] truncate font-mono text-sm font-medium">
+                            {row.id}
+                          </TableCell>
+                          <TableCell className="max-w-[200px] truncate text-sm text-foreground">
+                            {row.templateName}
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge variant={q.variant}>{q.label}</StatusBadge>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">
+                            {row.submittedAt}
+                          </TableCell>
+                          <TableCell className="max-w-[220px] truncate text-sm text-foreground">
+                            {row.resultSummary}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </TableShell>
+          </SectionCard>
         </>
       ) : null}
     </div>

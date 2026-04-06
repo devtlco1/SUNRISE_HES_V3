@@ -63,7 +63,7 @@ export function CommandRequestPanel({ onQueued }: CommandRequestPanelProps) {
   return (
     <SectionCard
       title="New command request"
-      description="Draft a batch command. Submit logs a reference in the UI only; execution and queues are not connected."
+      description="UI-only draft form. Submit does not create jobs in the catalog or call execution — use the jobs table feed from /api/commands for read-only history."
     >
       <div className="space-y-5">
         <fieldset className="space-y-2">

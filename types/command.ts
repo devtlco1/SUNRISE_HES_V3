@@ -34,6 +34,7 @@ export type CommandMeterResult = {
   updatedAt: string
 }
 
+/** Batch command job with per-meter outcomes (read-only API + UI). */
 export type CommandJobRow = {
   id: string
   templateId: CommandTemplateId
