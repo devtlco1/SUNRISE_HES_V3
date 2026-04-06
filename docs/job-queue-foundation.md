@@ -36,10 +36,10 @@ Completed jobs are evicted after **500** finished records (oldest first) to cap 
 Server-only (same auth/token pattern as direct read proxies):
 
 - `POST /api/internal/python-runtime/jobs/read-identity` → **202** + enqueue body.
-- `POST /api/internal/python-runtime/jobs/read-basic-registers` → **202**.
+- `POST /api/internal/python-runtime/jobs/read-basic-registers` → discovery-snapshot catalog gate → **202** (or **409** `CATALOG_READ_BLOCKED` if no/incompatible snapshot; see **`docs/runtime-python-discovery.md`**).
 - `GET /api/internal/python-runtime/jobs/[jobId]` → job record.
 
-Direct routes **`POST /api/internal/python-runtime/read-identity`** and **`read-basic-registers`** remain unchanged (synchronous sidecar calls).
+Direct route **`POST /api/internal/python-runtime/read-identity`** is unchanged (synchronous sidecar). **`read-basic-registers`** internal sync route applies the same catalog gate before the sidecar call.
 
 ## Future phase (not v1)
 

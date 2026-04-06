@@ -1,3 +1,4 @@
+import { loadBasicRegistersCatalogDiagnostics } from "@/lib/runtime/catalog/basic-registers-catalog-gate"
 import { getInternalApiToken } from "@/lib/runtime/ingress/config"
 import {
   postReadBasicRegistersToPythonSidecar,
@@ -5,6 +6,7 @@ import {
   PythonSidecarNotConfiguredError,
 } from "@/lib/runtime/python-sidecar/client"
 import { parsePythonReadBasicRegistersRequest } from "@/lib/runtime/python-sidecar/read-basic-registers-payload"
+import type { BasicRegistersPayload, RuntimeResponseEnvelope } from "@/types/runtime"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
@@ -21,6 +23,12 @@ function authorize(req: Request): boolean {
 /**
  * Internal: proxy read-basic-registers to the Python protocol runtime sidecar.
  * Does not replace `POST /api/runtime/read-basic-registers` (TypeScript adapter).
+ *
+ * Before calling the sidecar, checks the latest file-backed discovery snapshot:
+ * all OBIS in `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` (same default as Python) must
+ * appear in the snapshot object list, or the request returns **409** with
+ * `catalogCompatibility` diagnostics (no automatic re-discovery).
+ * Direct `POST /v1/runtime/read-basic-registers` on the sidecar is unchanged.
  *
  * Requires `RUNTIME_PYTHON_SIDECAR_URL`. Optional `INTERNAL_API_TOKEN` + Bearer when set.
  */
@@ -49,8 +57,28 @@ export async function POST(req: Request) {
   }
 
   try {
+    const catalogCompatibility = await loadBasicRegistersCatalogDiagnostics(
+      parsed.meterId
+    )
+    if (catalogCompatibility.decision !== "allowed") {
+      return NextResponse.json(
+        {
+          error: "CATALOG_READ_BLOCKED",
+          message: catalogCompatibility.message,
+          catalogCompatibility,
+        },
+        { status: 409, headers: { "Cache-Control": "no-store" } }
+      )
+    }
+
     const envelope = await postReadBasicRegistersToPythonSidecar(parsed)
-    return NextResponse.json(envelope, {
+    const body = {
+      ...envelope,
+      catalogCompatibility,
+    } satisfies RuntimeResponseEnvelope<BasicRegistersPayload> & {
+      catalogCompatibility: typeof catalogCompatibility
+    }
+    return NextResponse.json(body, {
       headers: { "Cache-Control": "no-store" },
     })
   } catch (e) {

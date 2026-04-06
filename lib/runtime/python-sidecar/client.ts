@@ -196,6 +196,22 @@ export async function getLatestDiscoverySnapshotFromSidecar(
 }
 
 /**
+ * Server-only: GET latest snapshot, or `null` if the sidecar reports 404 (no file yet).
+ */
+export async function getLatestDiscoverySnapshotFromSidecarOrNull(
+  meterId: string
+): Promise<DiscoverySnapshotRecord | null> {
+  try {
+    return await getLatestDiscoverySnapshotFromSidecar(meterId)
+  } catch (e) {
+    if (e instanceof PythonSidecarHttpError && e.status === 404) {
+      return null
+    }
+    throw e
+  }
+}
+
+/**
  * Server-only: list stored discovery snapshots (history + latest fallback).
  */
 export async function listDiscoverySnapshotsFromSidecar(

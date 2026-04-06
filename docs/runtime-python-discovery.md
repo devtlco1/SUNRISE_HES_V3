@@ -5,8 +5,8 @@
 **One dedicated operation** to read the meter’s **current association object list** (COSEM objects exposed in the active AA), **not** a scan of all standard OBIS codes.
 
 - Use **occasionally** after install, profile changes, or firmware updates.
-- **Do not** call this on every routine poll — prefer **reusing a saved snapshot** for planning targeted reads, and **`read-identity` / `read-basic-registers`** for normal operational polling.
-- **Discovery** = explicit, infrequent. **Snapshots** = reusable local catalog. **Routine reads** = targeted OBIS (or future jobs) using known codes — not repeated full discovery.
+- **Do not** call this on every routine poll — prefer **reusing a saved snapshot** as the **capability catalog** for targeted reads; run **`read-identity`** / **`read-basic-registers`** often, but **do not** re-run full discovery each cycle.
+- **Discovery** = explicit, infrequent. **Snapshots** = source of truth for whether a meter lists required OBIS. **Routine reads** = same targeted OBIS every poll — the internal Next path **validates** against the latest snapshot before calling the sidecar (see below).
 
 ## Protocol source
 
@@ -68,6 +68,21 @@ Same Bearer auth as other `/v1/*` routes when `SUNRISE_RUNTIME_SERVICE_TOKEN` is
 | `GET` `/api/internal/python-runtime/discovery-snapshots/[meterId]` | Snapshot index |
 
 Requires `RUNTIME_PYTHON_SIDECAR_URL` (and token alignment with other internal proxies).
+
+## Catalog-guarded `read-basic-registers` (Next internal only)
+
+The **Python** runtime endpoints stay capable of executing reads directly (e.g. `POST /v1/runtime/read-basic-registers` for break-glass or tooling).
+
+The **Next internal** proxies apply a **pre-flight catalog check** so the control plane does not assume OBIS support blindly:
+
+| Route | Behavior |
+| ----- | -------- |
+| `POST` `/api/internal/python-runtime/read-basic-registers` | Loads latest snapshot via the sidecar; requires every OBIS in `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` (Next server env, **same default as Python**) to appear in `objects[]`. If **no snapshot** → **409** `CATALOG_READ_BLOCKED`, `decision: "no_snapshot"`. If **snapshot missing OBIS** → **409**, `decision: "incompatible"` + `missingObis`. If **allowed** → proxies to Python; response includes `catalogCompatibility` diagnostics. |
+| `POST` `/api/internal/python-runtime/jobs/read-basic-registers` | Same gate before enqueue (**409** if blocked; **202** includes `catalogCompatibility` when queued). |
+
+Diagnostics field: `catalogCompatibility` (`decision`, `requiredObis`, `supportedObisInSnapshot`, `missingObis`, `snapshotSummary`, `message`).
+
+Set **`SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS`** on the **Next** process to match the sidecar if you override defaults on one side only.
 
 ## Payload shape (live discovery success)
 

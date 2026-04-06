@@ -1,3 +1,4 @@
+import { loadBasicRegistersCatalogDiagnostics } from "@/lib/runtime/catalog/basic-registers-catalog-gate"
 import { getInternalApiToken } from "@/lib/runtime/ingress/config"
 import {
   postReadBasicRegistersJobToPythonSidecar,
@@ -20,7 +21,8 @@ function authorize(req: Request) {
 
 /**
  * Internal: enqueue async read-basic-registers job on the Python sidecar.
- * Poll `GET /api/internal/python-runtime/jobs/[jobId]` for status/result.
+ * Uses the same discovery-snapshot catalog gate as the synchronous internal read
+ * (409 + `catalogCompatibility` when blocked). Poll `GET .../jobs/[jobId]` for result.
  */
 export async function POST(req: Request) {
   if (!authorize(req)) {
@@ -47,11 +49,28 @@ export async function POST(req: Request) {
   }
 
   try {
+    const catalogCompatibility = await loadBasicRegistersCatalogDiagnostics(
+      parsed.meterId
+    )
+    if (catalogCompatibility.decision !== "allowed") {
+      return NextResponse.json(
+        {
+          error: "CATALOG_READ_BLOCKED",
+          message: catalogCompatibility.message,
+          catalogCompatibility,
+        },
+        { status: 409, headers: { "Cache-Control": "no-store" } }
+      )
+    }
+
     const out = await postReadBasicRegistersJobToPythonSidecar(parsed)
-    return NextResponse.json(out, {
-      status: 202,
-      headers: { "Cache-Control": "no-store" },
-    })
+    return NextResponse.json(
+      { ...out, catalogCompatibility },
+      {
+        status: 202,
+        headers: { "Cache-Control": "no-store" },
+      }
+    )
   } catch (e) {
     if (e instanceof PythonSidecarNotConfiguredError) {
       return NextResponse.json(

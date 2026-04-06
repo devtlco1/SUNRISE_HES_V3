@@ -212,6 +212,31 @@ export interface DiscoverySnapshotListResponse {
   snapshots: DiscoverySnapshotListItem[]
 }
 
+/** Result of comparing a read profile to the latest discovery snapshot (Next catalog guard). */
+export type CatalogCompatibilityDecision =
+  | "allowed"
+  | "no_snapshot"
+  | "incompatible"
+
+/** Structured diagnostics for catalog-guarded targeted reads (server / internal APIs). */
+export interface CatalogReadCompatibilityDiagnostics {
+  decision: CatalogCompatibilityDecision
+  readProfile: "basic_registers"
+  requiredObis: string[]
+  /** Required OBIS that appear in the snapshot object list. */
+  supportedObisInSnapshot: string[]
+  /** Required OBIS not found in the snapshot (empty when decision is no_snapshot). */
+  missingObis: string[]
+  snapshotSummary: {
+    capturedAtUtc: string
+    associationLogicalName: string
+    totalCount: number
+    profileFingerprint: string
+    simulated: boolean
+  } | null
+  message: string
+}
+
 export interface RelaySimulatedPayload {
   /**
    * Simulated relay posture for UX/contracts only.
