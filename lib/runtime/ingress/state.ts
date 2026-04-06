@@ -1,3 +1,4 @@
+import { INGRESS_MVP_AMI_TOPOLOGY_COMPARISON } from "@/lib/runtime/ingress/mvp-ami-topology-note"
 import type { IngressSessionClass, MeterIngressPublicStatus } from "@/lib/runtime/ingress/types"
 import { markNewIngressProtocolSession } from "@/lib/runtime/ingress/protocol-trace"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
@@ -201,6 +202,7 @@ export function getMeterIngressPublicStatus(
     inboundIdentityValueHex: s.inboundIdentityValueHex,
     inboundLastProtocolDetail: s.inboundLastProtocolDetail,
     inboundProtocolTrace: s.inboundProtocolTrace,
+    mvpAmiTopologyComparison: INGRESS_MVP_AMI_TOPOLOGY_COMPARISON,
     disclaimer: DISCLAIMER,
   }
 }

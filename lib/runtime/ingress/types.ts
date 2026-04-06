@@ -184,6 +184,20 @@ export type IngressProtocolTracePublic = {
   socketCloseDiagnostic: IngressSocketCloseDiagnosticPublic | null
 }
 
+/** Evidence-based MVP-AMI vs SUNRISE ingress (static; see `mvp-ami-topology-note.ts`). */
+export type IngressMvpAmiTopologyComparisonPublic = {
+  transportEquivalenceAssessment: "not_equivalent"
+  summary: string
+  mvpAmiDocumentedReadPath: string
+  mvpAmiTcpListenerPocBehavior: string
+  sunriseIngressBehavior: string
+  concreteDifferences: string[]
+  liveVpsEvidenceAnchor: string
+  /** Whether further ingress experiments remain reasonable (does not guarantee meter support). */
+  associationAssumptionStillWorthTesting: boolean
+  recommendedNextDirection: string
+}
+
 export type MeterIngressConfig = {
   enabled: boolean
   host: string
@@ -232,5 +246,7 @@ export type MeterIngressPublicStatus = {
   inboundLastProtocolDetail: string
   /** Last inbound DLMS session protocol trace (bounded; meter->server / server->meter). */
   inboundProtocolTrace: IngressProtocolTracePublic | null
+  /** MVP-AMI repository transport/session comparison (architecture; not live socket-derived). */
+  mvpAmiTopologyComparison: IngressMvpAmiTopologyComparisonPublic
   disclaimer: string
 }

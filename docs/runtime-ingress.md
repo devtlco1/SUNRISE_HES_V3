@@ -8,6 +8,22 @@ This deployment expects the **meter (or field gateway) to open the TCP connectio
 - The web UI does **not** speak DLMS; the Node runtime owns the socket lifecycle.
 - **TCP bytes alone are not proof** of HDLC FCS validity, association, or COSEM reads. Use `/api/runtime/ingress/status` fields that are explicitly named `verifiedOnWire` / `verified` semantics.
 
+## MVP-AMI vs this ingress (architecture truth)
+
+**Conclusion (evidence-based): the runtimes are not equivalent**, even when HDLC/AARQ bytes match Gurux.
+
+| Aspect | MVP-AMI (reference repo) | SUNRISE inbound ingress (this app) |
+| ------ | ------------------------ | ----------------------------------- |
+| **Primary documented success path** | Host opens **serial** (`pyserial`); reads and persistence center on `port_used` like `/dev/cu.*` | **TCP server**; meter/gateway **connects in** |
+| **TCP path in MVP-AMI** | Optional Stage-8 POC: listener **accepts** and holds `_tcp_conn`; **no** IEC/DLMS until `POST /api/read-tcp` | **Immediate** `runInboundDlmsOnSocket` on `accept()` |
+| **IEC before DLMS (TCP)** | `run_phase1_tcp_socket` always runs `_run_iec_handshake_tcp` (`/?!`, server-sent ACK) before association | IEC is **optional** preamble match on first bytes + configured ACK list; timing/order differ |
+| **SNRM initiation (vendor broadcast)** | Host **writes** broadcast SNRM, then reads UA | May **answer** meter-originated SNRM with UA, or send SNRM if profile uses broadcast-first |
+| **Session trigger** | Operator/API-driven read on TCP | Automatic state machine on connect |
+
+Therefore: **proving AARQ equals Gurux on the wire does not prove** the same **transport + session contract** as MVP-AMI’s successful read (especially serial). Live VPS evidence (strict UA, Gurux-shaped AARQ, **no post-AARQ RX**, server `closed_after_disc_final`) is consistent with a **role/timing/trigger mismatch**, not only a byte-level bug.
+
+**API field:** `status.mvpAmiTopologyComparison` on `GET /api/runtime/ingress/status` repeats this comparison in structured form (`transportEquivalenceAssessment`, `concreteDifferences`, `recommendedNextDirection`).
+
 ## Environment variables — listener
 
 | Variable | Purpose |
@@ -52,7 +68,7 @@ When ingress is enabled, a **vendor-style DLMS session** runs on each accepted s
 
 ## Diagnostics
 
-- **GET** `/api/runtime/ingress/status` — `config` (listener), `protocolProfile` (non-secret profile snapshot), and `status` (listener + last-session protocol outcomes).
+- **GET** `/api/runtime/ingress/status` — `config` (listener), `protocolProfile` (non-secret profile snapshot), and `status` (listener + last-session protocol outcomes). Includes **`mvpAmiTopologyComparison`** (static architecture note vs MVP-AMI).
 - **`status.inboundProtocolTrace`** — bounded evidence for the current TCP session: timestamped `steps`, `inboundFrames` / `outboundFrames` (full frame hex up to a cap), per-frame FCS-valid parse variants (dest/src lengths 1..8), heuristic `0x73` offsets when FCS does not validate, `lastMeterAccumHexCapped`, `leadingGarbageHex`, `lastIncompleteTailHex`, and summaries (`lastUaCandidateSummary`, `lastFcsValidationNote`). **Do not expose this endpoint to untrusted networks** while debugging (raw meter traffic).
 - **`lastOutboundAarqDiagnostic`** (inside the trace) — outbound AARQ payload proof for LOW auth: `configuredPasswordSourceLabel`, plaintext **`configuredPasswordUtf8`** (from `RUNTIME_INGRESS_DLMS_PASSWORD`), **`transmittedPasswordOctetsHex`** / UTF-8 decode **`passwordWireAsUtf8`**, **`configuredUtf8BytesMatchTransmittedOctets`**, **`passwordComparisonNote`**, and **`configuredPasswordSha256Hex`**. Use this to resolve “which password hit the wire” vs operator memory or UI history.
 - Optional **trace file** via `RUNTIME_INGRESS_LAST_SESSION_TRACE_PATH` (same JSON, capped size on write).
