@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils"
 
 const pathTitle: Record<string, string> = {
   "/dashboard": "Dashboard",
+  "/readings": "Readings",
   "/meters": "Meters",
   "/connectivity": "Connectivity",
   "/commands": "Commands",

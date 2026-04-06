@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react"
 import {
+  ActivityIcon,
   BellIcon,
   GaugeIcon,
   LayoutDashboardIcon,
@@ -16,6 +17,7 @@ export type MainNavItem = {
 
 export const mainNavItems: MainNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
+  { href: "/readings", label: "Readings", icon: ActivityIcon },
   { href: "/meters", label: "Meters", icon: GaugeIcon },
   { href: "/connectivity", label: "Connectivity", icon: RadioTowerIcon },
   { href: "/commands", label: "Commands", icon: SquareTerminalIcon },

@@ -26,7 +26,11 @@
      `POST .../jobs/read-basic-registers` → same catalog gate → Python `POST /v1/jobs/read-basic-registers`,  
      `GET .../jobs/[jobId]` → Python `GET /v1/jobs/{jobId}`  
      See **`docs/job-queue-foundation.md`**.
-4. Public `POST /api/runtime/read-identity` and `POST /api/runtime/read-basic-registers` remain **unchanged** (in-process TypeScript adapter factory). The UI is not switched to the sidecar by default.
+4. **Operator dashboard** (browser → Next server → same sidecar client as internal):  
+   `GET /api/readings/tcp-listener/status`,  
+   `POST /api/readings/tcp-listener/read-identity`,  
+   `POST /api/readings/tcp-listener/read-basic-registers` — no `INTERNAL_API_TOKEN`; UI page **`/readings`**.
+5. Public `POST /api/runtime/read-identity` and `POST /api/runtime/read-basic-registers` remain **unchanged** (in-process TypeScript adapter factory). The UI is not switched to the sidecar by default.
 
 ## Real adapter: `mvp_ami` (serial reads)
 
