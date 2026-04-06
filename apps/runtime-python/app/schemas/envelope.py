@@ -94,6 +94,48 @@ class DiscoveredObjectRow(BaseModel):
     error: Optional[str] = Field(default=None, description="Normalization error only.")
 
 
+class AssociationViewInstrumentation(BaseModel):
+    """
+    Bounded raw evidence for Association LN object-list (attr 2) debugging.
+    Populated on real mvp_ami discovery; omitted or minimal for stub.
+    """
+
+    guruxAssociationObjectPythonType: Optional[str] = Field(
+        default=None,
+        description="Type name of the Gurux association object used for the read.",
+    )
+    readAttributeIndex: int = Field(default=2, description="COSEM attribute index read (object list).")
+    objectListSnapshots: List[dict[str, Any]] = Field(
+        default_factory=list,
+        description="pre_read / post_read summaries: pythonType, reprPreview (capped), lengthProbe.",
+    )
+    rawObjectListPythonType: Optional[str] = Field(
+        default=None,
+        description="Python type name of objectList after the read (post-read snapshot).",
+    )
+    rawObjectListTypeQualname: Optional[str] = None
+    rawObjectListReprPreview: Optional[str] = Field(
+        default=None,
+        description="repr(objectList) capped — not a full wire dump.",
+    )
+    rawObjectListLengthProbe: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="count/method/capped from bounded length probe on objectList after read.",
+    )
+    normalizationDecision: str = Field(
+        default="unknown",
+        description="input_none | not_iterable | normalized_ok | read_failed | stub_simulated",
+    )
+    normalizationInputCount: int = 0
+    normalizationOutputCount: int = 0
+    normalizationDroppedOrFailedCount: int = 0
+    normalizationDropReasonsSample: List[dict[str, Any]] = Field(default_factory=list)
+    associationViewDebugNote: str = Field(
+        default="",
+        description="Short human summary; use structured fields above for evidence.",
+    )
+
+
 class DiscoverSupportedObisPayload(BaseModel):
     """Association-view snapshot: objects the meter exposes in the current AA (not a global OBIS dictionary)."""
 
@@ -103,6 +145,14 @@ class DiscoverSupportedObisPayload(BaseModel):
     source: str = Field(
         default="gurux_association_ln_object_list_attr2",
         description="How the catalog was obtained (Gurux GET on Association LN attribute 2).",
+    )
+    associationViewInstrumentation: Optional[AssociationViewInstrumentation] = Field(
+        default=None,
+        description="Raw Gurux/Python-side evidence for empty or unexpected object lists.",
+    )
+    catalogIntegrityNote: Optional[str] = Field(
+        default=None,
+        description="Honest note when objects[] is empty (e.g. raw list length zero vs parser issue).",
     )
 
 

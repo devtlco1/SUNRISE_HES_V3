@@ -16,8 +16,16 @@ import serial
 
 from app.adapters.mvp_ami_gurux_session import associate_gurux_client_serial
 from app.adapters.mvp_ami_shared import MvpAmiBootstrapFailure, mvp_ami_bootstrap
-from app.catalog.discovery_normalize import normalize_object_list
+from app.catalog.discovery_normalize import (
+    association_view_debug_note,
+    normalize_object_list_with_report,
+)
+from app.catalog.discovery_raw_instrumentation import (
+    merge_pre_post_summaries,
+    summarize_object_list_value,
+)
 from app.config import Settings
+from app.schemas.envelope import AssociationViewInstrumentation
 from app.schemas.requests import ChannelSpec
 
 log = logging.getLogger(__name__)
@@ -33,6 +41,7 @@ class AssociationViewDiscoveryResult:
     error_code: Optional[str] = None
     error_message: Optional[str] = None
     gurux_frames_extra: List[dict] = field(default_factory=list)
+    instrumentation: Optional[AssociationViewInstrumentation] = None
 
 
 def run_association_view_discovery(
@@ -145,30 +154,98 @@ def run_association_view_discovery(
         from gurux_dlms.objects.GXDLMSAssociationLogicalName import GXDLMSAssociationLogicalName
 
         assoc_obj = GXDLMSAssociationLogicalName(out.association_ln)
+        pre_ol = getattr(assoc_obj, "objectList", None)
+        pre_snap = summarize_object_list_value(pre_ol, label="pre_read_attribute2")
+
         _, read_err = mc._gurux_read_attribute(ser, gx_client, assoc_obj, 2)
+
+        post_ol = getattr(assoc_obj, "objectList", None)
+        post_snap = summarize_object_list_value(post_ol, label="post_read_attribute2")
 
         diags.append(
             {
                 "stage": "read_object_list",
                 "success": read_err is None,
                 "message": "Object list read" if read_err is None else f"Object list read failed: {read_err}",
-                "details": {"attributeIndex": 2, "logicalName": out.association_ln},
+                "details": {
+                    "attributeIndex": 2,
+                    "logicalName": out.association_ln,
+                    "preReadObjectList": pre_snap,
+                    "postReadObjectList": post_snap,
+                },
             }
         )
 
         if read_err is not None:
+            fail_instr = AssociationViewInstrumentation(
+                guruxAssociationObjectPythonType=type(assoc_obj).__name__,
+                readAttributeIndex=2,
+                objectListSnapshots=merge_pre_post_summaries(pre_snap, post_snap),
+                rawObjectListPythonType=post_snap.get("pythonType"),
+                rawObjectListTypeQualname=post_snap.get("pythonTypeQualname"),
+                rawObjectListReprPreview=post_snap.get("reprPreview"),
+                rawObjectListLengthProbe=post_snap.get("lengthProbe"),
+                normalizationDecision="read_failed",
+                associationViewDebugNote=(
+                    f"Association LN attribute 2 read failed ({read_err!s}); post-read objectList snapshot is still shown."
+                ),
+            )
+            out.instrumentation = fail_instr
+            diags.append(
+                {
+                    "stage": "association_view_instrumentation",
+                    "success": False,
+                    "details": fail_instr.model_dump(mode="json"),
+                }
+            )
             out.diagnostics = diags
             out.port_used = port_used
             out.error_code = "ASSOCIATION_VIEW_READ_FAILED"
             out.error_message = read_err
             return out
 
-        objects = normalize_object_list(assoc_obj.objectList)
+        objects, norm_report = normalize_object_list_with_report(post_ol)
+        dbg = association_view_debug_note(
+            read_ok=True,
+            post_len_probe=post_snap.get("lengthProbe"),
+            report=norm_report,
+        )
+        instr = AssociationViewInstrumentation(
+            guruxAssociationObjectPythonType=type(assoc_obj).__name__,
+            readAttributeIndex=2,
+            objectListSnapshots=merge_pre_post_summaries(pre_snap, post_snap),
+            rawObjectListPythonType=post_snap.get("pythonType"),
+            rawObjectListTypeQualname=post_snap.get("pythonTypeQualname"),
+            rawObjectListReprPreview=post_snap.get("reprPreview"),
+            rawObjectListLengthProbe=post_snap.get("lengthProbe"),
+            normalizationDecision=norm_report.normalization_decision,
+            normalizationInputCount=norm_report.raw_input_count,
+            normalizationOutputCount=norm_report.normalized_output_count,
+            normalizationDroppedOrFailedCount=norm_report.dropped_or_failed_count,
+            normalizationDropReasonsSample=list(norm_report.drop_reasons_sample),
+            associationViewDebugNote=dbg,
+        )
+        out.instrumentation = instr
+        diags.append(
+            {
+                "stage": "association_view_instrumentation",
+                "success": True,
+                "details": instr.model_dump(mode="json"),
+            }
+        )
+
         out.objects = objects
         out.ok = True
         out.port_used = port_used
         out.diagnostics = diags
-        log.info("association_view_discovery_ok", extra={"count": len(objects), "port": port_used})
+        log.info(
+            "association_view_discovery_ok",
+            extra={
+                "count": len(objects),
+                "raw_input_count": norm_report.raw_input_count,
+                "port": port_used,
+            },
+        )
         return out
 
     except Exception as exc:  # noqa: BLE001

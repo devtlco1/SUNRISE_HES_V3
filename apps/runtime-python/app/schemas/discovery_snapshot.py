@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,14 @@ class DiscoverySnapshotRecord(BaseModel):
     discoveryFinishedAt: Optional[str] = Field(
         default=None,
         description="Envelope `finishedAt` from the discovery call when autosaved.",
+    )
+    associationViewInstrumentation: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Copy of payload instrumentation when autosaved (empty catalogs stay explainable).",
+    )
+    catalogIntegrityNote: Optional[str] = Field(
+        default=None,
+        description="Honest tag when totalCount is zero (mirrors discovery payload).",
     )
 
 

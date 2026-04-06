@@ -21,6 +21,7 @@ from app.adapters.mvp_ami_shared import (
 )
 from app.config import get_settings
 from app.schemas.envelope import (
+    AssociationViewInstrumentation,
     BasicRegisterReading,
     BasicRegistersPayload,
     DiscoveredObjectRow,
@@ -168,6 +169,32 @@ def _register_reading_from_row(row: dict) -> tuple[bool, BasicRegisterReading]:
 def _obis_list_from_settings(raw: str) -> List[str]:
     parts = [x.strip() for x in (raw or "").split(",") if x.strip()]
     return parts
+
+
+def _catalog_integrity_note(
+    instr: Optional[AssociationViewInstrumentation], row_count: int
+) -> Optional[str]:
+    """Honest operator-facing tag when objects[] is empty (snapshot consumers)."""
+    if row_count > 0:
+        return None
+    if instr is None:
+        return "empty_catalog_no_instrumentation"
+    nd = instr.normalizationDecision
+    lp = instr.rawObjectListLengthProbe or {}
+    cnt = lp.get("count")
+    if nd == "input_none":
+        return "empty_after_read_objectlist_was_none"
+    if nd == "not_iterable":
+        return "empty_objectlist_not_iterable_see_raw_types"
+    if nd == "read_failed":
+        return "read_failed_see_error_envelope"
+    if cnt == 0:
+        return "empty_raw_objectlist_length_zero_after_successful_read"
+    if cnt is None:
+        return "empty_normalized_catalog_see_raw_length_probe"
+    if instr.normalizationDroppedOrFailedCount > 0:
+        return "empty_all_raw_rows_failed_normalization"
+    return f"empty_unexpected_raw_count_{cnt}_normalization_input_{instr.normalizationInputCount}"
 
 
 def _early_transport_failures(
@@ -598,6 +625,11 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                     "sunDiscoveryDiagnostics": disc.diagnostics,
                     "guruxFrameCount": len(disc.gurux_frames_extra),
                     "associationLogicalName": assoc_ln,
+                    "associationViewInstrumentation": (
+                        disc.instrumentation.model_dump(mode="json")
+                        if disc.instrumentation is not None
+                        else None
+                    ),
                 },
                 capability_stage="object_discovery",
             )
@@ -620,22 +652,35 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             associationLogicalName=assoc_ln,
             totalCount=len(rows),
             objects=rows,
+            associationViewInstrumentation=disc.instrumentation,
+            catalogIntegrityNote=_catalog_integrity_note(disc.instrumentation, len(rows)),
         )
         port_ref = disc.port_used
         verified = True
+        disc_detail = (
+            "MVP_AMI_DISCOVERY_OK_EMPTY_OBJECT_LIST"
+            if len(rows) == 0
+            else "MVP_AMI_DISCOVERY_OK"
+        )
+        msg = (
+            f"Association object list read via Gurux (LN={assoc_ln!r}, port={port_ref!r}, "
+            f"objects={len(rows)}, verifiedOnWire=True)."
+        )
+        if len(rows) == 0:
+            msg += (
+                " Raw objectList length/normalization details are in payload.associationViewInstrumentation "
+                "and payload.catalogIntegrityNote — ok=true means the read completed, not that the catalog is non-empty."
+            )
         return _success_envelope(
             meter_id=request.meterId,
             operation="discoverSupportedObis",
             started=started,
             finished=finished,
             payload=payload,
-            message=(
-                f"Association object list read via Gurux (LN={assoc_ln!r}, port={port_ref!r}, "
-                f"objects={len(rows)}, verifiedOnWire=True)."
-            ),
+            message=msg,
             transport_attempted=True,
             association_attempted=True,
             verified=verified,
-            detail_code="MVP_AMI_DISCOVERY_OK",
+            detail_code=disc_detail,
             capability_stage="object_discovery",
         )

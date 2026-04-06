@@ -177,6 +177,23 @@ export interface DiscoveredObjectRow {
   error?: string
 }
 
+/** Bounded Gurux/Python evidence for association object-list (attr 2) debugging. */
+export interface AssociationViewInstrumentation {
+  guruxAssociationObjectPythonType?: string
+  readAttributeIndex?: number
+  objectListSnapshots?: Array<Record<string, unknown>>
+  rawObjectListPythonType?: string
+  rawObjectListTypeQualname?: string
+  rawObjectListReprPreview?: string
+  rawObjectListLengthProbe?: Record<string, unknown>
+  normalizationDecision?: string
+  normalizationInputCount?: number
+  normalizationOutputCount?: number
+  normalizationDroppedOrFailedCount?: number
+  normalizationDropReasonsSample?: Array<Record<string, unknown>>
+  associationViewDebugNote?: string
+}
+
 /** Snapshot from GET Association LN object-list (attribute 2) via Gurux. */
 export interface DiscoverSupportedObisPayload {
   associationLogicalName: string
@@ -184,6 +201,9 @@ export interface DiscoverSupportedObisPayload {
   objects: DiscoveredObjectRow[]
   /** e.g. gurux_association_ln_object_list_attr2 */
   source?: string
+  associationViewInstrumentation?: AssociationViewInstrumentation
+  /** Honest tag when objects[] is empty (e.g. raw list length zero). */
+  catalogIntegrityNote?: string
 }
 
 /** File-backed discovery snapshot (Python `DiscoverySnapshotRecord`). */
@@ -200,6 +220,8 @@ export interface DiscoverySnapshotRecord {
   runtimeAdapter: string
   channelContext?: Record<string, unknown>
   discoveryFinishedAt?: string
+  associationViewInstrumentation?: Record<string, unknown>
+  catalogIntegrityNote?: string
 }
 
 export interface DiscoverySnapshotListItem {

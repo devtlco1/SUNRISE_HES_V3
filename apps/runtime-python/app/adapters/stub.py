@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from app.adapters.base import ProtocolRuntimeAdapter
 from app.schemas.envelope import (
+    AssociationViewInstrumentation,
     BasicRegisterReading,
     BasicRegistersPayload,
     DiscoveredObjectRow,
@@ -135,6 +136,11 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
                 ),
             ],
             source="python_stub_simulated",
+            associationViewInstrumentation=AssociationViewInstrumentation(
+                normalizationDecision="stub_simulated",
+                associationViewDebugNote="Stub adapter — no Gurux objectList; rows are synthetic.",
+            ),
+            catalogIntegrityNote=None,
         )
 
         diagnostics = RuntimeExecutionDiagnostics(

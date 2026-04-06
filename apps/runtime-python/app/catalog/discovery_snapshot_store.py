@@ -96,6 +96,10 @@ def build_record_from_discovery(
     runtime_adapter: str,
     discovery_finished_at: Optional[str],
 ) -> DiscoverySnapshotRecord:
+    instr_dump: Optional[dict[str, Any]] = None
+    if payload.associationViewInstrumentation is not None:
+        instr_dump = payload.associationViewInstrumentation.model_dump(mode="json")
+
     return DiscoverySnapshotRecord(
         meterId=request.meterId.strip(),
         capturedAtUtc=captured_at_utc,
@@ -108,6 +112,8 @@ def build_record_from_discovery(
         runtimeAdapter=runtime_adapter,
         channelContext=channel_context_from_request(request.channel),
         discoveryFinishedAt=discovery_finished_at,
+        associationViewInstrumentation=instr_dump,
+        catalogIntegrityNote=payload.catalogIntegrityNote,
     )
 
 

@@ -4,6 +4,12 @@
 
 **One dedicated operation** to read the meter’s **current association object list** (COSEM objects exposed in the active AA), **not** a scan of all standard OBIS codes.
 
+### Empty `objects[]` on a real meter (debugging)
+
+Some meters return **`ok: true`**, **`verifiedOnWire: true`**, and **`payload.totalCount: 0`** / **`objects: []`**. That means the **GET on Association LN attribute 2 completed on the wire**, but the **catalog extracted for API consumers is empty**. That is **not** hidden as failure: the envelope stays honest, and **`payload.associationViewInstrumentation`** plus **`payload.catalogIntegrityNote`** explain what Gurux exposed in Python (type, **capped** `repr` preview, bounded **length probe** on `objectList`, and **normalization** input/output/drop counts). Use those fields to decide whether the meter truly returned an empty object list vs an unexpected Python/Gurux shape vs normalization loss (see `normalizationDroppedOrFailedCount`).
+
+**`diagnostics.detailCode`:** `MVP_AMI_DISCOVERY_OK` when rows exist; **`MVP_AMI_DISCOVERY_OK_EMPTY_OBJECT_LIST`** when the read succeeded but **`objects[]` is empty** — still **`ok: true`**; emptiness is a **catalog** issue, not a transport success bit.
+
 - Use **occasionally** after install, profile changes, or firmware updates.
 - **Do not** call this on every routine poll — prefer **reusing a saved snapshot** as the **capability catalog** for targeted reads; run **`read-identity`** / **`read-basic-registers`** often, but **do not** re-run full discovery each cycle.
 - **Discovery** = explicit, infrequent. **Snapshots** = source of truth for whether a meter lists required OBIS. **Routine reads** = same targeted OBIS every poll — the internal Next path **validates** against the latest snapshot before calling the sidecar (see below).
@@ -22,11 +28,18 @@ Unknown or missing fields stay **honest** (no invented manufacturer labels).
   Body: same as read-identity (`meterId`, optional `channel` for serial override).
 - **Envelope:** `operation: "discoverSupportedObis"`, `payload` = `DiscoverSupportedObisPayload`.
 - **`simulated: false`** on `mvp_ami` when the object list was read successfully after association.
-- Failures: `error.code` such as `SERIAL_OPEN_FAILED`, `IEC_HANDSHAKE_FAILED`, `ASSOCIATION_FAILED`, `ASSOCIATION_VIEW_READ_FAILED`, `DISCOVERY_RUNTIME_ERROR`; details include `sunDiscoveryDiagnostics`.
+- Failures: `error.code` such as `SERIAL_OPEN_FAILED`, `IEC_HANDSHAKE_FAILED`, `ASSOCIATION_FAILED`, `ASSOCIATION_VIEW_READ_FAILED`, `DISCOVERY_RUNTIME_ERROR`; `error.details` includes `sunDiscoveryDiagnostics` and, when built, **`associationViewInstrumentation`** (pre/post `objectList` snapshots even on read failure).
+
+### Payload fields (instrumentation)
+
+| Field | Meaning |
+| ----- | ------- |
+| `associationViewInstrumentation` | Bounded raw evidence: `objectListSnapshots` (pre/post read), `rawObjectList*` (post-read), `normalization*` counters, `associationViewDebugNote`. |
+| `catalogIntegrityNote` | Short machine-oriented tag when `objects[]` is empty (e.g. `empty_raw_objectlist_length_zero_after_successful_read`). **Not** set when the catalog has rows. |
 
 ### Autosave (on-wire success only)
 
-When discovery **succeeds** with **`simulated: false`** (real `mvp_ami` path), the sidecar **writes a JSON snapshot** unless disabled:
+When discovery **succeeds** with **`simulated: false`** (real `mvp_ami` path), the sidecar **writes a JSON snapshot** unless disabled — **including when `totalCount` is 0**, so the file records **honest empty catalogs** together with **`associationViewInstrumentation`** / **`catalogIntegrityNote`** when present:
 
 | Env | Meaning |
 | --- | ------- |
@@ -94,7 +107,8 @@ Same as `DiscoverSupportedObisPayload` in the runtime envelope; persisted record
 | ---- | ---- |
 | Discovery pipeline | `app/adapters/mvp_ami_discovery.py` |
 | Gurux associate (client capture) | `app/adapters/mvp_ami_gurux_session.py` |
-| Row normalization | `app/catalog/discovery_normalize.py` |
+| Row normalization + normalization report | `app/catalog/discovery_normalize.py` |
+| Raw objectList summaries (capped) | `app/catalog/discovery_raw_instrumentation.py` |
 | File persistence | `app/catalog/discovery_snapshot_store.py` |
 | Persisted schema | `app/schemas/discovery_snapshot.py` |
 | Autosave hook | `app/services/discover_supported_obis.py` |
