@@ -1,0 +1,98 @@
+/**
+ * Map runtime envelopes into per-OBIS row state for the readings table.
+ */
+
+import type { BasicRegistersPayload, IdentityPayload } from "@/types/runtime"
+
+import { IDENTITY_READ_MAPPED_OBIS, SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS } from "./catalog-seed"
+
+export type ObisRowReadState = {
+  result: string
+  status: "ok" | "error" | "skipped"
+  error?: string
+  lastReadAt: string | null
+}
+
+export function emptyRowState(): ObisRowReadState {
+  return { result: "", status: "skipped", lastReadAt: null }
+}
+
+export function mergeIdentityIntoRowState(
+  prev: Record<string, ObisRowReadState>,
+  payload: IdentityPayload,
+  finishedAt: string
+): Record<string, ObisRowReadState> {
+  const next = { ...prev }
+  const t = finishedAt
+
+  const set = (obis: string, result: string, status: ObisRowReadState["status"], err?: string) => {
+    next[obis] = { result, status, error: err, lastReadAt: t }
+  }
+
+  const ld = (payload.logicalDeviceName ?? "").trim()
+  const sn = (payload.serialNumber ?? "").trim()
+  const primary = ld || sn
+  set(
+    "0.0.96.1.0.255",
+    primary,
+    primary ? "ok" : "error",
+    primary ? undefined : "no logical device name / serial"
+  )
+  set("0.0.96.1.1.255", sn, sn ? "ok" : "error", sn ? undefined : "no serial")
+
+  return next
+}
+
+export function mergeBasicRegistersIntoRowState(
+  prev: Record<string, ObisRowReadState>,
+  payload: BasicRegistersPayload,
+  finishedAt: string
+): Record<string, ObisRowReadState> {
+  const next = { ...prev }
+  const regs = payload.registers ?? {}
+  for (const obis of Object.keys(regs)) {
+    const r = regs[obis]
+    const val = (r?.value ?? "").trim()
+    const err = r?.error
+    if (err) {
+      next[obis] = {
+        result: val,
+        status: "error",
+        error: String(err),
+        lastReadAt: finishedAt,
+      }
+    } else if (val) {
+      next[obis] = {
+        result: r?.unit ? `${val} ${r.unit}` : val,
+        status: "ok",
+        lastReadAt: finishedAt,
+      }
+    } else {
+      next[obis] = {
+        result: "",
+        status: "error",
+        error: "no value",
+        lastReadAt: finishedAt,
+      }
+    }
+  }
+  return next
+}
+
+export function obisNeedsIdentityRead(obisList: string[]): boolean {
+  return obisList.some((o) => IDENTITY_READ_MAPPED_OBIS.includes(o))
+}
+
+export function obisNeedsBasicRegistersRead(obisList: string[]): boolean {
+  const set = new Set(SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS)
+  return obisList.some((o) => set.has(o))
+}
+
+/** OBIS not satisfied by identity + default basic-registers calls. */
+export function obisOutsideCurrentRuntimePack(obisList: string[]): string[] {
+  const cover = new Set<string>([
+    ...IDENTITY_READ_MAPPED_OBIS,
+    ...SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS,
+  ])
+  return obisList.filter((o) => !cover.has(o))
+}

@@ -5,19 +5,43 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
-import { SectionCard } from "@/components/shared/section-card"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
   fetchTcpListenerStatus,
+  postDirectReadBasicRegisters,
+  postDirectReadIdentity,
   postTcpListenerReadBasicRegisters,
   postTcpListenerReadIdentity,
   READINGS_FETCH_NETWORK_ERROR,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
+import {
+  getCatalogRowsForPack,
+  OBIS_PACK_LABELS,
+  OBIS_PACK_ORDER,
+  SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS,
+} from "@/lib/obis/catalog-seed"
+import {
+  mergeBasicRegistersIntoRowState,
+  mergeIdentityIntoRowState,
+  obisNeedsBasicRegistersRead,
+  obisNeedsIdentityRead,
+  obisOutsideCurrentRuntimePack,
+  type ObisRowReadState,
+} from "@/lib/obis/merge-read-results"
+import type { ObisPackKey } from "@/lib/obis/types"
+import type { MeterListRow } from "@/types/meter"
 import type {
-  BasicRegisterReading,
   BasicRegistersPayload,
   IdentityPayload,
   RuntimeResponseEnvelope,
@@ -26,188 +50,99 @@ import { cn } from "@/lib/utils"
 
 const POLL_MS = 6000
 
-/** Presentation-only labels for common default OBIS keys (values still from payload). */
-const OBIS_LABELS: Record<string, string> = {
-  "0.0.1.0.0.255": "Meter clock",
-  "1.0.1.8.0.255": "Total active import (+A)",
-  "1.0.32.7.0.255": "Voltage L1",
-}
+type TransportMode = "inbound" | "direct"
 
 function boolish(v: unknown): boolean {
   return v === true || v === "true" || v === 1
 }
 
-function formatTriggerSummary(status: TcpListenerStatus) {
-  const t = status.lastTcpListenerTrigger
-  if (!t || typeof t !== "object") return null
-  return t as Record<string, unknown>
-}
-
-function EnvelopeSummary({
-  envelope,
-}: {
-  envelope: RuntimeResponseEnvelope<unknown>
-}) {
-  const d = envelope.diagnostics
-  const ok = envelope.ok
-  const sim = envelope.simulated
-
-  return (
-    <div className="space-y-3 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        {ok ? (
-          <StatusBadge variant="success">Success</StatusBadge>
-        ) : (
-          <StatusBadge variant="danger">Failed</StatusBadge>
-        )}
-        {sim ? (
-          <StatusBadge variant="warning">Simulated</StatusBadge>
-        ) : (
-          <StatusBadge variant="neutral">Real runtime</StatusBadge>
-        )}
-        {d?.verifiedOnWire ? (
-          <StatusBadge variant="success">Verified on wire</StatusBadge>
-        ) : null}
-        <span className="text-xs text-muted-foreground">
-          operation:{" "}
-          <span className="font-mono text-foreground">{envelope.operation}</span>
-        </span>
-      </div>
-      <p className="text-foreground">{envelope.message}</p>
-      <dl className="grid gap-2 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs text-muted-foreground">Started</dt>
-          <dd className="font-mono text-xs">{envelope.startedAt}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Finished</dt>
-          <dd className="font-mono text-xs">{envelope.finishedAt}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Duration</dt>
-          <dd className="tabular-nums">{envelope.durationMs} ms</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Transport / association</dt>
-          <dd>
-            <span className="font-mono text-xs">{envelope.transportState}</span>
-            {" / "}
-            <span className="font-mono text-xs">{envelope.associationState}</span>
-          </dd>
-        </div>
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">detailCode</dt>
-          <dd className="font-mono text-xs">{d?.detailCode ?? "—"}</dd>
-        </div>
-      </dl>
-      {envelope.error ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
-          <p className="text-xs font-medium text-destructive">
-            {envelope.error.code}
-          </p>
-          <p className="text-xs text-muted-foreground">{envelope.error.message}</p>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function IdentityResult({ payload }: { payload: IdentityPayload }) {
-  const rows: { label: string; value: string }[] = [
-    { label: "Serial number", value: payload.serialNumber },
-    { label: "Logical device name", value: payload.logicalDeviceName ?? "—" },
-    { label: "Protocol version", value: payload.protocolVersion },
-    { label: "Manufacturer", value: payload.manufacturer },
-    { label: "Model", value: payload.model },
-    { label: "Firmware", value: payload.firmwareVersion },
-  ]
-  return (
-    <dl className="grid gap-2 sm:grid-cols-2">
-      {rows.map((r) => (
-        <div key={r.label}>
-          <dt className="text-xs text-muted-foreground">{r.label}</dt>
-          <dd className="text-sm font-medium break-words">{r.value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-function RegisterRow({
-  obis,
-  reading,
-}: {
-  obis: string
-  reading: BasicRegisterReading
-}) {
-  const title = OBIS_LABELS[obis] ?? obis
-  const err = reading.error
-  const ok = !err && Boolean((reading.value ?? "").trim())
-
-  return (
-    <div
-      className={cn(
-        "rounded-md border px-3 py-2",
-        ok ? "border-border bg-muted/20" : "border-amber-200/80 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/20"
-      )}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-sm font-medium">{title}</p>
-          <p className="font-mono text-xs text-muted-foreground">{obis}</p>
-        </div>
-        {ok ? (
-          <StatusBadge variant="success">OK</StatusBadge>
-        ) : (
-          <StatusBadge variant="warning">Issue</StatusBadge>
-        )}
-      </div>
-      <p className="mt-2 tabular-nums text-lg font-semibold tracking-tight">
-        {reading.value || "—"}
-        {reading.unit ? (
-          <span className="ml-1 text-sm font-normal text-muted-foreground">
-            {reading.unit}
-          </span>
-        ) : null}
-      </p>
-      {reading.quality ? (
-        <p className="text-xs text-muted-foreground">Quality: {reading.quality}</p>
-      ) : null}
-      {err ? (
-        <p className="text-xs text-amber-900 dark:text-amber-100">{err}</p>
-      ) : null}
-    </div>
-  )
-}
-
-function BasicRegistersResult({ payload }: { payload: BasicRegistersPayload }) {
-  const entries = Object.entries(payload.registers ?? {})
-  if (entries.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">No registers in payload.</p>
+function applyEnvelopeToRows(
+  prev: Record<string, ObisRowReadState>,
+  envelope: RuntimeResponseEnvelope<IdentityPayload | BasicRegistersPayload>
+): Record<string, ObisRowReadState> {
+  const t = envelope.finishedAt
+  if (!envelope.ok) {
+    return prev
+  }
+  if (envelope.operation === "readIdentity" && envelope.payload) {
+    return mergeIdentityIntoRowState(prev, envelope.payload as IdentityPayload, t)
+  }
+  if (envelope.operation === "readBasicRegisters" && envelope.payload) {
+    return mergeBasicRegistersIntoRowState(
+      prev,
+      envelope.payload as BasicRegistersPayload,
+      t
     )
   }
-  return (
-    <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-3">
-      {entries.map(([obis, reading]) => (
-        <RegisterRow key={obis} obis={obis} reading={reading} />
-      ))}
-    </div>
-  )
+  return prev
+}
+
+function markObisError(
+  prev: Record<string, ObisRowReadState>,
+  obisList: string[],
+  message: string,
+  at: string
+): Record<string, ObisRowReadState> {
+  const next = { ...prev }
+  for (const o of obisList) {
+    next[o] = {
+      result: "",
+      status: "error",
+      error: message,
+      lastReadAt: at,
+    }
+  }
+  return next
 }
 
 export function ReadingsWorkspaceClient() {
-  const [meterId, setMeterId] = useState("inbound-modem")
+  const [pack, setPack] = useState<ObisPackKey>("basic_setting")
+  const [transport, setTransport] = useState<TransportMode>("inbound")
+  const [meterId, setMeterId] = useState("hes-mt-10021")
+  const [meters, setMeters] = useState<MeterListRow[]>([])
+  const [metersError, setMetersError] = useState<string | null>(null)
+
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
+  const [rowState, setRowState] = useState<Record<string, ObisRowReadState>>({})
+
   const [statusLoading, setStatusLoading] = useState(true)
-  const [statusError, setStatusError] = useState<string | null>(null)
   const [listenerStatus, setListenerStatus] = useState<TcpListenerStatus | null>(
     null
   )
-  const [triggerBusy, setTriggerBusy] = useState(false)
+  const [statusError, setStatusError] = useState<string | null>(null)
+
+  const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [lastEnvelope, setLastEnvelope] = useState<RuntimeResponseEnvelope<
+  const [hint, setHint] = useState<string | null>(null)
+  const [lastEnv, setLastEnv] = useState<RuntimeResponseEnvelope<
     IdentityPayload | BasicRegistersPayload
   > | null>(null)
+
+  const catalogRows = useMemo(() => getCatalogRowsForPack(pack), [pack])
+
+  useEffect(() => {
+    setSelected(new Set())
+  }, [pack])
+
+  useEffect(() => {
+    const ac = new AbortController()
+    fetch("/api/meters", { signal: ac.signal, cache: "no-store" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setMeters(data as MeterListRow[])
+          setMetersError(null)
+        } else {
+          setMeters([])
+          setMetersError("Meters catalog unavailable")
+        }
+      })
+      .catch(() => {
+        setMeters([])
+        setMetersError("Meters catalog load failed")
+      })
+    return () => ac.abort()
+  }, [])
 
   const loadStatus = useCallback(async (signal?: AbortSignal) => {
     setStatusError(null)
@@ -223,17 +158,15 @@ export function ReadingsWorkspaceClient() {
   useEffect(() => {
     const ac = new AbortController()
     setStatusLoading(true)
-    loadStatus(ac.signal)
-      .finally(() => {
-        if (!ac.signal.aborted) setStatusLoading(false)
-      })
+    loadStatus(ac.signal).finally(() => {
+      if (!ac.signal.aborted) setStatusLoading(false)
+    })
     return () => ac.abort()
   }, [loadStatus])
 
   useEffect(() => {
     const id = window.setInterval(() => {
-      const ac = new AbortController()
-      loadStatus(ac.signal).catch(() => {})
+      loadStatus().catch(() => {})
     }, POLL_MS)
     return () => clearInterval(id)
   }, [loadStatus])
@@ -242,345 +175,505 @@ export function ReadingsWorkspaceClient() {
   const triggerInProgress = listenerStatus
     ? boolish(listenerStatus.sessionTriggerInProgress)
     : false
-  const canTrigger =
-    stagedPresent && !triggerInProgress && !triggerBusy && !statusLoading
-
   const listening = listenerStatus ? boolish(listenerStatus.listening) : false
   const listenerEnabled = listenerStatus
     ? boolish(listenerStatus.listenerEnabled)
     : false
 
-  const triggerRecord = useMemo(
-    () => (listenerStatus ? formatTriggerSummary(listenerStatus) : null),
-    [listenerStatus]
-  )
+  const canInboundRead =
+    transport === "inbound" &&
+    stagedPresent &&
+    !triggerInProgress &&
+    !busy &&
+    !statusLoading
 
-  async function runIdentity() {
-    setTriggerBusy(true)
-    setActionError(null)
-    setLastEnvelope(null)
-    try {
-      const r = await postTcpListenerReadIdentity(meterId.trim() || "inbound-modem")
-      if (r.ok) {
-        setLastEnvelope(r.data)
-      } else {
-        setActionError(r.error)
-      }
-    } finally {
-      setTriggerBusy(false)
-      await loadStatus()
-    }
+  const canDirectRead = transport === "direct" && !busy
+
+  function toggleObis(obis: string) {
+    setSelected((s) => {
+      const n = new Set(s)
+      if (n.has(obis)) n.delete(obis)
+      else n.add(obis)
+      return n
+    })
   }
 
-  async function runBasicRegisters() {
-    setTriggerBusy(true)
+  function selectAllInPack() {
+    setSelected(new Set(catalogRows.filter((r) => r.enabled).map((r) => r.obis)))
+  }
+
+  function clearSelection() {
+    setSelected(new Set())
+  }
+
+  async function runIdentityInbound() {
+    return postTcpListenerReadIdentity(meterId.trim() || "inbound-modem")
+  }
+
+  async function runBasicInbound() {
+    return postTcpListenerReadBasicRegisters(meterId.trim() || "inbound-modem")
+  }
+
+  async function runIdentityDirect() {
+    return postDirectReadIdentity(meterId.trim() || "meter-1")
+  }
+
+  async function runBasicDirect() {
+    return postDirectReadBasicRegisters(meterId.trim() || "meter-1")
+  }
+
+  async function executeReadsForObisList(obisList: string[]): Promise<void> {
     setActionError(null)
-    setLastEnvelope(null)
-    try {
-      const r = await postTcpListenerReadBasicRegisters(
-        meterId.trim() || "inbound-modem"
+    setHint(null)
+    const idNeed = obisNeedsIdentityRead(obisList)
+    const basicNeed = obisNeedsBasicRegistersRead(obisList)
+    const outside = obisOutsideCurrentRuntimePack(obisList)
+    const iso = new Date().toISOString()
+
+    if (outside.length > 0) {
+      setHint(
+        `${outside.length} OBIS not in current runtime pack (identity-mapped + default basic: ${SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS.join(", ")}).`
       )
-      if (r.ok) {
-        setLastEnvelope(r.data)
-      } else {
-        setActionError(r.error)
+    }
+
+    const targetInside = obisList.filter((o) => !outside.includes(o))
+    if (targetInside.length === 0) {
+      setActionError("No selected OBIS are readable with the current runtime pack.")
+      setRowState((p) => markObisError(p, obisList, "not_in_runtime_pack", iso))
+      return
+    }
+
+    if (transport === "inbound") {
+      if (idNeed && basicNeed) {
+        setActionError(
+          "Inbound staged TCP: each read closes the socket. Select only identity OBIS (0.0.96.1.0/1) or only default basic-register OBIS, then reconnect the modem between runs — or switch to Direct transport."
+        )
+        return
+      }
+      setBusy(true)
+      try {
+        if (idNeed) {
+          const r = await runIdentityInbound()
+          if (!r.ok) {
+            setActionError(r.error)
+            return
+          }
+          setLastEnv(r.data)
+          if (r.data.ok) {
+            setRowState((p) => applyEnvelopeToRows(p, r.data))
+          } else {
+            setRowState((p) =>
+              markObisError(
+                p,
+                targetInside.filter((o) => obisNeedsIdentityRead([o])),
+                r.data.error?.message ?? "identity_failed",
+                r.data.finishedAt
+              )
+            )
+          }
+        } else if (basicNeed) {
+          const r = await runBasicInbound()
+          if (!r.ok) {
+            setActionError(r.error)
+            return
+          }
+          setLastEnv(r.data)
+          if (r.data.ok) {
+            setRowState((p) => applyEnvelopeToRows(p, r.data))
+          } else {
+            setRowState((p) =>
+              markObisError(
+                p,
+                targetInside.filter((o) => obisNeedsBasicRegistersRead([o])),
+                r.data.error?.message ?? "basic_failed",
+                r.data.finishedAt
+              )
+            )
+          }
+        } else {
+          setActionError(
+            "None of the target OBIS use identity or default basic-register reads in this build."
+          )
+        }
+      } finally {
+        setBusy(false)
+        await loadStatus()
+      }
+      return
+    }
+
+    // direct: may run identity then basic (separate sidecar sessions).
+    setBusy(true)
+    try {
+      if (idNeed) {
+        const r = await runIdentityDirect()
+        if (!r.ok) {
+          setActionError(r.error)
+          return
+        }
+        setLastEnv(r.data)
+        if (r.data.ok) {
+          setRowState((p) => applyEnvelopeToRows(p, r.data))
+        } else {
+          setRowState((p) =>
+            markObisError(
+              p,
+              targetInside.filter((o) => obisNeedsIdentityRead([o])),
+              r.data.error?.message ?? "readIdentity_failed",
+              r.data.finishedAt
+            )
+          )
+        }
+      }
+      if (basicNeed) {
+        const r = await runBasicDirect()
+        if (!r.ok) {
+          setActionError(r.error)
+          return
+        }
+        setLastEnv(r.data)
+        if (r.data.ok) {
+          setRowState((p) => applyEnvelopeToRows(p, r.data))
+        } else {
+          setRowState((p) =>
+            markObisError(
+              p,
+              targetInside.filter((o) => obisNeedsBasicRegistersRead([o])),
+              r.data.error?.message ?? "readBasicRegisters_failed",
+              r.data.finishedAt
+            )
+          )
+        }
       }
     } finally {
-      setTriggerBusy(false)
-      await loadStatus()
+      setBusy(false)
     }
   }
+
+  async function onReadSelected() {
+    if (selected.size === 0) {
+      setActionError("Select at least one OBIS row.")
+      return
+    }
+    await executeReadsForObisList([...selected])
+  }
+
+  async function onReadCategory() {
+    const obis = catalogRows.filter((r) => r.enabled).map((r) => r.obis)
+    if (obis.length === 0) return
+    await executeReadsForObisList(obis)
+  }
+
+  const triggerRecord =
+    listenerStatus?.lastTcpListenerTrigger &&
+    typeof listenerStatus.lastTcpListenerTrigger === "object"
+      ? (listenerStatus.lastTcpListenerTrigger as Record<string, unknown>)
+      : null
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title="Readings"
-        subtitle="Inbound modem listener, staged socket, and on-demand identity / basic-register reads via the Python runtime (server-side proxy)."
+        subtitle="Meter-tool style workspace: packs, OBIS table, and runtime reads via Next server proxies (no browser→Python)."
       />
 
-      <SectionCard
-        title="Meter target"
-        description="Forwarded as meterId on runtime requests."
-        className="bg-card"
-      >
-        <div className="flex max-w-md flex-col gap-2">
-          <label
-            htmlFor="readings-meter-id"
-            className="text-sm font-medium text-foreground"
-          >
-            meterId
-          </label>
-          <Input
-            id="readings-meter-id"
-            value={meterId}
-            onChange={(e) => setMeterId(e.target.value)}
-            className="font-mono text-sm"
-            autoComplete="off"
-          />
+      {transport === "inbound" ? (
+        <div className="rounded-md border border-amber-200/80 bg-amber-50/50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+          <strong>Inbound staged TCP:</strong> each read consumes the modem socket (modem must
+          reconnect for the next read). You cannot combine identity + basic registers in one
+          dial — use <strong>Direct</strong> for back-to-back reads on serial/TCP client.
         </div>
-      </SectionCard>
+      ) : null}
 
-      <SectionCard
-        title="Inbound modem TCP listener"
-        description="Python sidecar staged listener — refresh or wait for automatic poll."
-        headerActions={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={statusLoading}
-            onClick={() => {
-              setStatusLoading(true)
-              loadStatus().finally(() => setStatusLoading(false))
-            }}
-          >
-            <RefreshCwIcon
-              className={cn("mr-1.5 size-4", statusLoading && "animate-spin")}
-              aria-hidden
-            />
-            Refresh status
-          </Button>
-        }
-      >
-        {statusLoading && !listenerStatus ? (
-          <div className="h-24 animate-pulse rounded-md bg-muted/30" />
-        ) : null}
+      <div className="grid gap-4 lg:grid-cols-[minmax(200px,240px)_1fr] lg:items-start">
+        <aside className="rounded-lg border border-border bg-card p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Meter parameter
+          </p>
+          <ul className="mt-2 space-y-0.5">
+            {OBIS_PACK_ORDER.map((key) => (
+              <li key={key}>
+                <button
+                  type="button"
+                  onClick={() => setPack(key)}
+                  className={cn(
+                    "w-full rounded-md px-2 py-1.5 text-left text-sm",
+                    pack === key
+                      ? "bg-primary/15 font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-muted/60"
+                  )}
+                >
+                  {OBIS_PACK_LABELS[key]}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-xs text-muted-foreground">
+            <a href="/obis-config" className="underline underline-offset-2">
+              OBIS catalog
+            </a>
+          </p>
+        </aside>
 
-        {statusError && !listenerStatus ? (
-          <EmptyState
-            title="Listener status unavailable"
-            description={statusError}
-            icon={<AlertCircleIcon className="size-5" aria-hidden />}
-            className="border-dashed bg-muted/10"
-          />
-        ) : null}
-
-        {listenerStatus ? (
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {listenerEnabled ? (
-                <StatusBadge variant="success">Listener enabled</StatusBadge>
-              ) : (
-                <StatusBadge variant="warning">Listener disabled</StatusBadge>
-              )}
-              {listening ? (
-                <StatusBadge variant="success">Bound / listening</StatusBadge>
-              ) : (
-                <StatusBadge variant="danger">Not listening</StatusBadge>
-              )}
-              {stagedPresent ? (
-                <StatusBadge variant="success">Staged socket present</StatusBadge>
-              ) : (
-                <StatusBadge variant="neutral">No staged socket</StatusBadge>
-              )}
-              {triggerInProgress ? (
-                <StatusBadge variant="info">Trigger in progress</StatusBadge>
-              ) : null}
+        <div className="min-w-0 space-y-3">
+          <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
+            <div className="flex min-w-[12rem] flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Meter</span>
+              <select
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                value={meters.some((m) => m.id === meterId) ? meterId : "__custom__"}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === "__custom__") return
+                  setMeterId(v)
+                }}
+              >
+                <option value="__custom__">Custom meterId…</option>
+                {meters.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.serialNumber} ({m.id})
+                  </option>
+                ))}
+              </select>
             </div>
-
-            <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <dt className="text-xs text-muted-foreground">Bind</dt>
-                <dd className="font-mono text-xs">
-                  {String(listenerStatus.bindHost ?? "—")}:
-                  {String(listenerStatus.bindPort ?? "—")}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Staged remote</dt>
-                <dd className="font-mono text-xs">
-                  {stagedPresent
-                    ? `${String(listenerStatus.stagedRemoteHost ?? "?")}:${String(listenerStatus.stagedRemotePort ?? "?")}`
-                    : "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Staged at (UTC)</dt>
-                <dd className="font-mono text-xs">
-                  {stagedPresent
-                    ? String(listenerStatus.stagedAcceptedAtUtc ?? "—")
-                    : "—"}
-                </dd>
-              </div>
-              <div className="sm:col-span-2">
-                <dt className="text-xs text-muted-foreground">Last replacement</dt>
-                <dd className="break-words text-xs">
-                  {listenerStatus.lastStagedReplacementReason != null
-                    ? String(listenerStatus.lastStagedReplacementReason)
-                    : "—"}
-                </dd>
-              </div>
-              {listenerStatus.lastBindError ? (
-                <div className="sm:col-span-2 lg:col-span-3">
-                  <dt className="text-xs text-destructive">Bind error</dt>
-                  <dd className="text-xs text-destructive">
-                    {String(listenerStatus.lastBindError)}
-                  </dd>
-                </div>
-              ) : null}
-            </dl>
-
-            {!stagedPresent && listenerEnabled && listening ? (
-              <p className="rounded-md border border-dashed border-border bg-muted/15 px-3 py-2 text-sm text-muted-foreground">
-                No modem connection staged yet. When the modem connects inbound, this
-                panel will show the remote endpoint — then you can run reads.
-              </p>
-            ) : null}
-
-            {triggerRecord ? (
-              <div className="rounded-md border border-border bg-muted/10 px-3 py-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Last trigger (from sidecar status)
-                </h3>
-                <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Operation</dt>
-                    <dd className="font-mono">
-                      {String(triggerRecord.operation ?? "—")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">OK</dt>
-                    <dd>{String(triggerRecord.ok)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">detailCode</dt>
-                    <dd className="break-all font-mono text-xs">
-                      {String(triggerRecord.detailCode ?? "—")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Remote</dt>
-                    <dd className="font-mono text-xs">
-                      {String(triggerRecord.remoteEndpoint ?? "—")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Socket teardown</dt>
-                    <dd className="font-mono text-xs">
-                      {String(triggerRecord.socketTeardown ?? "—")}
-                    </dd>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <dt className="text-xs text-muted-foreground">Message</dt>
-                    <dd className="text-xs">{String(triggerRecord.message ?? "—")}</dd>
-                  </div>
-                </dl>
-                {triggerRecord.diagnosticsSummary &&
-                typeof triggerRecord.diagnosticsSummary === "object" ? (
-                  <div className="mt-3 text-xs">
-                    <p className="font-medium text-muted-foreground">
-                      Diagnostics summary
-                    </p>
-                    <pre className="mt-1 max-h-32 overflow-auto rounded bg-background/80 p-2 font-mono">
-                      {JSON.stringify(triggerRecord.diagnosticsSummary, null, 2)}
-                    </pre>
-                  </div>
-                ) : null}
-                {triggerRecord.hints &&
-                typeof triggerRecord.hints === "object" ? (
-                  <div className="mt-3 text-xs">
-                    <p className="font-medium text-muted-foreground">Hints</p>
-                    <pre className="mt-1 max-h-32 overflow-auto rounded bg-background/80 p-2 font-mono">
-                      {JSON.stringify(triggerRecord.hints, null, 2)}
-                    </pre>
-                  </div>
-                ) : null}
-                {triggerRecord.basicRegistersSummary &&
-                typeof triggerRecord.basicRegistersSummary === "object" ? (
-                  <div className="mt-3 text-xs">
-                    <p className="font-medium text-muted-foreground">
-                      Basic registers summary
-                    </p>
-                    <pre className="mt-1 max-h-32 overflow-auto rounded bg-background/80 p-2 font-mono">
-                      {JSON.stringify(triggerRecord.basicRegistersSummary, null, 2)}
-                    </pre>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No trigger completed yet in this process (lastTcpListenerTrigger empty).
-              </p>
-            )}
+            <div className="flex min-w-[10rem] flex-1 flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">meterId</span>
+              <Input
+                value={meterId}
+                onChange={(e) => setMeterId(e.target.value)}
+                className="h-9 font-mono text-sm"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Transport</span>
+              <select
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                value={transport}
+                onChange={(e) =>
+                  setTransport(e.target.value === "direct" ? "direct" : "inbound")
+                }
+              >
+                <option value="inbound">Inbound modem (staged TCP)</option>
+                <option value="direct">Direct (serial / TCP client)</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Groups</span>
+              <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" disabled>
+                <option>Multi-meter (planned)</option>
+              </select>
+            </div>
           </div>
-        ) : null}
-      </SectionCard>
 
-      <SectionCard
-        title="Actions"
-        description="Runs MVP-AMI on the staged inbound socket; socket closes after each trigger."
-        headerActions={
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border bg-muted/10 px-3 py-2 text-xs">
+            <span className="font-medium text-muted-foreground">Listener</span>
+            {statusLoading ? (
+              <span className="text-muted-foreground">Loading…</span>
+            ) : statusError ? (
+              <span className="text-destructive">{statusError}</span>
+            ) : listenerStatus ? (
+              <>
+                {listenerEnabled ? (
+                  <StatusBadge variant="success">enabled</StatusBadge>
+                ) : (
+                  <StatusBadge variant="warning">disabled</StatusBadge>
+                )}
+                {listening ? (
+                  <StatusBadge variant="success">listening</StatusBadge>
+                ) : (
+                  <StatusBadge variant="danger">not listening</StatusBadge>
+                )}
+                {stagedPresent ? (
+                  <StatusBadge variant="success">staged</StatusBadge>
+                ) : (
+                  <StatusBadge variant="neutral">no socket</StatusBadge>
+                )}
+                {triggerInProgress ? (
+                  <StatusBadge variant="info">trigger active</StatusBadge>
+                ) : null}
+                <span className="font-mono text-[11px]">
+                  {String(listenerStatus.bindHost)}:{String(listenerStatus.bindPort)}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => {
+                    setStatusLoading(true)
+                    loadStatus().finally(() => setStatusLoading(false))
+                  }}
+                >
+                  <RefreshCwIcon className="size-3.5" />
+                </Button>
+              </>
+            ) : null}
+          </div>
+
+          {triggerRecord ? (
+            <p className="text-xs text-muted-foreground">
+              Last trigger:{" "}
+              <span className="font-mono">
+                {String(triggerRecord.operation)} / ok={String(triggerRecord.ok)} /{" "}
+                {String(triggerRecord.detailCode ?? "—")}
+              </span>
+            </p>
+          ) : null}
+
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               size="sm"
-              disabled={!canTrigger}
-              onClick={() => void runIdentity()}
+              disabled={transport === "inbound" ? !canInboundRead : !canDirectRead}
+              onClick={() => void onReadSelected()}
             >
-              Read identity
+              Read selected
             </Button>
             <Button
               type="button"
               size="sm"
               variant="secondary"
-              disabled={!canTrigger}
-              onClick={() => void runBasicRegisters()}
+              disabled={transport === "inbound" ? !canInboundRead : !canDirectRead}
+              onClick={() => void onReadCategory()}
             >
-              Read basic registers
+              Read category
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={selectAllInPack}>
+              Select all in pack
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={clearSelection}>
+              Clear selection
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled title="Planned">
+              Export
             </Button>
           </div>
-        }
-      >
-        {!canTrigger && listenerStatus ? (
-          <p className="mb-3 text-sm text-amber-800 dark:text-amber-200">
-            {triggerBusy
-              ? "A read is running…"
-              : triggerInProgress
-                ? "Sidecar reports a trigger already in progress."
-                : !stagedPresent
-                  ? "Connect the modem inbound to stage a socket before running reads."
-                  : "Cannot trigger right now."}
-          </p>
-        ) : null}
-        {triggerBusy ? (
-          <p className="text-sm text-muted-foreground">Executing runtime request…</p>
-        ) : null}
-        {actionError ? (
-          <p className="text-sm text-destructive">{actionError}</p>
-        ) : null}
-      </SectionCard>
 
-      <SectionCard
-        title="Latest reading result"
-        description="Last envelope returned from Read identity or Read basic registers (includes runtime ok: false)."
-      >
-        {!lastEnvelope ? (
-          <p className="text-sm text-muted-foreground">
-            No envelope yet — run an action when a modem socket is staged.
-          </p>
-        ) : (
-          <div className="space-y-6">
-            <EnvelopeSummary envelope={lastEnvelope} />
-            {lastEnvelope.ok && lastEnvelope.operation === "readIdentity" && lastEnvelope.payload ? (
-              <div>
-                <h3 className="mb-2 text-sm font-semibold">Identity</h3>
-                <IdentityResult payload={lastEnvelope.payload as IdentityPayload} />
-              </div>
-            ) : null}
-            {lastEnvelope.ok &&
-            lastEnvelope.operation === "readBasicRegisters" &&
-            lastEnvelope.payload ? (
-              <div>
-                <h3 className="mb-3 text-sm font-semibold">Basic registers</h3>
-                <BasicRegistersResult
-                  payload={lastEnvelope.payload as BasicRegistersPayload}
-                />
-              </div>
-            ) : null}
+          {metersError ? (
+            <p className="text-xs text-amber-700 dark:text-amber-300">{metersError}</p>
+          ) : null}
+          {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+          {actionError ? (
+            <p className="text-xs text-destructive">{actionError}</p>
+          ) : null}
+          {busy ? (
+            <p className="text-xs text-muted-foreground">Running runtime request…</p>
+          ) : null}
+
+          {lastEnv ? (
+            <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+              <span className="font-medium">Last envelope</span>{" "}
+              <span className="font-mono">{lastEnv.operation}</span> ok=
+              {String(lastEnv.ok)} simulated={String(lastEnv.simulated)} detail=
+              {lastEnv.diagnostics?.detailCode ?? "—"} verifiedOnWire=
+              {String(lastEnv.diagnostics?.verifiedOnWire ?? false)}
+            </div>
+          ) : null}
+
+          <div className="max-h-[min(70vh,720px)] overflow-auto rounded-lg border border-border bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible"
+                      checked={
+                        catalogRows.length > 0 &&
+                        catalogRows.every((r) => selected.has(r.obis))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) selectAllInPack()
+                        else clearSelection()
+                      }}
+                    />
+                  </TableHead>
+                  <TableHead className="whitespace-nowrap">OBIS</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="whitespace-nowrap">Type</TableHead>
+                  <TableHead className="text-right">Class</TableHead>
+                  <TableHead className="text-right">Attr</TableHead>
+                  <TableHead>Unit</TableHead>
+                  <TableHead>Pack</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Error</TableHead>
+                  <TableHead className="whitespace-nowrap">Last read</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {catalogRows.map((r) => {
+                  const rs = rowState[r.obis]
+                  return (
+                    <TableRow key={r.obis}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.obis)}
+                          onChange={() => toggleObis(r.obis)}
+                          aria-label={`Select ${r.obis}`}
+                        />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{r.obis}</TableCell>
+                      <TableCell className="max-w-[180px] text-xs">
+                        {r.description}
+                      </TableCell>
+                      <TableCell className="text-xs">{r.object_type}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {r.class_id}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {r.attribute}
+                      </TableCell>
+                      <TableCell className="text-xs">{r.unit || "—"}</TableCell>
+                      <TableCell className="text-xs">{OBIS_PACK_LABELS[r.pack_key]}</TableCell>
+                      <TableCell className="max-w-[140px] truncate font-mono text-xs">
+                        {rs?.result ?? ""}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {rs?.status ? (
+                          <StatusBadge
+                            variant={
+                              rs.status === "ok"
+                                ? "success"
+                                : rs.status === "error"
+                                  ? "danger"
+                                  : "neutral"
+                            }
+                          >
+                            {rs.status}
+                          </StatusBadge>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-[120px] truncate text-xs text-destructive">
+                        {rs?.error ?? ""}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-[10px] text-muted-foreground">
+                        {rs?.lastReadAt ?? "—"}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
           </div>
-        )}
-      </SectionCard>
+
+          {statusError && !listenerStatus ? (
+            <EmptyState
+              title="Listener status unavailable"
+              description={
+                statusError === READINGS_FETCH_NETWORK_ERROR
+                  ? READINGS_FETCH_NETWORK_ERROR
+                  : statusError
+              }
+              icon={<AlertCircleIcon className="size-5" aria-hidden />}
+              className="border-dashed bg-muted/10"
+            />
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }

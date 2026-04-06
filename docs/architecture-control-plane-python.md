@@ -29,7 +29,9 @@
 4. **Operator dashboard** (browser → Next server → same sidecar client as internal):  
    `GET /api/readings/tcp-listener/status`,  
    `POST /api/readings/tcp-listener/read-identity`,  
-   `POST /api/readings/tcp-listener/read-basic-registers` — no `INTERNAL_API_TOKEN`; UI page **`/readings`**.
+   `POST /api/readings/tcp-listener/read-basic-registers`,  
+   `POST /api/readings/runtime/read-identity`,  
+   `POST /api/readings/runtime/read-basic-registers` — no `INTERNAL_API_TOKEN`; UI pages **`/readings`**, **`/obis-config`** (catalog is repo-seeded TS).
 5. Public `POST /api/runtime/read-identity` and `POST /api/runtime/read-basic-registers` remain **unchanged** (in-process TypeScript adapter factory). The UI is not switched to the sidecar by default.
 
 ## Real adapter: `mvp_ami` (serial reads)

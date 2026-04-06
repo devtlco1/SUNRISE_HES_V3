@@ -4,6 +4,7 @@ import {
   BellIcon,
   GaugeIcon,
   LayoutDashboardIcon,
+  ListTreeIcon,
   RadioTowerIcon,
   SquareTerminalIcon,
   UsersIcon,
@@ -18,6 +19,7 @@ export type MainNavItem = {
 export const mainNavItems: MainNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
   { href: "/readings", label: "Readings", icon: ActivityIcon },
+  { href: "/obis-config", label: "OBIS catalog", icon: ListTreeIcon },
   { href: "/meters", label: "Meters", icon: GaugeIcon },
   { href: "/connectivity", label: "Connectivity", icon: RadioTowerIcon },
   { href: "/commands", label: "Commands", icon: SquareTerminalIcon },

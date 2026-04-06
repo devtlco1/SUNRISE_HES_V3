@@ -93,6 +93,72 @@ export async function postTcpListenerReadIdentity(
   }
 }
 
+export async function postDirectReadIdentity(
+  meterId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<IdentityPayload>>> {
+  try {
+    const res = await fetch("/api/readings/runtime/read-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meterId }),
+      cache: "no-store",
+      signal,
+    })
+    const body = await parseJson(res)
+    if (!res.ok) {
+      const err =
+        body &&
+        typeof body === "object" &&
+        "error" in body &&
+        typeof (body as { error: unknown }).error === "string"
+          ? (body as { error: string }).error
+          : `HTTP ${res.status}`
+      return { ok: false, error: err, status: res.status }
+    }
+    return {
+      ok: true,
+      data: body as RuntimeResponseEnvelope<IdentityPayload>,
+    }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postDirectReadBasicRegisters(
+  meterId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<BasicRegistersPayload>>> {
+  try {
+    const res = await fetch("/api/readings/runtime/read-basic-registers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meterId }),
+      cache: "no-store",
+      signal,
+    })
+    const body = await parseJson(res)
+    if (!res.ok) {
+      const err =
+        body &&
+        typeof body === "object" &&
+        "error" in body &&
+        typeof (body as { error: unknown }).error === "string"
+          ? (body as { error: string }).error
+          : `HTTP ${res.status}`
+      return { ok: false, error: err, status: res.status }
+    }
+    return {
+      ok: true,
+      data: body as RuntimeResponseEnvelope<BasicRegistersPayload>,
+    }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
 export async function postTcpListenerReadBasicRegisters(
   meterId: string,
   signal?: AbortSignal
