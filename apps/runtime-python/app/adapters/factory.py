@@ -1,7 +1,7 @@
 from functools import lru_cache
 
 from app.adapters.base import ProtocolRuntimeAdapter
-from app.adapters.mvp_ami_placeholder import MvpAmiRuntimeAdapter
+from app.adapters.mvp_ami_adapter import MvpAmiRuntimeAdapter
 from app.adapters.stub import StubRuntimeAdapter
 from app.config import get_settings
 

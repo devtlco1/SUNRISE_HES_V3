@@ -15,6 +15,10 @@
 3. **Internal** route: `POST /api/internal/python-runtime/read-identity` — proxies to Python `POST /v1/runtime/read-identity`.
 4. The public `POST /api/runtime/read-identity` route is **unchanged** (still uses the in-process TypeScript adapter factory). UI is not switched to the sidecar in this step.
 
+## Real adapter: `mvp_ami` (serial identity read)
+
+When the Python process runs with `SUNRISE_RUNTIME_ADAPTER=mvp_ami` and `SUNRISE_RUNTIME_MVP_AMI_ROOT` pointing at a local **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)** checkout, `POST /v1/runtime/read-identity` executes **one** host-initiated serial pipeline (open → IEC → association → single identity OBIS read) and returns the same **`RuntimeResponseEnvelope`** as the stub. Details, env vars, and curl examples: **`docs/runtime-python-mvp-ami-adapter.md`**.
+
 ## Environment (Next.js server)
 
 | Variable | Purpose |

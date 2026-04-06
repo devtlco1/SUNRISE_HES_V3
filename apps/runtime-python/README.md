@@ -13,8 +13,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 ```
 
 - **Health:** `GET http://127.0.0.1:8766/health`
-- **Read identity (stub):** `POST http://127.0.0.1:8766/v1/runtime/read-identity`  
-  Body: `{"meterId":"hes-mt-demo-1"}`
+- **Read identity:** `POST http://127.0.0.1:8766/v1/runtime/read-identity`  
+  Body: `{"meterId":"hes-mt-demo-1"}` (stub) or real `mvp_ami` config — see below.
 
 ## Configuration (environment)
 
@@ -23,8 +23,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 | `SUNRISE_RUNTIME_HOST` | Bind host (default `0.0.0.0`) |
 | `SUNRISE_RUNTIME_PORT` | Bind port (default `8766`) |
 | `SUNRISE_RUNTIME_LOG_LEVEL` | e.g. `INFO`, `DEBUG` |
-| `SUNRISE_RUNTIME_ADAPTER` | `stub` (default) or `mvp_ami` (not wired — returns not-implemented envelope) |
+| `SUNRISE_RUNTIME_ADAPTER` | `stub` (default, simulated) or `mvp_ami` (serial via local MVP-AMI checkout) |
+| `SUNRISE_RUNTIME_MVP_AMI_ROOT` | **Required for `mvp_ami`:** absolute path to cloned `devtlco1/MVP-AMI` |
+| `SUNRISE_RUNTIME_MVP_AMI_CONFIG_PATH` | Optional path to MVP-AMI `config.json` (default `<root>/config.json`) |
+| `SUNRISE_RUNTIME_IDENTITY_OBIS` | Optional identity OBIS for `run_phase1` (default `0.0.96.1.1.255`) |
 | `SUNRISE_RUNTIME_SERVICE_TOKEN` | If set, `POST /v1/*` requires `Authorization: Bearer <token>`. `GET /health` stays open. |
+
+Full setup and failure codes: **`../../docs/runtime-python-mvp-ami-adapter.md`**.
 
 ## Layout
 
@@ -33,8 +38,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 - `app/schemas/` — Pydantic models (aligned with `types/runtime.ts`)
 - `app/routes/` — HTTP routers
 - `app/services/` — use-cases
-- `app/adapters/` — `ProtocolRuntimeAdapter` implementations (`stub`, future MVP-AMI)
+- `app/adapters/` — `ProtocolRuntimeAdapter` (`stub`, `mvp_ami`)
 
 ## Next step
 
-Implement `MvpAmiRuntimeAdapter.read_identity` using the MVP-AMI repo, or serial/TCP client code, and point the Next.js internal proxy at this service (`RUNTIME_PYTHON_SIDECAR_URL`).
+Multi-channel TCP, queue execution, and switching the **public** read-identity route to Python are **out of scope** for this milestone; see `docs/protocol-runtime-handoff.md`.

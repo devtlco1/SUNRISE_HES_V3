@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter
 
@@ -13,4 +14,6 @@ router = APIRouter(tags=["health"])
 def health() -> HealthResponse:
     settings = get_settings()
     log.debug("health_check")
-    return HealthResponse(adapter=settings.adapter)
+    root = (settings.mvp_ami_root or "").strip()
+    mvp_ok = bool(root) and Path(root).expanduser().is_dir()
+    return HealthResponse(adapter=settings.adapter, mvpAmiRootConfigured=mvp_ok)

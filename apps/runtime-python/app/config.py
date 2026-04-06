@@ -18,12 +18,18 @@ class Settings(BaseSettings):
     port: int = 8766
     log_level: str = "INFO"
     """
-    `stub` — returns explicit simulated envelope (no wire).
-    `mvp_ami` — reserved; currently returns not-implemented-style envelope until wired to MVP-AMI.
+    `stub` — simulated envelope (no wire).
+    `mvp_ami` — serial host-initiated read via local MVP-AMI checkout (`MeterClient.run_phase1`).
     """
     adapter: Literal["stub", "mvp_ami"] = "stub"
     """If set, require `Authorization: Bearer <token>` on `/v1/*` routes. `/health` stays open."""
     service_token: Optional[str] = None
+    """Absolute path to cloned https://github.com/devtlco1/MVP-AMI (required for `adapter=mvp_ami`)."""
+    mvp_ami_root: Optional[str] = None
+    """Path to MVP-AMI `config.json`. Default: `<mvp_ami_root>/config.json`."""
+    mvp_ami_config_path: Optional[str] = None
+    """Logical name read after association (default identity OBIS)."""
+    identity_obis: str = "0.0.96.1.1.255"
 
 
 @lru_cache

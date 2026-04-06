@@ -2,3 +2,6 @@ fastapi>=0.115.0,<1
 uvicorn[standard]>=0.32.0,<1
 pydantic>=2.10.0,<3
 pydantic-settings>=2.6.0,<3
+# Match MVP-AMI meter stack (serial + Gurux) when using adapter=mvp_ami
+pyserial>=3.5
+gurux-dlms>=1.0.0
