@@ -34,30 +34,77 @@ export function stripLeadingLlcReply(llcAndApdu: Uint8Array): Uint8Array {
   return llcAndApdu
 }
 
+function matchesLlc3(buf: Uint8Array, llc: Uint8Array): boolean {
+  return (
+    buf.length >= llc.length &&
+    buf[0] === llc[0] &&
+    buf[1] === llc[1] &&
+    buf[2] === llc[2]
+  )
+}
+
+/** How LLC was handled before APDU search (some meters echo e6e600 on inbound I-frames). */
+export type MeterLlcStripKind = "reply_e6e700" | "send_e6e600" | "raw"
+
 /**
- * Find AARE (tag 0x61) association-result (tag 0xA2, ENUM).
- * Returns raw enum (0 = accepted per COSEM).
+ * Ordered APDU views: standard reply LLC first, then send LLC (echo), then unmodified.
+ * Deduplicates identical slices.
+ */
+export function listLlcStripVariantsForMeterReply(
+  llcAndApdu: Uint8Array
+): Array<{ strip: MeterLlcStripKind; apdu: Uint8Array }> {
+  const out: Array<{ strip: MeterLlcStripKind; apdu: Uint8Array }> = []
+  const seen = new Set<string>()
+  const push = (strip: MeterLlcStripKind, apdu: Uint8Array) => {
+    const k = Buffer.from(apdu).toString("hex")
+    if (seen.has(k)) return
+    seen.add(k)
+    out.push({ strip, apdu })
+  }
+  if (matchesLlc3(llcAndApdu, LLC_REPLY)) {
+    push("reply_e6e700", llcAndApdu.subarray(LLC_REPLY.length))
+  }
+  if (matchesLlc3(llcAndApdu, LLC_SEND)) {
+    push("send_e6e600", llcAndApdu.subarray(LLC_SEND.length))
+  }
+  push("raw", llcAndApdu)
+  return out
+}
+
+/**
+ * Find AARE (tag 0x61) and association-result [2] (tag 0xA2) with ENUM contents 02 01 xx.
+ * Scans from the first 0x61; within the remainder, accepts any short-form A2 length L>=3
+ * whose value starts with BER ENUM 02 01 (COSEM / Gurux style).
  */
 export function parseAareAssociationResult(apdu: Uint8Array): {
   result: number
 } | null {
-  let off = -1
-  for (let i = 0; i <= apdu.length - 2; i++) {
+  let aareOff = -1
+  for (let i = 0; i < apdu.length; i++) {
     if (apdu[i] === 0x61) {
-      off = i
+      aareOff = i
       break
     }
   }
-  if (off < 0) return null
+  if (aareOff < 0) return null
 
-  for (let i = off; i <= apdu.length - 5; i++) {
-    if (
-      apdu[i] === 0xa2 &&
-      apdu[i + 1] === 0x03 &&
-      apdu[i + 2] === 0x02 &&
-      apdu[i + 3] === 0x01
-    ) {
-      return { result: apdu[i + 4] }
+  const rest = apdu.subarray(aareOff)
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] !== 0xa2) continue
+    let contentOff = i + 2
+    let L = rest[i + 1]
+    if (L === undefined) continue
+    /** One-byte long form 81 LL (still tiny content) */
+    if (L === 0x81) {
+      L = rest[i + 2]
+      contentOff = i + 3
+    } else if (L >= 0x80) {
+      continue
+    }
+    if (L < 3 || contentOff + L > rest.length) continue
+    if (rest[contentOff] === 0x02 && rest[contentOff + 1] === 0x01) {
+      const enumVal = rest[contentOff + 2]
+      return { result: enumVal }
     }
   }
   return null

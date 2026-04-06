@@ -4,6 +4,7 @@ import { classifyInboundPreview } from "@/lib/runtime/ingress/classify"
 import type { InboundMeterProtocolProfile } from "@/lib/runtime/ingress/inbound-profile"
 import { flushIngressTraceToFile } from "@/lib/runtime/ingress/protocol-trace-file"
 import {
+  traceAareHuntStep,
   traceMeterAccumSnapshot,
   traceOutboundFrame,
   traceProtocolStep,
@@ -16,11 +17,8 @@ import {
   setInboundProtocolPhase,
 } from "@/lib/runtime/ingress/state"
 import { buildAarqLlsLnPayload } from "@/lib/runtime/real/dlms-aarq-lls"
-import {
-  buildAarqPayload,
-  parseAareAssociationResult,
-  stripLeadingLlcReply,
-} from "@/lib/runtime/real/dlms-apdu"
+import { buildAarqPayload, listLlcStripVariantsForMeterReply } from "@/lib/runtime/real/dlms-apdu"
+import { buildAareSearchReport, findAareInMeterAccum } from "@/lib/runtime/real/dlms-aare-hunt"
 import {
   buildGetRequestNormalPayload,
   obisStringToSixBytes,
@@ -72,25 +70,14 @@ function bufferPrefixMatch(buf: Uint8Array, prefix: Buffer): boolean {
   return true
 }
 
-function findAare(accum: Uint8Array): { result: number; apdu: Buffer } | null {
-  for (const raw of splitHdlcFrames(accum)) {
-    for (const v of enumerateAllValidHdlcParses(raw)) {
-      if (v.parsed.kind !== "i") continue
-      const apdu = stripLeadingLlcReply(v.parsed.llcAndApdu)
-      const hit = parseAareAssociationResult(apdu)
-      if (hit) return { result: hit.result, apdu: Buffer.from(apdu) }
-    }
-  }
-  return null
-}
-
 function findGetResponse(accum: Uint8Array): ReturnType<typeof parseGetResponseNormal> | null {
   for (const raw of splitHdlcFrames(accum)) {
     for (const v of enumerateAllValidHdlcParses(raw)) {
       if (v.parsed.kind !== "i") continue
-      const apdu = stripLeadingLlcReply(v.parsed.llcAndApdu)
-      const g = parseGetResponseNormal(apdu)
-      if (g.verified) return g
+      for (const { apdu } of listLlcStripVariantsForMeterReply(v.parsed.llcAndApdu)) {
+        const g = parseGetResponseNormal(apdu)
+        if (g.verified) return g
+      }
     }
   }
   return null
@@ -230,17 +217,27 @@ export async function runInboundDlmsOnSocket(
       aareApduHex: null,
     })
 
+    const accumLenBeforePostAarq = accum.length
     await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq), "aarq_iframe")
+    traceProtocolStep("aarq_iframe_sent", `meter=${meter.toString("hex")}_client=${client.toString("hex")}`)
     accum = await extendAccum(socket, accum, profile, "after_aarq")
+    traceAareHuntStep("after_aarq", accum, accumLenBeforePostAarq)
 
-    let aareHit = findAare(accum)
+    let aareHit = findAareInMeterAccum(accum)
     for (let i = 0; i < 8 && !aareHit; i++) {
+      const lenBeforeBurst = accum.length
       accum = await extendAccum(socket, accum, profile, `await_aare_${i}`)
-      aareHit = findAare(accum)
+      traceAareHuntStep(`await_aare_${i}`, accum, lenBeforeBurst)
+      aareHit = findAareInMeterAccum(accum)
     }
 
     if (!aareHit) {
-      setInboundProtocolPhase("aare_missing", "no parseable AARE")
+      const rep = buildAareSearchReport(accum, { maxRows: 12 })
+      traceProtocolStep(
+        "aare_missing_final",
+        `${rep.code}|${rep.summary}|see_lastAareHuntReport_and_aarqAareSteps`
+      )
+      setInboundProtocolPhase("aare_missing", `${rep.code}: ${rep.summary}`)
       setInboundAssociationOutcome({
         attempted: true,
         verifiedOnWire: false,
@@ -256,7 +253,10 @@ export async function runInboundDlmsOnSocket(
       return
     }
 
+    traceProtocolStep("aare_parsed", `association_result_enum=${aareHit.result}`)
+
     if (aareHit.result !== 0) {
+      traceProtocolStep("aare_rejected_on_wire", `association_result_enum=${aareHit.result}`)
       setInboundProtocolPhase("aare_rejected", `association-result=${aareHit.result}`)
       setInboundAssociationOutcome({
         attempted: true,
@@ -273,6 +273,7 @@ export async function runInboundDlmsOnSocket(
       return
     }
 
+    traceProtocolStep("aare_accepted_on_wire", "association_result_enum=0")
     setInboundProtocolPhase("association_accepted", "")
     setInboundAssociationOutcome({
       attempted: true,

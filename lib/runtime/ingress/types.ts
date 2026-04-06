@@ -18,6 +18,29 @@ export type IngressSessionClass =
   | "inbound_identity_read_verified"
   | "inbound_session_failed"
 
+/** One row from post-AARQ AARE hunt (bounded fields; frame hex capped). */
+export type IngressAareHuntRowPublic = {
+  frameHexCapped: string
+  addressModel: string
+  destLen: number
+  srcLen: number
+  payloadByteLength: number
+  llcStripped: string
+  apduPrefixHex: string
+  hasTag61: boolean
+  associationResultEnum: number | null
+  rowNote: string
+}
+
+/** Latest structured AARE search result (updated after each post-AARQ burst). */
+export type IngressAareHuntReportPublic = {
+  code: string
+  summary: string
+  completeHdlcFrameCount: number
+  iFrameVariantCount: number
+  rows: IngressAareHuntRowPublic[]
+}
+
 /** Bounded last-session protocol evidence for operator debugging (no secrets). */
 export type IngressProtocolTracePublic = {
   startedAtIso: string | null
@@ -64,6 +87,21 @@ export type IngressProtocolTracePublic = {
   lastSnrmStrictSummary: string | null
   lastFrameParseSummary: string
   lastFcsValidationNote: string
+  /** Latest one-line AARQ→AARE hunt outcome (code:summary). */
+  lastAarqAareSummary: string | null
+  /** Per-burst deltas after AARQ until AARE resolved or loop ends (bounded). */
+  aarqAareSteps: Array<{
+    t: string
+    phase: string
+    deltaRxBytes: number
+    accumTotalBytes: number
+    completeHdlcSegments: number
+    huntCode: string
+    huntSummary: string
+    rowCount: number
+  }>
+  /** Full latest hunt snapshot (rows capped inside builder). */
+  lastAareHuntReport: IngressAareHuntReportPublic | null
 }
 
 export type MeterIngressConfig = {

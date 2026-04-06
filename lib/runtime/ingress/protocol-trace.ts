@@ -1,5 +1,9 @@
-import type { IngressProtocolTracePublic } from "@/lib/runtime/ingress/types"
+import type {
+  IngressAareHuntReportPublic,
+  IngressProtocolTracePublic,
+} from "@/lib/runtime/ingress/types"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
+import { buildAareSearchReport } from "@/lib/runtime/real/dlms-aare-hunt"
 import {
   capHex,
   hasStrictUaFrame,
@@ -29,6 +33,9 @@ export function emptyIngressProtocolTrace(): IngressProtocolTracePublic {
     lastSnrmStrictSummary: null,
     lastFrameParseSummary: "",
     lastFcsValidationNote: "",
+    lastAarqAareSummary: null,
+    aarqAareSteps: [],
+    lastAareHuntReport: null,
   }
 }
 
@@ -48,6 +55,53 @@ export function traceProtocolStep(phase: string, detail?: string): void {
   const t = trace()
   if (t.steps.length >= MAX_STEPS) t.steps.shift()
   t.steps.push({ t: new Date().toISOString(), phase, detail })
+}
+
+const MAX_AARE_HUNT_STEPS = 24
+
+/**
+ * After each inbound burst following AARQ: record rx delta, HDLC segment count, and AARE hunt outcome.
+ * `accumLenBeforeBurst` must be accum.length before the read that produced the current `accum`.
+ */
+export function traceAareHuntStep(
+  phase: string,
+  accum: Uint8Array,
+  accumLenBeforeBurst: number
+): void {
+  const t = trace()
+  const rep = buildAareSearchReport(accum, { maxRows: 8 })
+  const pub: IngressAareHuntReportPublic = {
+    code: rep.code,
+    summary: rep.summary,
+    completeHdlcFrameCount: rep.completeHdlcFrameCount,
+    iFrameVariantCount: rep.iFrameVariantCount,
+    rows: rep.rows.map((r) => ({
+      frameHexCapped: r.frameHexCapped,
+      addressModel: r.addressModel,
+      destLen: r.destLen,
+      srcLen: r.srcLen,
+      payloadByteLength: r.payloadByteLength,
+      llcStripped: r.llcStripped,
+      apduPrefixHex: r.apduPrefixHex,
+      hasTag61: r.hasTag61,
+      associationResultEnum: r.associationResultEnum,
+      rowNote: r.rowNote,
+    })),
+  }
+  t.lastAareHuntReport = pub
+  t.lastAarqAareSummary = `${rep.code}:${rep.summary}`
+
+  if (t.aarqAareSteps.length >= MAX_AARE_HUNT_STEPS) t.aarqAareSteps.shift()
+  t.aarqAareSteps.push({
+    t: new Date().toISOString(),
+    phase,
+    deltaRxBytes: Math.max(0, accum.length - accumLenBeforeBurst),
+    accumTotalBytes: accum.length,
+    completeHdlcSegments: rep.completeHdlcFrameCount,
+    huntCode: rep.code,
+    huntSummary: rep.summary,
+    rowCount: rep.rows.length,
+  })
 }
 
 export function traceOutboundFrame(phase: string, data: Buffer): void {
