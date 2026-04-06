@@ -29,6 +29,7 @@ This document captures Day-1 layout rules so pages stay consistent. Prefer editi
 - **Connectivity** is the **canonical** operational table: dense columns, `FilterBar` + toolbar search, row actions, details sheet, skeleton loading, pagination with rows-per-page, empty and no-match states. **Meters** follows the same pattern for registry-specific fields.
 - **Commands** adds a **workflow layout**: request panel + jobs table (same table chrome as Connectivity) + inline selected-job detail with per-meter results; use this when the screen is process-oriented, not list-only.
 - **Alarms** uses the **Connectivity-style** list + **compact triage strip** above filters (bulk actions disabled until selection logic exists); detail **sheet** matches other operational panels.
+- **Users** completes the shell: same table + filter + pagination pattern, **compact directory strip** (add / invite / bulk actions mock), and **user detail sheet** for identity and scope review.
 - Shared detail layout primitives: `DetailBlock` and `DlGrid` in `components/shared/entity-detail-blocks.tsx`.
 
 ## Badges
