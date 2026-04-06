@@ -1,5 +1,9 @@
 "use client"
 
+import {
+  DetailBlock,
+  DlGrid,
+} from "@/components/shared/entity-detail-blocks"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -16,42 +20,6 @@ import {
   formatRelayStatus,
 } from "@/lib/meters/format"
 import type { MeterListRow } from "@/types/meter"
-
-function DetailBlock({
-  title,
-  children,
-}: {
-  title: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="space-y-2">
-      <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-        {title}
-      </h3>
-      <div className="rounded-lg border border-border bg-muted/15 px-3 py-3 text-sm">
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function DlGrid({
-  items,
-}: {
-  items: { label: string; value: React.ReactNode }[]
-}) {
-  return (
-    <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      {items.map(({ label, value }) => (
-        <div key={label} className="min-w-0 space-y-0.5">
-          <dt className="text-xs text-muted-foreground">{label}</dt>
-          <dd className="truncate font-medium text-foreground">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
 
 type MeterDetailsSheetProps = {
   meter: MeterListRow | null

@@ -26,7 +26,8 @@ This document captures Day-1 layout rules so pages stay consistent. Prefer editi
 
 - Always compose list UIs with `TableShell` + `TableToolbar` + shadcn `Table` + `TablePagination`.
 - Empty datasets: use `TableEmpty` (built on `EmptyState`) so empty and filled states share width and tone.
-- **Connectivity** established the baseline chrome; **Meters** is the full reference for dense operational columns, filter row + toolbar search, row actions, details sheet, skeleton loading, and pagination options.
+- **Connectivity** is the **canonical** operational table: dense columns, `FilterBar` + toolbar search, row actions, details sheet, skeleton loading, pagination with rows-per-page, empty and no-match states. **Meters** follows the same pattern for registry-specific fields; new list pages (Commands, Alarms, etc.) should match Connectivity first.
+- Shared detail layout primitives: `DetailBlock` and `DlGrid` in `components/shared/entity-detail-blocks.tsx`.
 
 ## Badges
 

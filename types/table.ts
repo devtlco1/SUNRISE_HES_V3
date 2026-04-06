@@ -10,11 +10,3 @@ export type TablePaginationProps = {
   pageSizeOptions?: number[]
   onPageSizeChange?: (pageSize: number) => void
 }
-
-export type MeterConnectivityRow = {
-  id: string
-  name: string
-  channel: string
-  lastSeen: string
-  linkStatus: "online" | "offline" | "degraded"
-}
