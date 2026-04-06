@@ -2,6 +2,12 @@
 
 Field gateway hosts and ports **must not** be committed. Configure them only on the server (PM2, systemd, container env, or a gitignored `.env.production.local`).
 
+## Inbound meter TCP ingress (listener)
+
+For deployments where the **meter initiates TCP to the server**, enable the ingress listener with `RUNTIME_TCP_METER_INGRESS_*` variables. This is the **live integration direction** for that topology; the outbound probe below remains a **separate diagnostic** path.
+
+See **[docs/runtime-ingress.md](runtime-ingress.md)** for semantics, verification (`ss`, `/api/runtime/ingress/status`), and honest limitations (inbound bytes ≠ verified DLMS).
+
 ## Required variables (real TCP probe)
 
 | Variable | Purpose |
@@ -78,12 +84,15 @@ Replace `<app-port>` with the port your app listens on (often `3000`).
 
 ```bash
 curl -sS "http://127.0.0.1:<app-port>/api/runtime/status" | jq .
+curl -sS "http://127.0.0.1:<app-port>/api/runtime/ingress/status" | jq .
 curl -sS -X POST "http://127.0.0.1:<app-port>/api/runtime/probe" \
   -H 'Content-Type: application/json' \
   -d '{"meterId":"field-test-1"}' | jq .
 ```
 
 Expect `configuredMode: "real"`, `effectiveAdapter: "real"`, and probe `diagnostics` consistent with TCP outcome—not DLMS proof unless `verifiedOnWire` is true for a proven operation.
+
+When ingress is enabled, confirm the **ingress TCP port** is listening with `ss -ltnp` (see [runtime-ingress.md](runtime-ingress.md)) and that `/api/runtime/ingress/status` reports `listening: true` after a successful bind.
 
 ## Example template (copy on server only)
 

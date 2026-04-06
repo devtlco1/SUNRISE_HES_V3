@@ -18,7 +18,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Field / VPS runtime (env only)
 
-Runtime probe and adapter mode are **environment-driven**. Do not hardcode field endpoints in the repo. On a server, configure `RUNTIME_ADAPTER`, `RUNTIME_PROBE_*`, etc. as in [docs/vps-runtime.md](docs/vps-runtime.md).
+Runtime probe and adapter mode are **environment-driven**. Do not hardcode field endpoints in the repo. On a server, configure `RUNTIME_ADAPTER`, `RUNTIME_PROBE_*`, etc. as in [docs/vps-runtime.md](docs/vps-runtime.md). For **meter-initiated TCP to the server**, see [docs/runtime-ingress.md](docs/runtime-ingress.md) (`RUNTIME_TCP_METER_INGRESS_*`).
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
