@@ -31,7 +31,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { mockMeterListRows } from "@/lib/mock/meters"
+import {
+  METERS_FETCH_NETWORK_ERROR,
+  fetchMeters,
+} from "@/lib/meters/api"
 import {
   operationalListPageStackClass,
   operationalMonoIdTriggerClass,
@@ -70,7 +73,10 @@ function MeterTableHeaderRow() {
 }
 
 type MetersListProps = {
-  /** Swap to `[]` in the page module to exercise the empty catalog state. */
+  /**
+   * When provided, skips `/api/meters` (e.g. `NEXT_PUBLIC_METERS_USE_MOCK` or tests).
+   * Pass `[]` to exercise an empty catalog without the API.
+   */
   rows?: MeterListRow[]
 }
 
@@ -92,8 +98,15 @@ function matchesSearch(row: MeterListRow, q: string) {
     .includes(n)
 }
 
-export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListProps) {
-  const [loading, setLoading] = useState(true)
+export function MetersList({ rows: rowsProp }: MetersListProps) {
+  const staticMode = rowsProp !== undefined
+  const [fetchedRows, setFetchedRows] = useState<MeterListRow[]>([])
+  const [loadKey, setLoadKey] = useState(0)
+  const [loading, setLoading] = useState(rowsProp === undefined)
+  const [error, setError] = useState<string | null>(null)
+
+  const sourceRows = rowsProp !== undefined ? rowsProp : fetchedRows
+
   const [search, setSearch] = useState("")
   const [commFilter, setCommFilter] = useState<string>(ALL)
   const [manufacturerFilter, setManufacturerFilter] = useState<string>(ALL)
@@ -105,9 +118,43 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
   const [selectedMeter, setSelectedMeter] = useState<MeterListRow | null>(null)
 
   useEffect(() => {
-    const t = window.setTimeout(() => setLoading(false), 380)
-    return () => window.clearTimeout(t)
-  }, [])
+    if (staticMode) return
+
+    const ac = new AbortController()
+    let stale = false
+
+    fetchMeters(ac.signal)
+      .then((result) => {
+        if (stale) return
+        setLoading(false)
+        if (!result.ok) {
+          setError(result.error)
+          setFetchedRows([])
+          return
+        }
+        setError(null)
+        setFetchedRows(result.rows)
+      })
+      .catch((e) => {
+        if (e instanceof Error && e.name === "AbortError") return
+        if (stale) return
+        setLoading(false)
+        setError(METERS_FETCH_NETWORK_ERROR)
+        setFetchedRows([])
+      })
+
+    return () => {
+      stale = true
+      ac.abort()
+    }
+  }, [staticMode, loadKey])
+
+  function reload() {
+    if (staticMode) return
+    setLoading(true)
+    setError(null)
+    setLoadKey((k) => k + 1)
+  }
 
   const resetPage = useCallback(() => setPage(1), [])
 
@@ -171,8 +218,10 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
     if (!open) setSelectedMeter(null)
   }
 
-  const emptyCatalog = sourceRows.length === 0
-  const noResults = !emptyCatalog && filtered.length === 0
+  const fetchFailed = !staticMode && !loading && error !== null
+  const emptyCatalog = !fetchFailed && sourceRows.length === 0
+  const noResults =
+    !fetchFailed && !emptyCatalog && filtered.length === 0
 
   return (
     <div className={operationalListPageStackClass}>
@@ -253,7 +302,11 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
 
       <SectionCard
         title="Meter registry"
-        description="Installed meters with comm, relay, and alarm context. Filters and pagination run client-side on mock data."
+        description={
+          staticMode
+            ? "Static catalog — filters and pagination run client-side."
+            : "Served from GET /api/meters. Filters and pagination run client-side on the fetched row set."
+        }
       >
         <TableShell>
           <TableToolbar
@@ -277,7 +330,13 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
             }
             right={
               <>
-                <Button type="button" variant="outline" size="sm" disabled>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={staticMode || loading}
+                  onClick={reload}
+                >
                   Refresh
                 </Button>
                 <Button type="button" variant="secondary" size="sm" disabled>
@@ -298,7 +357,7 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
                 </Table>
               </div>
             </div>
-          ) : emptyCatalog || noResults ? null : (
+          ) : fetchFailed ? null : emptyCatalog || noResults ? null : (
             <div className="relative min-w-0">
               <div className="min-w-[1040px]">
                 <Table>
@@ -404,14 +463,35 @@ export function MetersList({ rows: sourceRows = mockMeterListRows }: MetersListP
             </div>
           )}
 
-          {!loading && emptyCatalog ? (
+          {!loading && fetchFailed ? (
             <TableEmpty
-              title="No meters in registry"
-              description="Registered meters will appear here. Use an empty rows prop to verify this layout."
+              title="Unable to load registry"
+              description={error ?? "Request failed."}
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={reload}
+                >
+                  Retry
+                </Button>
+              }
             />
           ) : null}
 
-          {!loading && noResults ? (
+          {!loading && !fetchFailed && emptyCatalog ? (
+            <TableEmpty
+              title="No meters in registry"
+              description={
+                staticMode
+                  ? "Use an empty rows prop to verify this layout."
+                  : "The catalog source returned no rows. If this is unexpected, verify data/meters.json or the upstream feed."
+              }
+            />
+          ) : null}
+
+          {!loading && !fetchFailed && noResults ? (
             <TableEmpty
               title="No meters match filters"
               description="Clear search or widen comm, relay, and alarm filters."
