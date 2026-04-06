@@ -573,15 +573,22 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
         if not disc.ok:
             transport_attempted = any(d.get("stage") == "open_port" and d.get("success") for d in disc.diagnostics)
             assoc_attempted = any(d.get("stage") == "association" for d in disc.diagnostics)
+            ec = disc.error_code or "DISCOVERY_FAILED"
+            if ec == "ASSOCIATION_VIEW_READ_FAILED":
+                assoc_state = "associated"
+            elif ec in ("SERIAL_OPEN_FAILED", "IEC_HANDSHAKE_FAILED", "MVP_AMI_ROOT_REQUIRED"):
+                assoc_state = "none"
+            else:
+                assoc_state = "failed"
             return _failure_envelope(
                 meter_id=request.meterId,
                 operation="discoverSupportedObis",
                 started=started,
                 finished=finished,
                 message=disc.error_message or "Association view discovery failed.",
-                code=disc.error_code or "DISCOVERY_FAILED",
+                code=ec,
                 transport_state="error" if disc.error_code == "SERIAL_OPEN_FAILED" else "disconnected",
-                association_state="associated" if disc.error_code == "ASSOCIATION_VIEW_READ_FAILED" else "failed",
+                association_state=assoc_state,  # type: ignore[arg-type]
                 transport_attempted=transport_attempted,
                 association_attempted=assoc_attempted,
                 verified=False,
