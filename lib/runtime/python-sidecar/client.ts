@@ -156,6 +156,47 @@ export async function postTcpListenerReadIdentityToPythonSidecar(
 }
 
 /**
+ * Server-only: POST /v1/runtime/tcp-listener/read-basic-registers (staged inbound modem socket).
+ */
+export async function postTcpListenerReadBasicRegistersToPythonSidecar(
+  body: PythonReadBasicRegistersRequest
+): Promise<RuntimeResponseEnvelope<BasicRegistersPayload>> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/read-basic-registers`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as RuntimeResponseEnvelope<BasicRegistersPayload>
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as RuntimeResponseEnvelope<BasicRegistersPayload>
+}
+
+/**
  * Server-only: POST /v1/runtime/read-basic-registers on the Python sidecar.
  */
 export async function postReadBasicRegistersToPythonSidecar(

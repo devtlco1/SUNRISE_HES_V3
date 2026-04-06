@@ -7,7 +7,10 @@ from fastapi import APIRouter, Depends
 
 from app.routes.runtime_v1 import verify_service_token
 from app.schemas.envelope import RuntimeResponseEnvelope
-from app.schemas.requests import ReadIdentityRequest
+from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
+from app.services.tcp_listener_read_basic_registers import (
+    execute_tcp_listener_read_basic_registers,
+)
 from app.services.tcp_listener_read_identity import execute_tcp_listener_read_identity
 from app.tcp_listener.staged_modem_listener import get_tcp_modem_listener
 
@@ -37,3 +40,19 @@ def post_tcp_listener_read_identity(body: ReadIdentityRequest) -> RuntimeRespons
     """
     log.info("http_tcp_listener_read_identity", extra={"meter_id": body.meterId})
     return execute_tcp_listener_read_identity(body)
+
+
+@router.post(
+    "/read-basic-registers",
+    response_model=RuntimeResponseEnvelope,
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_read_basic_registers(
+    body: ReadBasicRegistersRequest,
+) -> RuntimeResponseEnvelope:
+    """
+    Run read-basic-registers on the currently staged inbound TCP socket (modem already connected).
+    Pops the staged socket for the duration of the call; closes it when done (same as read-identity).
+    """
+    log.info("http_tcp_listener_read_basic_registers", extra={"meter_id": body.meterId})
+    return execute_tcp_listener_read_basic_registers(body)

@@ -1,4 +1,4 @@
-"""Explicit read-identity on staged inbound modem TCP socket (MVP-AMI run_phase1_tcp_socket)."""
+"""Explicit read-basic-registers on staged inbound modem TCP socket (MVP-AMI run_phase1_tcp_socket)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from app.schemas.envelope import (
     RuntimeExecutionDiagnostics,
     RuntimeResponseEnvelope,
 )
-from app.schemas.requests import ReadIdentityRequest
+from app.schemas.requests import ReadBasicRegistersRequest
 from app.tcp_listener.staged_modem_listener import (
     build_last_tcp_listener_trigger_record,
     get_tcp_modem_listener,
@@ -27,7 +27,9 @@ def _iso_z(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
-def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+def execute_tcp_listener_read_basic_registers(
+    request: ReadBasicRegistersRequest,
+) -> RuntimeResponseEnvelope:
     settings = get_settings()
     started = datetime.now(timezone.utc)
     ctl = get_tcp_modem_listener()
@@ -56,7 +58,7 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
                     request,
                     started,
                     datetime.now(timezone.utc),
-                    "Inbound TCP read-identity requires SUNRISE_RUNTIME_ADAPTER=mvp_ami.",
+                    "Inbound TCP read-basic-registers requires SUNRISE_RUNTIME_ADAPTER=mvp_ami.",
                     "TCP_LISTENER_REQUIRES_MVP_AMI",
                     {"transportMode": "tcp_inbound", "adapter": settings.adapter},
                 )
@@ -86,10 +88,12 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
             teardown = "server_closed_after_trigger"
             try:
                 log.info(
-                    "tcp_listener_read_identity_start",
+                    "tcp_listener_read_basic_registers_start",
                     extra={"meter_id": request.meterId, "remote": endpoint},
                 )
-                envelope = adapter.read_identity_on_accepted_tcp_socket(request, sock, endpoint)
+                envelope = adapter.read_basic_registers_on_accepted_tcp_socket(
+                    request, sock, endpoint
+                )
                 return envelope
             finally:
                 try:
@@ -100,7 +104,7 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
             if envelope is not None:
                 ctl.record_tcp_listener_trigger(
                     build_last_tcp_listener_trigger_record(
-                        operation="readIdentity",
+                        operation="readBasicRegisters",
                         remote_endpoint=remote,
                         envelope=envelope,
                         socket_teardown=teardown,
@@ -109,7 +113,7 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
 
 
 def _fail(
-    request: ReadIdentityRequest,
+    request: ReadBasicRegistersRequest,
     started: datetime,
     finished: datetime,
     message: str,
@@ -120,7 +124,7 @@ def _fail(
     return RuntimeResponseEnvelope(
         ok=False,
         simulated=False,
-        operation="readIdentity",
+        operation="readBasicRegisters",
         meterId=request.meterId,
         startedAt=_iso_z(started),
         finishedAt=_iso_z(finished),

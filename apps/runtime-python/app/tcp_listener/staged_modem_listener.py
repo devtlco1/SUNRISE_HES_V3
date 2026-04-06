@@ -56,6 +56,7 @@ class TcpModemListenerController:
     _last_replacement_reason: Optional[str] = None
     _last_bind_error: Optional[str] = None
     _session_in_progress: bool = False
+    _last_tcp_listener_trigger: Optional[dict[str, Any]] = None
 
     def start(self) -> None:
         s = get_settings()
@@ -183,7 +184,13 @@ class TcpModemListenerController:
             "stagedLocalBound": meta.local_bound if meta else None,
             "lastStagedReplacementReason": rep,
             "sessionTriggerInProgress": self._session_in_progress,
+            "lastTcpListenerTrigger": self._last_tcp_listener_trigger,
         }
+
+    def record_tcp_listener_trigger(self, record: dict[str, Any]) -> None:
+        """Last explicit trigger (read-identity / read-basic-registers) for operators."""
+        with self._holder_lock:
+            self._last_tcp_listener_trigger = record
 
     def take_staged_socket_for_session(self) -> Tuple[Optional[socket.socket], Optional[str], Optional[StagedSocketMeta]]:
         """
@@ -227,3 +234,89 @@ def get_tcp_modem_listener() -> TcpModemListenerController:
         if _modem_listener_singleton is None:
             _modem_listener_singleton = TcpModemListenerController()
         return _modem_listener_singleton
+
+
+def build_last_tcp_listener_trigger_record(
+    *,
+    operation: str,
+    remote_endpoint: Optional[str],
+    envelope: Any,
+    socket_teardown: str,
+) -> dict[str, Any]:
+    """
+    Operator-facing snapshot after a tcp-listener trigger returns.
+    `mvpAmiStages` is populated from failed envelopes' error.details when present.
+    """
+    diags = getattr(envelope, "diagnostics", None)
+    err = getattr(envelope, "error", None)
+    details = getattr(err, "details", None) if err is not None else None
+    mvp_stages: Optional[list[dict[str, Any]]] = None
+    if isinstance(details, dict):
+        raw = details.get("mvpAmiDiagnostics")
+        if isinstance(raw, list):
+            mvp_stages = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                mvp_stages.append(
+                    {
+                        "stage": item.get("stage"),
+                        "success": item.get("success"),
+                        "message": item.get("message"),
+                    }
+                )
+
+    def _stage_ok(name: str) -> Optional[bool]:
+        if not mvp_stages:
+            return None
+        for s in mvp_stages:
+            if s.get("stage") == name:
+                return bool(s.get("success"))
+        return None
+
+    basic_summary: Optional[dict[str, Any]] = None
+    if operation == "readBasicRegisters":
+        payload = getattr(envelope, "payload", None)
+        regs = getattr(payload, "registers", None) if payload is not None else None
+        if isinstance(regs, dict):
+            total = len(regs)
+            ok_count = 0
+            for r in regs.values():
+                ev = getattr(r, "error", None)
+                val = (getattr(r, "value", None) or "").strip()
+                if ev is None and val:
+                    ok_count += 1
+            basic_summary = {
+                "total": total,
+                "okCount": ok_count,
+                "partial": total > 0 and 0 < ok_count < total,
+                "allFailed": total > 0 and ok_count == 0,
+            }
+
+    d_out: dict[str, Any] = {
+        "operation": operation,
+        "finishedAtUtc": getattr(envelope, "finishedAt", None),
+        "transportMode": "tcp_inbound",
+        "remoteEndpoint": remote_endpoint,
+        "ok": bool(getattr(envelope, "ok", False)),
+        "detailCode": getattr(diags, "detailCode", None) if diags is not None else None,
+        "message": (getattr(envelope, "message", None) or "")[:500],
+        "socketTeardown": socket_teardown,
+        "diagnosticsSummary": {
+            "transportAttempted": getattr(diags, "transportAttempted", None) if diags else None,
+            "associationAttempted": getattr(diags, "associationAttempted", None) if diags else None,
+            "verifiedOnWire": getattr(diags, "verifiedOnWire", None) if diags else None,
+            "capabilityStage": getattr(diags, "capabilityStage", None) if diags else None,
+        },
+        "mvpAmiStages": mvp_stages,
+        "hints": {
+            "iecPhase": _stage_ok("initial_request"),
+            "tcpPhase1Runtime": _stage_ok("phase1_runtime_tcp"),
+            "association": _stage_ok("association"),
+            "readObis": _stage_ok("read_obis"),
+        },
+        "basicRegistersSummary": basic_summary,
+    }
+    if err is not None:
+        d_out["errorCode"] = getattr(err, "code", None)
+    return d_out

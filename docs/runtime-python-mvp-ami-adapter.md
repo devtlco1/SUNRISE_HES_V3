@@ -1,6 +1,6 @@
 # Python sidecar: real `mvp_ami` adapter (serial + optional TCP client)
 
-This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)**. **Serial** uses `MeterClient.run_phase1` (open → IEC → association → COSEM reads). **TCP client / modem** uses `MeterClient.run_phase1_tcp_socket` for **`read-identity` only** — see **`docs/runtime-python-tcp-client-read-identity.md`**.
+This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)**. **Serial** uses `MeterClient.run_phase1` (open → IEC → association → COSEM reads). **Outbound TCP client** uses `MeterClient.run_phase1_tcp_socket` for **`read-identity`** — see **`docs/runtime-python-tcp-client-read-identity.md`**. **Inbound staged modem listener** uses the same `run_phase1_tcp_socket` on the **accepted** socket for **`read-identity`** and **`read-basic-registers`** — see **`docs/runtime-python-tcp-modem-listener.md`**.
 
 ## What is implemented
 
@@ -20,8 +20,8 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
 ## What stays stubbed / out of scope
 
 - **Queues, workers, relay, bulk reads, command execution** — unchanged placeholders elsewhere.
-- **TCP client beyond `read-identity`** — `read-basic-registers` and discovery remain **serial-only** for now.
-- **Public** runtime routes — still the in-process TypeScript factory; only **`POST /api/internal/python-runtime/read-identity`** and **`POST /api/internal/python-runtime/read-basic-registers`** proxy to Python when `RUNTIME_PYTHON_SIDECAR_URL` is set.
+- **Outbound TCP client beyond `read-identity`** — `read-basic-registers` and discovery remain **serial** (or **inbound listener**, not outbound dial) for now.
+- **Public** runtime routes — still the in-process TypeScript factory; **`POST /api/internal/python-runtime/read-identity`**, **`read-basic-registers`**, and **`tcp-listener/*`** proxy to Python when `RUNTIME_PYTHON_SIDECAR_URL` is set.
 - **Queue execution** — types only (`lib/jobs/foundation.ts`, `apps/runtime-python/app/jobs/read_job_foundation.py`); no Redis/workers yet.
 
 ## Prerequisites
@@ -65,9 +65,9 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
 
 When `channel.type` is `serial` and `devicePath` is set, it overrides **`serial.port_primary`** in the loaded MVP-AMI config for that call.
 
-## Inbound modem TCP listener (`read-identity` only)
+## Inbound modem TCP listener (`read-identity` + `read-basic-registers`)
 
-When the **modem dials the server**, enable **`SUNRISE_RUNTIME_TCP_LISTENER_*`** and use **`/v1/runtime/tcp-listener/*`** — **`docs/runtime-python-tcp-modem-listener.md`**.
+When the **modem dials the server**, enable **`SUNRISE_RUNTIME_TCP_LISTENER_*`** and use **`/v1/runtime/tcp-listener/*`** — **`docs/runtime-python-tcp-modem-listener.md`**. Each trigger **closes** the staged socket when done (reconnect for another attempt).
 
 ## TCP client (`read-identity` only)
 

@@ -457,6 +457,115 @@ def _read_identity_finish_phase1_result(
     )
 
 
+def _read_basic_registers_finish_from_meter_result(
+    *,
+    request: ReadBasicRegistersRequest,
+    boot: Any,
+    started: datetime,
+    result: Any,
+    obis_list: List[str],
+    transport_layer: str,
+    envelope_transport_mode: str,
+    tcp_endpoint: Optional[str],
+) -> RuntimeResponseEnvelope:
+    """Map MeterResult → envelope for serial or inbound TCP basic-registers (shared partial-success rules)."""
+    finished = datetime.now(timezone.utc)
+    diags = result.diagnostics or []
+    early = _early_transport_failures(
+        meter_id=request.meterId,
+        operation="readBasicRegisters",
+        started=started,
+        finished=finished,
+        diags=diags,
+        transport_layer=transport_layer,
+        envelope_transport_mode=envelope_transport_mode,
+    )
+    if early is not None:
+        return early
+
+    read_d = find_stage(diags, "read_obis")
+    diag_dump = diagnostic_dump(diags)
+    parsed = result.parsed_values or {}
+
+    registers: dict[str, BasicRegisterReading] = {}
+    ok_count = 0
+    for obis in obis_list:
+        row = parsed.get(obis) or {}
+        ok, reading = _register_reading_from_row(row if isinstance(row, dict) else {})
+        registers[obis] = reading
+        if ok:
+            ok_count += 1
+
+    port_ref = getattr(result, "port_used", None) or getattr(
+        getattr(boot.app_cfg, "serial", None), "port_primary", None
+    )
+    if envelope_transport_mode == "tcp_inbound" and tcp_endpoint:
+        port_ref = tcp_endpoint
+
+    transport_extras: dict[str, Any] = {"transportMode": envelope_transport_mode}
+    if tcp_endpoint:
+        transport_extras["tcpEndpoint"] = tcp_endpoint
+
+    if ok_count == 0:
+        return _failure_envelope(
+            meter_id=request.meterId,
+            operation="readBasicRegisters",
+            started=started,
+            finished=finished,
+            message="All configured basic-register OBIS reads failed after successful association.",
+            code="BASIC_REGISTERS_ALL_FAILED",
+            transport_state="disconnected",
+            association_state="associated",
+            transport_attempted=True,
+            association_attempted=True,
+            verified=False,
+            outcome="attempted_failed",
+            detail_code="BASIC_REGISTERS_ALL_FAILED",
+            err_details={
+                "obisList": obis_list,
+                "registers": {k: v.model_dump() for k, v in registers.items()},
+                "mvpAmiDiagnostics": diag_dump,
+                "readObis": getattr(read_d, "__dict__", {}) if read_d else None,
+                **transport_extras,
+            },
+        )
+
+    partial = ok_count < len(obis_list)
+    verified = ok_count > 0
+    if envelope_transport_mode == "tcp_inbound":
+        detail = (
+            "MVP_AMI_BASIC_REGISTERS_PARTIAL_TCP_INBOUND"
+            if partial
+            else "MVP_AMI_BASIC_REGISTERS_OK_TCP_INBOUND"
+        )
+        msg = (
+            f"Basic registers via MVP-AMI inbound TCP listener (modem {tcp_endpoint!r}): "
+            f"{ok_count}/{len(obis_list)} OBIS succeeded"
+            + ("; see per-OBIS `error` fields in payload for failures." if partial else ".")
+        )
+    else:
+        detail = "MVP_AMI_BASIC_REGISTERS_PARTIAL" if partial else "MVP_AMI_BASIC_REGISTERS_OK"
+        msg = (
+            f"Basic registers via MVP-AMI serial (port={port_ref!r}): "
+            f"{ok_count}/{len(obis_list)} OBIS succeeded"
+            + ("; see per-OBIS `error` fields in payload for failures." if partial else ".")
+        )
+
+    return _success_envelope(
+        meter_id=request.meterId,
+        operation="readBasicRegisters",
+        started=started,
+        finished=finished,
+        payload=BasicRegistersPayload(registers=registers),
+        message=msg,
+        transport_attempted=True,
+        association_attempted=True,
+        verified=verified,
+        detail_code=detail,
+        outcome_override="verified_on_wire_success" if verified else "attempted_failed",
+    )
+
+
 class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
     def read_identity(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
         settings = get_settings()
@@ -786,6 +895,145 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             tcp_endpoint=remote_endpoint,
         )
 
+    def read_basic_registers_on_accepted_tcp_socket(
+        self,
+        request: ReadBasicRegistersRequest,
+        sock: socket.socket,
+        remote_endpoint: str,
+    ) -> RuntimeResponseEnvelope:
+        """
+        Multi-OBIS basic registers via `run_phase1_tcp_socket` on an inbound staged modem connection.
+        Caller owns the socket and should close it after this returns.
+        """
+        settings = get_settings()
+        started = datetime.now(timezone.utc)
+
+        boot = mvp_ami_bootstrap(settings, None)
+        if isinstance(boot, MvpAmiBootstrapFailure):
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readBasicRegisters",
+                started=started,
+                finished=finished,
+                message=boot.message,
+                code=boot.code,
+                transport_state="disconnected",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code=boot.code,
+                err_details={**(boot.details or {}), "transportMode": "tcp_inbound"},
+            )
+
+        obis_list = _obis_list_from_settings(settings.basic_registers_obis)
+        if not obis_list:
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readBasicRegisters",
+                started=started,
+                finished=finished,
+                message="No OBIS configured for basic registers (SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS).",
+                code="BASIC_REGISTERS_OBIS_EMPTY",
+                transport_state="disconnected",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="BASIC_REGISTERS_OBIS_EMPTY",
+                err_details={"transportMode": "tcp_inbound"},
+            )
+
+        mc_logger = logging.getLogger("sunrise.mvp_ami.meter_client")
+        mc_logger.setLevel(settings.log_level.upper())
+
+        try:
+            client = boot.meter_mod.MeterClient(boot.app_cfg, mc_logger)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("mvp_ami_meter_client_construct_failed_tcp_inbound_basic")
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readBasicRegisters",
+                started=started,
+                finished=finished,
+                message=f"MVP-AMI MeterClient construct failed: {exc}",
+                code="MVP_AMI_RUNTIME_ERROR",
+                transport_state="error",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="MVP_AMI_RUNTIME_ERROR",
+                err_details={"error": str(exc), "transportMode": "tcp_inbound"},
+            )
+
+        run_tcp = getattr(client, "run_phase1_tcp_socket", None)
+        if run_tcp is None:
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readBasicRegisters",
+                started=started,
+                finished=finished,
+                message=(
+                    "MVP-AMI MeterClient has no run_phase1_tcp_socket — "
+                    "update MVP-AMI checkout (inbound TCP path requires it)."
+                ),
+                code="MVP_AMI_TCP_SOCKET_API_MISSING",
+                transport_state="disconnected",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="MVP_AMI_TCP_SOCKET_API_MISSING",
+                err_details={"transportMode": "tcp_inbound", "mvpAmiRoot": boot.root},
+            )
+
+        try:
+            result = run_tcp(sock, obis_list=obis_list)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("mvp_ami_run_phase1_tcp_socket_inbound_basic_failed")
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readBasicRegisters",
+                started=started,
+                finished=finished,
+                message=f"MVP-AMI run_phase1_tcp_socket (inbound basic registers) raised: {exc}",
+                code="MVP_AMI_TCP_RUNTIME_ERROR",
+                transport_state="error",
+                association_state="failed",
+                transport_attempted=True,
+                association_attempted=True,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="MVP_AMI_TCP_RUNTIME_ERROR",
+                err_details={
+                    "error": str(exc),
+                    "transportMode": "tcp_inbound",
+                    "tcpEndpoint": remote_endpoint,
+                    "obisList": obis_list,
+                },
+            )
+
+        return _read_basic_registers_finish_from_meter_result(
+            request=request,
+            boot=boot,
+            started=started,
+            result=result,
+            obis_list=obis_list,
+            transport_layer="tcp",
+            envelope_transport_mode="tcp_inbound",
+            tcp_endpoint=remote_endpoint,
+        )
+
     def read_basic_registers(self, request: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
         settings = get_settings()
         started = datetime.now(timezone.utc)
@@ -855,81 +1103,15 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                 err_details={"error": str(exc)},
             )
 
-        finished = datetime.now(timezone.utc)
-        diags = result.diagnostics or []
-        early = _early_transport_failures(
-            meter_id=request.meterId,
-            operation="readBasicRegisters",
+        return _read_basic_registers_finish_from_meter_result(
+            request=request,
+            boot=boot,
             started=started,
-            finished=finished,
-            diags=diags,
+            result=result,
+            obis_list=obis_list,
             transport_layer="serial",
             envelope_transport_mode="serial",
-        )
-        if early is not None:
-            return early
-
-        read_d = find_stage(diags, "read_obis")
-        diag_dump = diagnostic_dump(diags)
-        parsed = result.parsed_values or {}
-
-        registers: dict[str, BasicRegisterReading] = {}
-        ok_count = 0
-        for obis in obis_list:
-            row = parsed.get(obis) or {}
-            ok, reading = _register_reading_from_row(row if isinstance(row, dict) else {})
-            registers[obis] = reading
-            if ok:
-                ok_count += 1
-
-        port_ref = getattr(result, "port_used", None) or getattr(
-            getattr(boot.app_cfg, "serial", None), "port_primary", None
-        )
-
-        if ok_count == 0:
-            return _failure_envelope(
-                meter_id=request.meterId,
-                operation="readBasicRegisters",
-                started=started,
-                finished=finished,
-                message="All configured basic-register OBIS reads failed after successful association.",
-                code="BASIC_REGISTERS_ALL_FAILED",
-                transport_state="disconnected",
-                association_state="associated",
-                transport_attempted=True,
-                association_attempted=True,
-                verified=False,
-                outcome="attempted_failed",
-                detail_code="BASIC_REGISTERS_ALL_FAILED",
-                err_details={
-                    "obisList": obis_list,
-                    "registers": {k: v.model_dump() for k, v in registers.items()},
-                    "mvpAmiDiagnostics": diag_dump,
-                    "readObis": getattr(read_d, "__dict__", {}) if read_d else None,
-                },
-            )
-
-        partial = ok_count < len(obis_list)
-        verified = ok_count > 0
-        detail = "MVP_AMI_BASIC_REGISTERS_PARTIAL" if partial else "MVP_AMI_BASIC_REGISTERS_OK"
-        msg = (
-            f"Basic registers via MVP-AMI serial (port={port_ref!r}): "
-            f"{ok_count}/{len(obis_list)} OBIS succeeded"
-            + ("; see per-OBIS `error` fields in payload for failures." if partial else ".")
-        )
-
-        return _success_envelope(
-            meter_id=request.meterId,
-            operation="readBasicRegisters",
-            started=started,
-            finished=finished,
-            payload=BasicRegistersPayload(registers=registers),
-            message=msg,
-            transport_attempted=True,
-            association_attempted=True,
-            verified=verified,
-            detail_code=detail,
-            outcome_override="verified_on_wire_success" if verified else "attempted_failed",
+            tcp_endpoint=None,
         )
 
     def discover_supported_obis(self, request: DiscoverSupportedObisRequest) -> RuntimeResponseEnvelope:
