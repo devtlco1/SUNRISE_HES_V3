@@ -5,6 +5,8 @@
 import type {
   BasicRegistersPayload,
   IdentityPayload,
+  ReadObisSelectionPayload,
+  ReadObisSelectionRequest,
   RuntimeResponseEnvelope,
 } from "@/types/runtime"
 
@@ -119,6 +121,72 @@ export async function postDirectReadIdentity(
     return {
       ok: true,
       data: body as RuntimeResponseEnvelope<IdentityPayload>,
+    }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postReadObisSelectionDirect(
+  body: ReadObisSelectionRequest,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<ReadObisSelectionPayload>>> {
+  try {
+    const res = await fetch("/api/readings/runtime/read-obis-selection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal,
+    })
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      const err =
+        parsed &&
+        typeof parsed === "object" &&
+        "error" in parsed &&
+        typeof (parsed as { error: unknown }).error === "string"
+          ? (parsed as { error: string }).error
+          : `HTTP ${res.status}`
+      return { ok: false, error: err, status: res.status }
+    }
+    return {
+      ok: true,
+      data: parsed as RuntimeResponseEnvelope<ReadObisSelectionPayload>,
+    }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postReadObisSelectionTcpListener(
+  body: ReadObisSelectionRequest,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<RuntimeResponseEnvelope<ReadObisSelectionPayload>>> {
+  try {
+    const res = await fetch("/api/readings/tcp-listener/read-obis-selection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal,
+    })
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      const err =
+        parsed &&
+        typeof parsed === "object" &&
+        "error" in parsed &&
+        typeof (parsed as { error: unknown }).error === "string"
+          ? (parsed as { error: string }).error
+          : `HTTP ${res.status}`
+      return { ok: false, error: err, status: res.status }
+    }
+    return {
+      ok: true,
+      data: parsed as RuntimeResponseEnvelope<ReadObisSelectionPayload>,
     }
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") throw e

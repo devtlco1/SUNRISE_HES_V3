@@ -23,6 +23,7 @@ RuntimeOperation = Literal[
     "readIdentity",
     "readClock",
     "readBasicRegisters",
+    "readObisSelection",
     "discoverSupportedObis",
     "relayDisconnect",
     "relayReconnect",
@@ -80,6 +81,30 @@ class BasicRegisterReading(BaseModel):
 
 class BasicRegistersPayload(BaseModel):
     registers: dict[str, BasicRegisterReading]
+
+
+ObisSelectionRowStatus = Literal["ok", "error", "unsupported"]
+
+
+class ObisSelectionRowResult(BaseModel):
+    """One row in read-obis-selection response (operator table merge)."""
+
+    obis: str
+    value: str = ""
+    unit: Optional[str] = None
+    quality: Optional[str] = None
+    error: Optional[str] = None
+    status: ObisSelectionRowStatus = "ok"
+    packKey: Optional[str] = None
+    lastReadAt: Optional[str] = None
+    resolvedResultFormat: Optional[str] = Field(
+        default=None,
+        description="e.g. scalar | clock — informational for UI.",
+    )
+
+
+class ReadObisSelectionPayload(BaseModel):
+    rows: List[ObisSelectionRowResult]
 
 
 class DiscoveredObjectRow(BaseModel):
@@ -167,6 +192,13 @@ class RuntimeResponseEnvelope(BaseModel):
     message: str
     transportState: TransportState
     associationState: AssociationState
-    payload: Optional[Union[IdentityPayload, BasicRegistersPayload, DiscoverSupportedObisPayload]] = None
+    payload: Optional[
+        Union[
+            IdentityPayload,
+            BasicRegistersPayload,
+            ReadObisSelectionPayload,
+            DiscoverSupportedObisPayload,
+        ]
+    ] = None
     error: Optional[RuntimeErrorInfo] = None
     diagnostics: Optional[RuntimeExecutionDiagnostics] = None

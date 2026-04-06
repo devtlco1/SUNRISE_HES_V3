@@ -2,7 +2,11 @@
  * Map runtime envelopes into per-OBIS row state for the readings table.
  */
 
-import type { BasicRegistersPayload, IdentityPayload } from "@/types/runtime"
+import type {
+  BasicRegistersPayload,
+  IdentityPayload,
+  ReadObisSelectionPayload,
+} from "@/types/runtime"
 
 import { IDENTITY_READ_MAPPED_OBIS, SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS } from "./catalog-seed"
 
@@ -40,6 +44,38 @@ export function mergeIdentityIntoRowState(
   )
   set("0.0.96.1.1.255", sn, sn ? "ok" : "error", sn ? undefined : "no serial")
 
+  return next
+}
+
+/** Merge readObisSelection payload rows into table state; other OBIS keys unchanged. */
+export function mergeObisSelectionIntoRowState(
+  prev: Record<string, ObisRowReadState>,
+  payload: ReadObisSelectionPayload
+): Record<string, ObisRowReadState> {
+  const next = { ...prev }
+  for (const r of payload.rows) {
+    let st: ObisRowReadState["status"]
+    if (r.status === "ok") st = "ok"
+    else if (r.status === "unsupported") st = "skipped"
+    else st = "error"
+
+    const base = (r.value ?? "").trim()
+    const u = (r.unit ?? "").trim()
+    let result = base
+    if (base && u) result = `${base} ${u}`
+    else if (!base && u) result = u
+
+    if (r.quality && r.quality !== "good" && r.status === "ok") {
+      result = result ? `${result} (${r.quality})` : r.quality
+    }
+
+    next[r.obis] = {
+      result,
+      status: st,
+      error: r.error,
+      lastReadAt: r.lastReadAt ?? null,
+    }
+  }
   return next
 }
 

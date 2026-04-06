@@ -18,34 +18,17 @@ import {
 } from "@/components/ui/table"
 import {
   fetchTcpListenerStatus,
-  postDirectReadBasicRegisters,
-  postDirectReadIdentity,
-  postTcpListenerReadBasicRegisters,
-  postTcpListenerReadIdentity,
+  postReadObisSelectionDirect,
+  postReadObisSelectionTcpListener,
   READINGS_FETCH_NETWORK_ERROR,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
-import {
-  getCatalogRowsForPack,
-  OBIS_PACK_LABELS,
-  OBIS_PACK_ORDER,
-  SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS,
-} from "@/lib/obis/catalog-seed"
-import {
-  mergeBasicRegistersIntoRowState,
-  mergeIdentityIntoRowState,
-  obisNeedsBasicRegistersRead,
-  obisNeedsIdentityRead,
-  obisOutsideCurrentRuntimePack,
-  type ObisRowReadState,
-} from "@/lib/obis/merge-read-results"
-import type { ObisPackKey } from "@/lib/obis/types"
+import { getCatalogRowsForPack, OBIS_PACK_LABELS, OBIS_PACK_ORDER } from "@/lib/obis/catalog-seed"
+import { mergeObisSelectionIntoRowState, type ObisRowReadState } from "@/lib/obis/merge-read-results"
+import { obisSelectionRowSupportedV1Catalog } from "@/lib/obis/obis-selection-v1-client"
+import type { ObisCatalogEntry, ObisPackKey } from "@/lib/obis/types"
 import type { MeterListRow } from "@/types/meter"
-import type {
-  BasicRegistersPayload,
-  IdentityPayload,
-  RuntimeResponseEnvelope,
-} from "@/types/runtime"
+import type { ObisSelectionItemInput, ReadObisSelectionPayload, RuntimeResponseEnvelope } from "@/types/runtime"
 import { cn } from "@/lib/utils"
 
 const POLL_MS = 6000
@@ -56,43 +39,17 @@ function boolish(v: unknown): boolean {
   return v === true || v === "true" || v === 1
 }
 
-function applyEnvelopeToRows(
-  prev: Record<string, ObisRowReadState>,
-  envelope: RuntimeResponseEnvelope<IdentityPayload | BasicRegistersPayload>
-): Record<string, ObisRowReadState> {
-  const t = envelope.finishedAt
-  if (!envelope.ok) {
-    return prev
+function catalogEntryToSelectionItem(r: ObisCatalogEntry): ObisSelectionItemInput {
+  return {
+    obis: r.obis,
+    description: r.description,
+    objectType: r.object_type,
+    classId: r.class_id,
+    attribute: r.attribute,
+    scalerUnitAttribute: r.scaler_unit_attribute || undefined,
+    unit: r.unit || undefined,
+    packKey: r.pack_key,
   }
-  if (envelope.operation === "readIdentity" && envelope.payload) {
-    return mergeIdentityIntoRowState(prev, envelope.payload as IdentityPayload, t)
-  }
-  if (envelope.operation === "readBasicRegisters" && envelope.payload) {
-    return mergeBasicRegistersIntoRowState(
-      prev,
-      envelope.payload as BasicRegistersPayload,
-      t
-    )
-  }
-  return prev
-}
-
-function markObisError(
-  prev: Record<string, ObisRowReadState>,
-  obisList: string[],
-  message: string,
-  at: string
-): Record<string, ObisRowReadState> {
-  const next = { ...prev }
-  for (const o of obisList) {
-    next[o] = {
-      result: "",
-      status: "error",
-      error: message,
-      lastReadAt: at,
-    }
-  }
-  return next
 }
 
 export function ReadingsWorkspaceClient() {
@@ -115,10 +72,15 @@ export function ReadingsWorkspaceClient() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const [lastEnv, setLastEnv] = useState<RuntimeResponseEnvelope<
-    IdentityPayload | BasicRegistersPayload
+    ReadObisSelectionPayload
   > | null>(null)
 
   const catalogRows = useMemo(() => getCatalogRowsForPack(pack), [pack])
+
+  const v1SupportedRowsInPack = useMemo(
+    () => catalogRows.filter((r) => r.enabled && obisSelectionRowSupportedV1Catalog(r)),
+    [catalogRows]
+  )
 
   useEffect(() => {
     setSelected(new Set())
@@ -206,147 +168,48 @@ export function ReadingsWorkspaceClient() {
     setSelected(new Set())
   }
 
-  async function runIdentityInbound() {
-    return postTcpListenerReadIdentity(meterId.trim() || "inbound-modem")
-  }
-
-  async function runBasicInbound() {
-    return postTcpListenerReadBasicRegisters(meterId.trim() || "inbound-modem")
-  }
-
-  async function runIdentityDirect() {
-    return postDirectReadIdentity(meterId.trim() || "meter-1")
-  }
-
-  async function runBasicDirect() {
-    return postDirectReadBasicRegisters(meterId.trim() || "meter-1")
-  }
-
-  async function executeReadsForObisList(obisList: string[]): Promise<void> {
+  async function executeReadObisSelection(items: ObisSelectionItemInput[]): Promise<void> {
     setActionError(null)
     setHint(null)
-    const idNeed = obisNeedsIdentityRead(obisList)
-    const basicNeed = obisNeedsBasicRegistersRead(obisList)
-    const outside = obisOutsideCurrentRuntimePack(obisList)
-    const iso = new Date().toISOString()
-
-    if (outside.length > 0) {
-      setHint(
-        `${outside.length} OBIS not in current runtime pack (identity-mapped + default basic: ${SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS.join(", ")}).`
-      )
-    }
-
-    const targetInside = obisList.filter((o) => !outside.includes(o))
-    if (targetInside.length === 0) {
-      setActionError("No selected OBIS are readable with the current runtime pack.")
-      setRowState((p) => markObisError(p, obisList, "not_in_runtime_pack", iso))
+    if (items.length === 0) {
+      setActionError("No OBIS rows to read.")
       return
     }
 
-    if (transport === "inbound") {
-      if (idNeed && basicNeed) {
-        setActionError(
-          "Inbound staged TCP: each read closes the socket. Select only identity OBIS (0.0.96.1.0/1) or only default basic-register OBIS, then reconnect the modem between runs — or switch to Direct transport."
-        )
-        return
-      }
-      setBusy(true)
-      try {
-        if (idNeed) {
-          const r = await runIdentityInbound()
-          if (!r.ok) {
-            setActionError(r.error)
-            return
-          }
-          setLastEnv(r.data)
-          if (r.data.ok) {
-            setRowState((p) => applyEnvelopeToRows(p, r.data))
-          } else {
-            setRowState((p) =>
-              markObisError(
-                p,
-                targetInside.filter((o) => obisNeedsIdentityRead([o])),
-                r.data.error?.message ?? "identity_failed",
-                r.data.finishedAt
-              )
-            )
-          }
-        } else if (basicNeed) {
-          const r = await runBasicInbound()
-          if (!r.ok) {
-            setActionError(r.error)
-            return
-          }
-          setLastEnv(r.data)
-          if (r.data.ok) {
-            setRowState((p) => applyEnvelopeToRows(p, r.data))
-          } else {
-            setRowState((p) =>
-              markObisError(
-                p,
-                targetInside.filter((o) => obisNeedsBasicRegistersRead([o])),
-                r.data.error?.message ?? "basic_failed",
-                r.data.finishedAt
-              )
-            )
-          }
-        } else {
-          setActionError(
-            "None of the target OBIS use identity or default basic-register reads in this build."
-          )
-        }
-      } finally {
-        setBusy(false)
-        await loadStatus()
-      }
-      return
-    }
+    const mid = meterId.trim() || "meter-1"
+    const body = { meterId: mid, selectedItems: items }
 
-    // direct: may run identity then basic (separate sidecar sessions).
     setBusy(true)
     try {
-      if (idNeed) {
-        const r = await runIdentityDirect()
-        if (!r.ok) {
-          setActionError(r.error)
-          return
-        }
-        setLastEnv(r.data)
-        if (r.data.ok) {
-          setRowState((p) => applyEnvelopeToRows(p, r.data))
-        } else {
-          setRowState((p) =>
-            markObisError(
-              p,
-              targetInside.filter((o) => obisNeedsIdentityRead([o])),
-              r.data.error?.message ?? "readIdentity_failed",
-              r.data.finishedAt
-            )
-          )
-        }
+      const r =
+        transport === "inbound"
+          ? await postReadObisSelectionTcpListener(body)
+          : await postReadObisSelectionDirect(body)
+
+      if (!r.ok) {
+        setActionError(r.error)
+        return
       }
-      if (basicNeed) {
-        const r = await runBasicDirect()
-        if (!r.ok) {
-          setActionError(r.error)
-          return
-        }
-        setLastEnv(r.data)
-        if (r.data.ok) {
-          setRowState((p) => applyEnvelopeToRows(p, r.data))
-        } else {
-          setRowState((p) =>
-            markObisError(
-              p,
-              targetInside.filter((o) => obisNeedsBasicRegistersRead([o])),
-              r.data.error?.message ?? "readBasicRegisters_failed",
-              r.data.finishedAt
-            )
-          )
-        }
+
+      const env = r.data
+      setLastEnv(env)
+
+      const payload = env.payload
+      if (payload && Array.isArray(payload.rows) && payload.rows.length > 0) {
+        setRowState((p) => mergeObisSelectionIntoRowState(p, payload))
+      }
+
+      if (env.ok) {
+        setActionError(null)
+      } else {
+        const msg = env.error?.message ?? env.message ?? "readObisSelection failed"
+        setActionError(msg)
       }
     } finally {
       setBusy(false)
+      if (transport === "inbound") {
+        await loadStatus()
+      }
     }
   }
 
@@ -355,19 +218,36 @@ export function ReadingsWorkspaceClient() {
       setActionError("Select at least one OBIS row.")
       return
     }
-    await executeReadsForObisList([...selected])
+    const rows = catalogRows.filter((r) => selected.has(r.obis))
+    const items = rows.map(catalogEntryToSelectionItem)
+    await executeReadObisSelection(items)
   }
 
   async function onReadCategory() {
-    const obis = catalogRows.filter((r) => r.enabled).map((r) => r.obis)
-    if (obis.length === 0) return
-    await executeReadsForObisList(obis)
+    if (v1SupportedRowsInPack.length === 0) {
+      setHint(
+        "No rows in this category are in selected-OBIS v1 (Data / Clock / Register, attribute 2). Profile, demand, and other classes stay visible but are not read here yet."
+      )
+      setActionError("Nothing to read for v1 in this category.")
+      return
+    }
+    setHint(
+      `Reading ${v1SupportedRowsInPack.length} v1-supported row(s) in this category (Data/Clock/Register, attr 2). Other catalog rows stay in the table but are skipped for this action.`
+    )
+    const items = v1SupportedRowsInPack.map(catalogEntryToSelectionItem)
+    await executeReadObisSelection(items)
   }
 
   const triggerRecord =
     listenerStatus?.lastTcpListenerTrigger &&
     typeof listenerStatus.lastTcpListenerTrigger === "object"
       ? (listenerStatus.lastTcpListenerTrigger as Record<string, unknown>)
+      : null
+
+  const obisSummary =
+    triggerRecord && triggerRecord.obisSelectionSummary &&
+    typeof triggerRecord.obisSelectionSummary === "object"
+      ? (triggerRecord.obisSelectionSummary as Record<string, unknown>)
       : null
 
   return (
@@ -379,9 +259,9 @@ export function ReadingsWorkspaceClient() {
 
       {transport === "inbound" ? (
         <div className="rounded-md border border-amber-200/80 bg-amber-50/50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
-          <strong>Inbound staged TCP:</strong> each read consumes the modem socket (modem must
-          reconnect for the next read). You cannot combine identity + basic registers in one
-          dial — use <strong>Direct</strong> for back-to-back reads on serial/TCP client.
+          <strong>Inbound staged TCP:</strong> one trigger uses the modem socket for a full MVP-AMI
+          session and can read <strong>multiple selected OBIS</strong> in that trip; the socket is
+          closed when the trigger finishes — reconnect the modem before the next read.
         </div>
       ) : null}
 
@@ -517,6 +397,14 @@ export function ReadingsWorkspaceClient() {
                 {String(triggerRecord.operation)} / ok={String(triggerRecord.ok)} /{" "}
                 {String(triggerRecord.detailCode ?? "—")}
               </span>
+              {obisSummary ? (
+                <span className="ml-1 font-mono">
+                  rows={String(obisSummary.rowCount ?? "—")} ok=
+                  {String(obisSummary.okCount ?? "—")} unsupported=
+                  {String(obisSummary.unsupportedCount ?? "—")} err=
+                  {String(obisSummary.errorCount ?? "—")}
+                </span>
+              ) : null}
             </p>
           ) : null}
 

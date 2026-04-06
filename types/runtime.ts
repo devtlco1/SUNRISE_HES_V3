@@ -23,6 +23,7 @@ export type RuntimeOperation =
   | "readIdentity"
   | "readClock"
   | "readBasicRegisters"
+  | "readObisSelection"
   | "discoverSupportedObis"
   | "relayDisconnect"
   | "relayReconnect"
@@ -164,6 +165,41 @@ export interface BasicRegisterReading {
 export interface BasicRegistersPayload {
   /** OBIS-style keys; values are simulator-backed only. */
   registers: Record<string, BasicRegisterReading>
+}
+
+export type ObisSelectionRowStatus = "ok" | "error" | "unsupported"
+
+/** One row returned from read-obis-selection (operator table merge). */
+export interface ObisSelectionRowResult {
+  obis: string
+  value: string
+  unit?: string
+  quality?: string
+  error?: string
+  status: ObisSelectionRowStatus
+  packKey?: string
+  lastReadAt?: string
+  resolvedResultFormat?: string
+}
+
+export interface ReadObisSelectionPayload {
+  rows: ObisSelectionRowResult[]
+}
+
+/** One OBIS row requested by the operator (catalog + UI). */
+export interface ObisSelectionItemInput {
+  obis: string
+  description?: string
+  objectType: string
+  classId: number
+  attribute?: number
+  scalerUnitAttribute?: number
+  unit?: string
+  packKey?: string
+}
+
+export interface ReadObisSelectionRequest extends RuntimeTargetRequest {
+  selectedItems: ObisSelectionItemInput[]
 }
 
 /** One row from the meter's association object list (current AA). */

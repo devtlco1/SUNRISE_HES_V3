@@ -7,11 +7,18 @@ from fastapi import APIRouter, Depends
 
 from app.routes.runtime_v1 import verify_service_token
 from app.schemas.envelope import RuntimeResponseEnvelope
-from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
+from app.schemas.requests import (
+    ReadBasicRegistersRequest,
+    ReadIdentityRequest,
+    ReadObisSelectionRequest,
+)
 from app.services.tcp_listener_read_basic_registers import (
     execute_tcp_listener_read_basic_registers,
 )
 from app.services.tcp_listener_read_identity import execute_tcp_listener_read_identity
+from app.services.tcp_listener_read_obis_selection import (
+    execute_tcp_listener_read_obis_selection,
+)
 from app.tcp_listener.staged_modem_listener import get_tcp_modem_listener
 
 log = logging.getLogger(__name__)
@@ -56,3 +63,22 @@ def post_tcp_listener_read_basic_registers(
     """
     log.info("http_tcp_listener_read_basic_registers", extra={"meter_id": body.meterId})
     return execute_tcp_listener_read_basic_registers(body)
+
+
+@router.post(
+    "/read-obis-selection",
+    response_model=RuntimeResponseEnvelope,
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_read_obis_selection(
+    body: ReadObisSelectionRequest,
+) -> RuntimeResponseEnvelope:
+    """
+    Run read-obis-selection on the staged inbound TCP socket (one MVP-AMI phase1, multiple OBIS).
+    Pops the staged socket; closes it when done.
+    """
+    log.info(
+        "http_tcp_listener_read_obis_selection",
+        extra={"meter_id": body.meterId, "items": len(body.selectedItems)},
+    )
+    return execute_tcp_listener_read_obis_selection(body)

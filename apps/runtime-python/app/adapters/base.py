@@ -7,6 +7,7 @@ from app.schemas.requests import (
     DiscoverSupportedObisRequest,
     ReadBasicRegistersRequest,
     ReadIdentityRequest,
+    ReadObisSelectionRequest,
 )
 
 
@@ -17,6 +18,10 @@ class ProtocolRuntimeAdapter(ABC):
 
     @abstractmethod
     def read_basic_registers(self, request: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
+        raise NotImplementedError
+
+    @abstractmethod
+    def read_obis_selection(self, request: ReadObisSelectionRequest) -> RuntimeResponseEnvelope:
         raise NotImplementedError
 
     @abstractmethod

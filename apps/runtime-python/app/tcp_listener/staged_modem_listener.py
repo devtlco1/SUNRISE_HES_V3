@@ -293,6 +293,22 @@ def build_last_tcp_listener_trigger_record(
                 "allFailed": total > 0 and ok_count == 0,
             }
 
+    obis_selection_summary: Optional[dict[str, Any]] = None
+    if operation == "readObisSelection":
+        payload = getattr(envelope, "payload", None)
+        rows = getattr(payload, "rows", None) if payload is not None else None
+        if isinstance(rows, list):
+            total = len(rows)
+            ok_c = sum(1 for r in rows if getattr(r, "status", None) == "ok")
+            unsupp = sum(1 for r in rows if getattr(r, "status", None) == "unsupported")
+            err_c = sum(1 for r in rows if getattr(r, "status", None) == "error")
+            obis_selection_summary = {
+                "rowCount": total,
+                "okCount": ok_c,
+                "unsupportedCount": unsupp,
+                "errorCount": err_c,
+            }
+
     d_out: dict[str, Any] = {
         "operation": operation,
         "finishedAtUtc": getattr(envelope, "finishedAt", None),
@@ -316,6 +332,7 @@ def build_last_tcp_listener_trigger_record(
             "readObis": _stage_ok("read_obis"),
         },
         "basicRegistersSummary": basic_summary,
+        "obisSelectionSummary": obis_selection_summary,
     }
     if err is not None:
         d_out["errorCode"] = getattr(err, "code", None)

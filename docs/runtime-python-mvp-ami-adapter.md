@@ -1,6 +1,6 @@
 # Python sidecar: real `mvp_ami` adapter (serial + optional TCP client)
 
-This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)**. **Serial** uses `MeterClient.run_phase1` (open → IEC → association → COSEM reads). **Outbound TCP client** uses `MeterClient.run_phase1_tcp_socket` for **`read-identity`** — see **`docs/runtime-python-tcp-client-read-identity.md`**. **Inbound staged modem listener** uses the same `run_phase1_tcp_socket` on the **accepted** socket for **`read-identity`** and **`read-basic-registers`** — see **`docs/runtime-python-tcp-modem-listener.md`**.
+This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)**. **Serial** uses `MeterClient.run_phase1` (open → IEC → association → COSEM reads). **Outbound TCP client** uses `MeterClient.run_phase1_tcp_socket` for **`read-identity`** and related paths — see **`docs/runtime-python-tcp-client-read-identity.md`**. **Inbound staged modem listener** uses the same `run_phase1_tcp_socket` on the **accepted** socket for **`read-identity`**, **`read-basic-registers`**, and **`read-obis-selection`** — see **`docs/runtime-python-tcp-modem-listener.md`**.
 
 ## What is implemented
 
@@ -14,13 +14,15 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
   Identity is **not** duplicated here; use `read-identity` for logical device name / serial-style reads.
 - Per-OBIS outcomes: failed reads appear in `payload.registers[obis].error` with `quality: "error"`; transport/association failures still return `ok: false` for the whole call.
 - If **all** OBIS reads fail after association, the envelope is **`ok: false`** (`BASIC_REGISTERS_ALL_FAILED`). If **some** succeed, **`ok: true`** with `diagnostics.detailCode` `MVP_AMI_BASIC_REGISTERS_PARTIAL` or `MVP_AMI_BASIC_REGISTERS_OK`.
+- **`read-obis-selection`:** operator-driven multi-OBIS read from a **`selectedItems[]`** list (OBIS + catalog metadata). **v1** supports only **Data**, **Clock**, and **Register** objects with **attribute 2** (same rules as `app/adapters/obis_selection_v1.py`). Other classes (e.g. ProfileGeneric, demand registers) return **per-row** `status: "unsupported"` with an explicit reason — no fake reads. One MVP-AMI `run_phase1` / `run_phase1_tcp_socket` pass with `obis_list` = distinct supported OBIS; results are mapped back to each requested row. Transport-level failures may return **`ok: false`** while still including **`payload.rows`** so the UI can merge per-row errors.
 - Response mapped to **`RuntimeResponseEnvelope`** (`ok`, `simulated`, `diagnostics`, `operation`, etc.).
 - `simulated: false` on every `mvp_ami` path; `diagnostics.verifiedOnWire: true` when association succeeded and **at least one** requested read returned a value without row error (basic registers), or the single identity read succeeded (identity).
 
 ## What stays stubbed / out of scope
 
 - **Queues, workers, relay, bulk reads, command execution** — unchanged placeholders elsewhere.
-- **Outbound TCP client beyond `read-identity`** — `read-basic-registers` and discovery remain **serial** (or **inbound listener**, not outbound dial) for now.
+- **ProfileGeneric / load profile / event log browsing** — not implemented in **`read-obis-selection`** v1; rows are rejected as unsupported until a later step.
+- **Multi-meter bulk execution** from the readings UI — later; current scope is single-meter selection only.
 - **Public** runtime routes — still the in-process TypeScript factory; **`POST /api/internal/python-runtime/read-identity`**, **`read-basic-registers`**, and **`tcp-listener/*`** proxy to Python when `RUNTIME_PYTHON_SIDECAR_URL` is set.
 - **Queue execution** — types only (`lib/jobs/foundation.ts`, `apps/runtime-python/app/jobs/read_job_foundation.py`); no Redis/workers yet.
 
@@ -65,9 +67,9 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
 
 When `channel.type` is `serial` and `devicePath` is set, it overrides **`serial.port_primary`** in the loaded MVP-AMI config for that call.
 
-## Inbound modem TCP listener (`read-identity` + `read-basic-registers`)
+## Inbound modem TCP listener (`read-identity` + `read-basic-registers` + `read-obis-selection`)
 
-When the **modem dials the server**, enable **`SUNRISE_RUNTIME_TCP_LISTENER_*`** and use **`/v1/runtime/tcp-listener/*`** — **`docs/runtime-python-tcp-modem-listener.md`**. Each trigger **closes** the staged socket when done (reconnect for another attempt).
+When the **modem dials the server**, enable **`SUNRISE_RUNTIME_TCP_LISTENER_*`** and use **`/v1/runtime/tcp-listener/*`** — **`docs/runtime-python-tcp-modem-listener.md`**. Each trigger **closes** the staged socket when done (reconnect for another attempt). **`POST /v1/runtime/tcp-listener/read-obis-selection`** runs one session over the staged socket and can return **multiple** OBIS row results in **`payload.rows`** before teardown.
 
 ## TCP client (`read-identity` only)
 
@@ -105,6 +107,10 @@ curl -sS -X POST http://127.0.0.1:8766/v1/runtime/read-identity \
 curl -sS -X POST http://127.0.0.1:8766/v1/runtime/read-basic-registers \
   -H 'Content-Type: application/json' \
   -d '{"meterId":"test-1"}' | jq .
+
+curl -sS -X POST http://127.0.0.1:8766/v1/runtime/read-obis-selection \
+  -H 'Content-Type: application/json' \
+  -d '{"meterId":"test-1","selectedItems":[{"obis":"0.0.1.0.0.255","objectType":"clock","classId":1,"attribute":2}]}' | jq .
 ```
 
 Without a meter, expect a **structured failure** (`ok: false`, `simulated: false`, `error.code` such as `SERIAL_OPEN_FAILED`, `IEC_HANDSHAKE_FAILED`, `ASSOCIATION_FAILED`, identity `IDENTITY_READ_FAILED`, or basic registers `BASIC_REGISTERS_ALL_FAILED`) and **`diagnostics`** / **`error.details.mvpAmiDiagnostics`** where applicable.
@@ -127,6 +133,9 @@ curl -sS -X POST http://127.0.0.1:3000/api/internal/python-runtime/read-basic-re
   -H 'Content-Type: application/json' \
   -d '{"meterId":"test-1"}' | jq .
 ```
+
+The **`/readings`** operator workspace uses **server routes** (browser → Next only):  
+`POST /api/readings/runtime/read-obis-selection` and `POST /api/readings/tcp-listener/read-obis-selection`, which proxy the same bodies to Python **`/v1/runtime/read-obis-selection`** and **`/v1/runtime/tcp-listener/read-obis-selection`**.
 
 (If `RUNTIME_PYTHON_SIDECAR_URL` is unset, these routes return **503** with `PYTHON_SIDECAR_NOT_CONFIGURED` — by design.)
 

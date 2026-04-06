@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 from app.adapters.base import ProtocolRuntimeAdapter
+from app.adapters.obis_selection_v1 import obis_selection_item_supported_v1
 from app.schemas.envelope import (
     AssociationViewInstrumentation,
     BasicRegisterReading,
@@ -10,6 +11,8 @@ from app.schemas.envelope import (
     DiscoveredObjectRow,
     DiscoverSupportedObisPayload,
     IdentityPayload,
+    ObisSelectionRowResult,
+    ReadObisSelectionPayload,
     RuntimeExecutionDiagnostics,
     RuntimeResponseEnvelope,
 )
@@ -17,6 +20,7 @@ from app.schemas.requests import (
     DiscoverSupportedObisRequest,
     ReadBasicRegistersRequest,
     ReadIdentityRequest,
+    ReadObisSelectionRequest,
 )
 
 
@@ -109,6 +113,63 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
             transportState="disconnected",
             associationState="none",
             payload=BasicRegistersPayload(registers=registers),
+            diagnostics=diagnostics,
+        )
+
+    def read_obis_selection(self, request: ReadObisSelectionRequest) -> RuntimeResponseEnvelope:
+        started = datetime.now(timezone.utc)
+        finished = datetime.now(timezone.utc)
+        duration_ms = int((finished - started).total_seconds() * 1000) or 1
+        last_at = finished.isoformat().replace("+00:00", "Z")
+
+        rows: list[ObisSelectionRowResult] = []
+        for item in request.selectedItems:
+            ok_v1, reason = obis_selection_item_supported_v1(item)
+            if not ok_v1:
+                rows.append(
+                    ObisSelectionRowResult(
+                        obis=item.obis,
+                        status="unsupported",
+                        error=reason,
+                        packKey=item.packKey,
+                        lastReadAt=last_at,
+                    )
+                )
+            else:
+                rows.append(
+                    ObisSelectionRowResult(
+                        obis=item.obis,
+                        value=f"STUB-{item.obis}",
+                        unit=item.unit or None,
+                        quality="simulated",
+                        status="ok",
+                        packKey=item.packKey,
+                        lastReadAt=last_at,
+                        resolvedResultFormat="scalar",
+                    )
+                )
+
+        diagnostics = RuntimeExecutionDiagnostics(
+            outcome="simulated_success",
+            capabilityStage="cosem_read",
+            transportAttempted=False,
+            associationAttempted=False,
+            verifiedOnWire=False,
+            detailCode="PYTHON_STUB_READ_OBIS_SELECTION",
+        )
+
+        return RuntimeResponseEnvelope(
+            ok=True,
+            simulated=True,
+            operation="readObisSelection",
+            meterId=request.meterId,
+            startedAt=started.isoformat().replace("+00:00", "Z"),
+            finishedAt=last_at,
+            durationMs=duration_ms,
+            message="Python sidecar stub: OBIS selection values are synthetic.",
+            transportState="disconnected",
+            associationState="none",
+            payload=ReadObisSelectionPayload(rows=rows),
             diagnostics=diagnostics,
         )
 

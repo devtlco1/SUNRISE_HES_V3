@@ -15,6 +15,7 @@ This path is implemented **only in the Python sidecar** — not the legacy Next-
 | Status | `GET /v1/runtime/tcp-listener/status` — bind state, staged remote, timestamps, `lastBindError`, `sessionTriggerInProgress`, **`lastTcpListenerTrigger`** (last completed trigger summary). |
 | Trigger identity | `POST /v1/runtime/tcp-listener/read-identity` — **pops** staged socket, runs **`MeterClient.run_phase1_tcp_socket`**, same envelope as other `read-identity` paths. **Closes** the socket after the call (modem must reconnect for another attempt). |
 | Trigger basic registers | `POST /v1/runtime/tcp-listener/read-basic-registers` — same staging/pop/close pattern; runs the **same multi-OBIS basic-registers path** as serial (`SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS`), including **partial success** and per-OBIS errors. |
+| Trigger OBIS selection | `POST /v1/runtime/tcp-listener/read-obis-selection` — same staging/pop/close pattern; **`run_phase1_tcp_socket`** with **`obis_list`** from operator **`selectedItems`** (v1-supported rows only on-wire; others returned as **`unsupported`** per row). |
 | MVP-AMI | Reuses **`run_phase1_tcp_socket`** on the **accepted** socket — **no** `socket.create_connection` for this topology. |
 
 ## What this is not
@@ -41,6 +42,7 @@ Requires **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`** and MVP-AMI with **`run_phase1_tc
 | `GET` | `/v1/runtime/tcp-listener/status` | Bearer if `SERVICE_TOKEN` set |
 | `POST` | `/v1/runtime/tcp-listener/read-identity` | Same; body = `ReadIdentityRequest` (`meterId`, …) |
 | `POST` | `/v1/runtime/tcp-listener/read-basic-registers` | Same; body = `ReadBasicRegistersRequest` (`meterId`, …) |
+| `POST` | `/v1/runtime/tcp-listener/read-obis-selection` | Same; body = `ReadObisSelectionRequest` (`meterId`, `selectedItems[]`, …) |
 
 ## Failure envelopes (trigger)
 
@@ -68,6 +70,7 @@ After each trigger completes, status includes a snapshot such as:
 - `mvpAmiStages` when failure details include `mvpAmiDiagnostics`
 - `hints` with optional booleans for IEC (`initial_request`), TCP phase1 runtime, `association`, `read_obis`
 - For basic registers: `basicRegistersSummary` (`okCount`, `total`, `partial`, `allFailed`)
+- For OBIS selection: `obisSelectionSummary` (`rowCount`, `okCount`, `unsupportedCount`, `errorCount`)
 
 ## Next.js (internal)
 

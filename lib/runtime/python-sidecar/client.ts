@@ -4,6 +4,8 @@ import type {
   DiscoverySnapshotRecord,
   DiscoverSupportedObisPayload,
   IdentityPayload,
+  ReadObisSelectionPayload,
+  ReadObisSelectionRequest,
   RuntimeResponseEnvelope,
 } from "@/types/runtime"
 
@@ -197,6 +199,47 @@ export async function postTcpListenerReadBasicRegistersToPythonSidecar(
 }
 
 /**
+ * Server-only: POST /v1/runtime/tcp-listener/read-obis-selection (staged inbound socket).
+ */
+export async function postTcpListenerReadObisSelectionToPythonSidecar(
+  body: ReadObisSelectionRequest
+): Promise<RuntimeResponseEnvelope<ReadObisSelectionPayload>> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/read-obis-selection`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as RuntimeResponseEnvelope<ReadObisSelectionPayload>
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as RuntimeResponseEnvelope<ReadObisSelectionPayload>
+}
+
+/**
  * Server-only: POST /v1/runtime/read-basic-registers on the Python sidecar.
  */
 export async function postReadBasicRegistersToPythonSidecar(
@@ -235,6 +278,47 @@ export async function postReadBasicRegistersToPythonSidecar(
   }
 
   return json as RuntimeResponseEnvelope<BasicRegistersPayload>
+}
+
+/**
+ * Server-only: POST /v1/runtime/read-obis-selection (parameterized multi-OBIS read).
+ */
+export async function postReadObisSelectionToPythonSidecar(
+  body: ReadObisSelectionRequest
+): Promise<RuntimeResponseEnvelope<ReadObisSelectionPayload>> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/read-obis-selection`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as RuntimeResponseEnvelope<ReadObisSelectionPayload>
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as RuntimeResponseEnvelope<ReadObisSelectionPayload>
 }
 
 /**

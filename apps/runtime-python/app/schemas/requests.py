@@ -1,6 +1,6 @@
 """Inbound API request bodies."""
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -41,3 +41,24 @@ class DiscoverSupportedObisRequest(BaseModel):
     endpointId: Optional[str] = Field(default=None, max_length=256)
     channelHint: Optional[str] = Field(default=None, max_length=256)
     channel: Optional[ChannelSpec] = None
+
+
+class ObisSelectionItem(BaseModel):
+    """One operator-selected OBIS row (metadata from catalog + UI)."""
+
+    obis: str = Field(..., min_length=1, max_length=64)
+    description: Optional[str] = Field(default=None, max_length=512)
+    objectType: str = Field(..., min_length=1, max_length=64)
+    classId: int = Field(..., ge=0, le=65535)
+    attribute: int = Field(default=2, ge=0, le=255)
+    scalerUnitAttribute: Optional[int] = Field(default=None, ge=0, le=255)
+    unit: Optional[str] = Field(default=None, max_length=32)
+    packKey: Optional[str] = Field(default=None, max_length=64)
+
+
+class ReadObisSelectionRequest(BaseModel):
+    meterId: str = Field(..., min_length=1, max_length=128)
+    endpointId: Optional[str] = Field(default=None, max_length=256)
+    channelHint: Optional[str] = Field(default=None, max_length=256)
+    channel: Optional[ChannelSpec] = None
+    selectedItems: List[ObisSelectionItem] = Field(..., min_length=1, max_length=128)

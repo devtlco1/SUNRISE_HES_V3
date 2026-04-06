@@ -9,10 +9,12 @@ from app.schemas.requests import (
     DiscoverSupportedObisRequest,
     ReadBasicRegistersRequest,
     ReadIdentityRequest,
+    ReadObisSelectionRequest,
 )
 from app.services.discover_supported_obis import execute_discover_supported_obis
 from app.services.read_basic_registers import execute_read_basic_registers
 from app.services.read_identity import execute_read_identity
+from app.services.read_obis_selection import execute_read_obis_selection
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/runtime", tags=["runtime-v1"])
@@ -56,6 +58,19 @@ def post_read_identity(body: ReadIdentityRequest) -> RuntimeResponseEnvelope:
 def post_read_basic_registers(body: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
     log.info("http_read_basic_registers", extra={"meter_id": body.meterId})
     return execute_read_basic_registers(body)
+
+
+@router.post(
+    "/read-obis-selection",
+    response_model=RuntimeResponseEnvelope,
+    dependencies=[Depends(verify_service_token)],
+)
+def post_read_obis_selection(body: ReadObisSelectionRequest) -> RuntimeResponseEnvelope:
+    log.info(
+        "http_read_obis_selection",
+        extra={"meter_id": body.meterId, "items": len(body.selectedItems)},
+    )
+    return execute_read_obis_selection(body)
 
 
 @router.post(

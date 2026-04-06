@@ -30,8 +30,10 @@
    `GET /api/readings/tcp-listener/status`,  
    `POST /api/readings/tcp-listener/read-identity`,  
    `POST /api/readings/tcp-listener/read-basic-registers`,  
+   `POST /api/readings/tcp-listener/read-obis-selection`,  
    `POST /api/readings/runtime/read-identity`,  
-   `POST /api/readings/runtime/read-basic-registers` — no `INTERNAL_API_TOKEN`; UI pages **`/readings`**, **`/obis-config`** (catalog is repo-seeded TS).
+   `POST /api/readings/runtime/read-basic-registers`,  
+   `POST /api/readings/runtime/read-obis-selection` — no `INTERNAL_API_TOKEN`; UI pages **`/readings`**, **`/obis-config`** (catalog is repo-seeded TS). **`read-obis-selection`** carries **`selectedItems[]`** from the table (v1: Data / Clock / Register, attr 2 only — see **`docs/runtime-python-mvp-ami-adapter.md`**).
 5. Public `POST /api/runtime/read-identity` and `POST /api/runtime/read-basic-registers` remain **unchanged** (in-process TypeScript adapter factory). The UI is not switched to the sidecar by default.
 
 ## Real adapter: `mvp_ami` (serial reads)
