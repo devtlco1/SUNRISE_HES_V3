@@ -3,6 +3,7 @@ import net from "node:net"
 import { classifyInboundPreview } from "@/lib/runtime/ingress/classify"
 import { handoffInboundMeterSocketForFutureDlms } from "@/lib/runtime/ingress/inbound-handoff"
 import { loadMeterIngressConfig } from "@/lib/runtime/ingress/config"
+import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
 import {
   markListenFailed,
   markListenerConfigured,
@@ -16,9 +17,6 @@ import {
 
 const MAX_PREVIEW = 512
 const LOG_PREFIX = "[meter-ingress]"
-
-let serverInstance: net.Server | null = null
-let bootstrapInvoked = false
 
 function remoteKey(socket: net.Socket): { address: string; port: number } {
   const a = socket.remoteAddress ?? "unknown"
@@ -84,7 +82,8 @@ export function startMeterTcpIngress(): void {
     return
   }
 
-  if (serverInstance?.listening) {
+  const rt = getIngressProcessRuntime()
+  if (rt.tcpServer?.listening) {
     console.warn(`${LOG_PREFIX} already listening`)
     return
   }
@@ -105,7 +104,7 @@ export function startMeterTcpIngress(): void {
     console.error(`${LOG_PREFIX} server error`, err)
     markListenFailed(err.message)
     onIngressError(`server_error: ${err.message}`)
-    if (serverInstance === server) serverInstance = null
+    if (rt.tcpServer === server) rt.tcpServer = null
   })
 
   server.listen(cfg.port, cfg.host, () => {
@@ -116,15 +115,15 @@ export function startMeterTcpIngress(): void {
     )
   })
 
-  serverInstance = server
+  rt.tcpServer = server
 
   const shutdown = () => {
-    if (!serverInstance) return
+    if (!rt.tcpServer) return
     markListenerStopped()
-    serverInstance.close(() => {
+    rt.tcpServer.close(() => {
       console.info(`${LOG_PREFIX} listener closed`)
     })
-    serverInstance = null
+    rt.tcpServer = null
   }
 
   process.once("SIGINT", shutdown)
@@ -132,8 +131,9 @@ export function startMeterTcpIngress(): void {
 }
 
 export function bootstrapMeterIngressOnce(): void {
-  if (bootstrapInvoked) return
-  bootstrapInvoked = true
+  const rt = getIngressProcessRuntime()
+  if (rt.bootstrapInvoked) return
+  rt.bootstrapInvoked = true
   try {
     startMeterTcpIngress()
   } catch (e) {

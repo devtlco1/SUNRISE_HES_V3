@@ -25,6 +25,7 @@ Do **not** commit production host/port values. Configure on the VPS only (PM2, s
 - The listener starts in **`instrumentation.ts`** when the Node server boots (`next start` / `next dev`).
 - Each Node **worker** process would bind its own listener if you use multiple workers—avoid duplicate binds on the same port (single worker or one ingress process is the usual pattern).
 - The HTTP app is not blocked; the TCP server is asynchronous.
+- Ingress diagnostics are stored on **`globalThis`** so they stay consistent with the real listener when Next.js loads instrumentation and API routes as separate bundles (same OS process, one shared runtime object).
 
 ## Diagnostics
 
