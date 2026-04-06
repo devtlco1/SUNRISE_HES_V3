@@ -1,4 +1,5 @@
 import { countFcs16 } from "@/lib/runtime/real/hdlc-fcs16"
+import { fcs16MatchesWire } from "@/lib/runtime/real/hdlc-fcs-wire"
 
 const FLAG = 0x7e
 
@@ -82,13 +83,15 @@ export function parseHdlcFrameWithAddressWidths(
     return null
   }
   const inner = frame.subarray(1, frame.length - 1)
-  if (inner.length < 4 + destLen + srcLen + 1 + 2) return null
+  /** format(1) + length(1) + dest + src + control(1) + HCS(2) */
+  if (inner.length < 5 + destLen + srcLen) return null
   if ((inner[0] & 0xf0) !== 0xa0) return null
   const ctrlIdx = 2 + destLen + srcLen
   const control = inner[ctrlIdx]
   const firstCrcIdx = ctrlIdx + 1
-  const crcRead1 = inner[firstCrcIdx] | (inner[firstCrcIdx + 1] << 8)
-  if (countFcs16(inner, 0, firstCrcIdx) !== crcRead1) return null
+  const h0 = inner[firstCrcIdx]
+  const h1 = inner[firstCrcIdx + 1]
+  if (!fcs16MatchesWire(countFcs16(inner, 0, firstCrcIdx), h0, h1)) return null
 
   const dest = inner.subarray(2, 2 + destLen)
   const src = inner.subarray(2 + destLen, 2 + destLen + srcLen)
@@ -99,10 +102,10 @@ export function parseHdlcFrameWithAddressWidths(
 
   const secondPart = inner.subarray(afterCrc1)
   if (secondPart.length < 2) return null
-  const crcRead2 =
-    secondPart[secondPart.length - 2] | (secondPart[secondPart.length - 1] << 8)
+  const t0 = secondPart[secondPart.length - 2]
+  const t1 = secondPart[secondPart.length - 1]
   const dataPart = secondPart.subarray(0, secondPart.length - 2)
-  if (countFcs16(inner, 0, afterCrc1 + dataPart.length) !== crcRead2) return null
+  if (!fcs16MatchesWire(countFcs16(inner, 0, afterCrc1 + dataPart.length), t0, t1)) return null
 
   return { kind: "i", control, dest, src, llcAndApdu: dataPart }
 }

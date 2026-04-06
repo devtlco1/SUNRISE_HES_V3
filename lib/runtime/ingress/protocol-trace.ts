@@ -97,9 +97,15 @@ export function traceMeterAccumSnapshot(accum: Uint8Array, phase: string): void 
 
     const rec = inspectHdlcFrameSegment(raw)
     parsePieces.push(`${rec.byteLength}B:${rec.summary}`)
-    if (rec.variants.length === 0 && rec.heuristicUaByteOffsetsInInner.length > 0) {
+    if (rec.eaGurux?.rejectReason) {
+      fcsNotes.push(`gurux_EA:${rec.eaGurux.rejectReason}`)
+    }
+    if (
+      rec.variants.filter((v) => v.controlLabel === "UA").length === 0 &&
+      rec.heuristicUaByteOffsetsInInner.length > 0
+    ) {
       fcsNotes.push(
-        `0x73_at_inner_offsets_${rec.heuristicUaByteOffsetsInInner.join(",")}_no_FCS_valid_parse`
+        `0x73_at_inner_offsets_${rec.heuristicUaByteOffsetsInInner.join(",")}_no_strict_UA_in_variants`
       )
     }
     if (rec.formatNote !== "ok_a0_family") {
@@ -124,9 +130,13 @@ export function traceMeterAccumSnapshot(accum: Uint8Array, phase: string): void 
         destHex: v.destHex,
         srcHex: v.srcHex,
         fcsValid: v.fcsValid,
+        addressModel: v.addressModel,
+        headerFcsEndian: v.headerFcsEndian,
+        payloadFcsEndian: v.payloadFcsEndian,
       })),
       heuristicUaOffsetsInInner: rec.heuristicUaByteOffsetsInInner,
       summary: rec.summary,
+      eaGurux: rec.eaGurux,
     })
   }
 
@@ -134,7 +144,7 @@ export function traceMeterAccumSnapshot(accum: Uint8Array, phase: string): void 
   t.lastFcsValidationNote = fcsNotes.join(" | ").slice(0, 4000) || t.lastFcsValidationNote
 
   const strictUa = t.inboundFrames.flatMap((f) =>
-    f.variants.filter((v) => v.controlLabel === "UA" && v.kind === "u")
+    f.variants.filter((v) => v.controlLabel === "UA")
   )
   t.lastUaCandidateSummary = strictUa.length
     ? `strict_UA_FCS_ok_${strictUa.length}_variant(s)_dest_src_${strictUa.map((v) => `${v.destLen}+${v.srcLen}`).join(";")}`

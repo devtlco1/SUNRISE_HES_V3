@@ -3,6 +3,8 @@
  * Classification is observational only until real HDLC/DLMS parsers run on the socket.
  */
 
+import type { GuruxEaFrameDiagnostics } from "@/lib/runtime/real/hdlc-frame-gurux-ea"
+
 /** Observational session state for an inbound connection (not verified COSEM). */
 export type IngressSessionClass =
   | "idle"
@@ -37,9 +39,13 @@ export type IngressProtocolTracePublic = {
       destHex: string
       srcHex: string
       fcsValid: string
+      addressModel?: "fixed_width" | "gurux_ea"
+      headerFcsEndian?: "le" | "be"
+      payloadFcsEndian?: "le" | "be"
     }>
     heuristicUaOffsetsInInner: number[]
     summary: string
+    eaGurux: GuruxEaFrameDiagnostics | null
   }>
   outboundFrames: Array<{
     t: string

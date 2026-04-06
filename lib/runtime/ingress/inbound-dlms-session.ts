@@ -27,8 +27,9 @@ import {
   parseGetResponseNormal,
 } from "@/lib/runtime/real/dlms-get-normal"
 import {
-  enumerateValidHdlcParses,
+  enumerateAllValidHdlcParses,
   findFirstStrictSnrmVariant,
+  findFirstStrictUaVariant,
   hasStrictUaFrame,
 } from "@/lib/runtime/real/hdlc-frame-inspect"
 import {
@@ -73,7 +74,7 @@ function bufferPrefixMatch(buf: Uint8Array, prefix: Buffer): boolean {
 
 function findAare(accum: Uint8Array): { result: number; apdu: Buffer } | null {
   for (const raw of splitHdlcFrames(accum)) {
-    for (const v of enumerateValidHdlcParses(raw)) {
+    for (const v of enumerateAllValidHdlcParses(raw)) {
       if (v.parsed.kind !== "i") continue
       const apdu = stripLeadingLlcReply(v.parsed.llcAndApdu)
       const hit = parseAareAssociationResult(apdu)
@@ -85,7 +86,7 @@ function findAare(accum: Uint8Array): { result: number; apdu: Buffer } | null {
 
 function findGetResponse(accum: Uint8Array): ReturnType<typeof parseGetResponseNormal> | null {
   for (const raw of splitHdlcFrames(accum)) {
-    for (const v of enumerateValidHdlcParses(raw)) {
+    for (const v of enumerateAllValidHdlcParses(raw)) {
       if (v.parsed.kind !== "i") continue
       const apdu = stripLeadingLlcReply(v.parsed.llcAndApdu)
       const g = parseGetResponseNormal(apdu)
@@ -136,7 +137,7 @@ export async function runInboundDlmsOnSocket(
 
   socket.setTimeout(0)
 
-  const meter = profile.meterServerAddress
+  let meter = Buffer.from(profile.meterServerAddress)
   const client = profile.clientAddressWire
   let accum = new Uint8Array(0) as Acc
 
@@ -206,6 +207,15 @@ export async function runInboundDlmsOnSocket(
     }
 
     traceProtocolStep("ua_strict_ok", "proceeding_to_aarq")
+
+    const uaLearned = findFirstStrictUaVariant(accum)
+    if (uaLearned && uaLearned.parsed.control === HDLC_UA) {
+      meter = Buffer.from(uaLearned.parsed.src)
+      traceProtocolStep(
+        "meter_hdlc_address_learned_from_ua",
+        `${uaLearned.addressModel}:${meter.toString("hex")}`
+      )
+    }
 
     const aarq =
       profile.auth === "LOW" && profile.password
