@@ -14,13 +14,13 @@
 
 | Concept | Description |
 | ------- | ----------- |
-| **MeterReadJob** | Unit of work: e.g. `readIdentity`, later `readRegisters`, keyed by `meterId` + channel config |
+| **MeterReadJob** | Unit of work: e.g. `readIdentity`, `readBasicRegisters` (see `QueuedMeterOperation` in `lib/jobs/foundation.ts`), keyed by `meterId` + channel config |
 | **Job lifecycle** | `pending` → `running` → `completed` \| `failed` |
 | **queueRef** | Opaque id returned by the queue implementation (Bull job id, Celery task id, …) |
 
 ## Code placeholder
 
-See `lib/jobs/foundation.ts` for TypeScript types only — no Redis, no workers, no background timers in this step.
+See **`lib/jobs/foundation.ts`** (TypeScript) and **`apps/runtime-python/app/jobs/read_job_foundation.py`** (Python mirror) for types only — no Redis, no workers, no background timers. `enqueue_read_job_placeholder` is intentionally `NotImplemented` until the queue phase.
 
 ## What stays in Next.js after queues exist
 

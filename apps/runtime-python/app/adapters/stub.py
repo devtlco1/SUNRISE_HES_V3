@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 
 from app.adapters.base import ProtocolRuntimeAdapter
 from app.schemas.envelope import (
+    BasicRegisterReading,
+    BasicRegistersPayload,
     IdentityPayload,
     RuntimeExecutionDiagnostics,
     RuntimeResponseEnvelope,
 )
-from app.schemas.requests import ReadIdentityRequest
+from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
 
 
 class StubRuntimeAdapter(ProtocolRuntimeAdapter):
@@ -51,5 +53,54 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
             transportState="disconnected",
             associationState="none",
             payload=payload,
+            diagnostics=diagnostics,
+        )
+
+    def read_basic_registers(self, request: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
+        started = datetime.now(timezone.utc)
+        finished = datetime.now(timezone.utc)
+        duration_ms = int((finished - started).total_seconds() * 1000) or 1
+
+        registers = {
+            "0.0.1.0.0.255": BasicRegisterReading(
+                value="2026-01-01T12:00:00.000Z",
+                quality="simulated",
+            ),
+            "1.0.1.8.0.255": BasicRegisterReading(
+                value="12345.678",
+                unit="kWh",
+                quality="simulated",
+            ),
+            "1.0.32.7.0.255": BasicRegisterReading(
+                value="230.0",
+                unit="V",
+                quality="simulated",
+            ),
+        }
+
+        diagnostics = RuntimeExecutionDiagnostics(
+            outcome="simulated_success",
+            capabilityStage="cosem_read",
+            transportAttempted=False,
+            associationAttempted=False,
+            verifiedOnWire=False,
+            detailCode="PYTHON_STUB_READ_BASIC_REGISTERS",
+        )
+
+        return RuntimeResponseEnvelope(
+            ok=True,
+            simulated=True,
+            operation="readBasicRegisters",
+            meterId=request.meterId,
+            startedAt=started.isoformat().replace("+00:00", "Z"),
+            finishedAt=finished.isoformat().replace("+00:00", "Z"),
+            durationMs=duration_ms,
+            message=(
+                "Python sidecar stub: basic registers are synthetic. "
+                "No meter I/O was performed."
+            ),
+            transportState="disconnected",
+            associationState="none",
+            payload=BasicRegistersPayload(registers=registers),
             diagnostics=diagnostics,
         )

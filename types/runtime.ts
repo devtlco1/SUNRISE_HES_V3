@@ -153,6 +153,8 @@ export interface BasicRegisterReading {
   value: string
   unit?: string
   quality?: string
+  /** Set when this OBIS read failed or returned no value (Python MVP-AMI path). */
+  error?: string
 }
 
 export interface BasicRegistersPayload {

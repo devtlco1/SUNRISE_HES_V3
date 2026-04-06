@@ -19,3 +19,10 @@ class ReadIdentityRequest(BaseModel):
     endpointId: Optional[str] = Field(default=None, max_length=256)
     channelHint: Optional[str] = Field(default=None, max_length=256)
     channel: Optional[ChannelSpec] = None
+
+
+class ReadBasicRegistersRequest(BaseModel):
+    meterId: str = Field(..., min_length=1, max_length=128)
+    endpointId: Optional[str] = Field(default=None, max_length=256)
+    channelHint: Optional[str] = Field(default=None, max_length=256)
+    channel: Optional[ChannelSpec] = None

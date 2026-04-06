@@ -1,20 +1,28 @@
-# Python sidecar: real `mvp_ami` adapter (serial identity read)
+# Python sidecar: real `mvp_ami` adapter (serial reads)
 
-This documents the **first real protocol path**: `SUNRISE_RUNTIME_ADAPTER=mvp_ami`, which delegates to a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)** (`MeterClient.run_phase1`) for **one** identity OBIS read over **serial** (host-initiated, same pipeline as MVP-AMI).
+This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)** (`MeterClient.run_phase1`) over **serial** (host-initiated pipeline: open → IEC → association → COSEM reads).
 
 ## What is implemented
 
-- Open configured serial port (via MVP-AMI config, optional request override).
+- Open configured serial port (via MVP-AMI config, optional request `channel.devicePath` override).
 - IEC / initial request and DLMS association (inside MVP-AMI).
-- Single COSEM read for the configured identity OBIS (default `0.0.96.1.1.255`).
-- Response mapped to the existing **`RuntimeResponseEnvelope`** (`ok`, `simulated`, `diagnostics`, etc.).
-- `simulated: false` on every `mvp_ami` path; `diagnostics.verifiedOnWire: true` only when association succeeded **and** the identity read returned a value without row error.
+- **`read-identity`:** one identity OBIS (default `0.0.96.1.1.255` via `SUNRISE_RUNTIME_IDENTITY_OBIS`).
+- **`read-basic-registers`:** one `run_phase1` call with a **small comma-separated OBIS list** (`SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS`). Default profile (IEC 62056–style, widely used):
+  - **`0.0.1.0.0.255`** — clock / date-time (operational time on the meter).
+  - **`1.0.1.8.0.255`** — total active import energy (+A), billing-relevant summary register.
+  - **`1.0.32.7.0.255`** — instantaneous voltage L1 (single useful instantaneous quantity).
+  Identity is **not** duplicated here; use `read-identity` for logical device name / serial-style reads.
+- Per-OBIS outcomes: failed reads appear in `payload.registers[obis].error` with `quality: "error"`; transport/association failures still return `ok: false` for the whole call.
+- If **all** OBIS reads fail after association, the envelope is **`ok: false`** (`BASIC_REGISTERS_ALL_FAILED`). If **some** succeed, **`ok: true`** with `diagnostics.detailCode` `MVP_AMI_BASIC_REGISTERS_PARTIAL` or `MVP_AMI_BASIC_REGISTERS_OK`.
+- Response mapped to **`RuntimeResponseEnvelope`** (`ok`, `simulated`, `diagnostics`, `operation`, etc.).
+- `simulated: false` on every `mvp_ami` path; `diagnostics.verifiedOnWire: true` when association succeeded and **at least one** requested read returned a value without row error (basic registers), or the single identity read succeeded (identity).
 
 ## What stays stubbed / out of scope
 
 - **Queues, workers, relay, bulk reads, command execution** — unchanged placeholders elsewhere.
 - **TCP client / multi-channel** in the adapter — not implemented; use MVP-AMI’s own `config.json` for transport until extended.
-- **Public** `POST /api/runtime/read-identity` — still the in-process TypeScript runtime; only **`POST /api/internal/python-runtime/read-identity`** proxies to Python when `RUNTIME_PYTHON_SIDECAR_URL` is set.
+- **Public** runtime routes — still the in-process TypeScript factory; only **`POST /api/internal/python-runtime/read-identity`** and **`POST /api/internal/python-runtime/read-basic-registers`** proxy to Python when `RUNTIME_PYTHON_SIDECAR_URL` is set.
+- **Queue execution** — types only (`lib/jobs/foundation.ts`, `apps/runtime-python/app/jobs/read_job_foundation.py`); no Redis/workers yet.
 
 ## Prerequisites
 
@@ -40,6 +48,7 @@ This documents the **first real protocol path**: `SUNRISE_RUNTIME_ADAPTER=mvp_am
 | `SUNRISE_RUNTIME_MVP_AMI_ROOT` | Yes | Absolute path to the **MVP-AMI repository root** (directory containing `meter_client.py`, `config.py`, etc.). |
 | `SUNRISE_RUNTIME_MVP_AMI_CONFIG_PATH` | No | Path to `config.json`. Default: `<MVP_AMI_ROOT>/config.json`. |
 | `SUNRISE_RUNTIME_IDENTITY_OBIS` | No | Logical name / identity OBIS string passed to `run_phase1`. Default: `0.0.96.1.1.255`. |
+| `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` | No | Comma-separated OBIS list for `read-basic-registers`. Default: `0.0.1.0.0.255,1.0.1.8.0.255,1.0.32.7.0.255`. |
 | `SUNRISE_RUNTIME_SERVICE_TOKEN` | No | If set, `Authorization: Bearer <token>` on `/v1/*`. |
 
 ## Optional request override (serial port only)
@@ -76,9 +85,13 @@ curl -sS http://127.0.0.1:8766/health | jq .
 curl -sS -X POST http://127.0.0.1:8766/v1/runtime/read-identity \
   -H 'Content-Type: application/json' \
   -d '{"meterId":"test-1","channel":{"type":"serial","devicePath":"/dev/ttyUSB0"}}' | jq .
+
+curl -sS -X POST http://127.0.0.1:8766/v1/runtime/read-basic-registers \
+  -H 'Content-Type: application/json' \
+  -d '{"meterId":"test-1"}' | jq .
 ```
 
-Without a meter, expect a **structured failure** (`ok: false`, `simulated: false`, `error.code` such as `SERIAL_OPEN_FAILED`, `IEC_HANDSHAKE_FAILED`, `ASSOCIATION_FAILED`, or `IDENTITY_READ_FAILED`) and **`diagnostics`** / **`error.details.mvpAmiDiagnostics`** for stage-level detail.
+Without a meter, expect a **structured failure** (`ok: false`, `simulated: false`, `error.code` such as `SERIAL_OPEN_FAILED`, `IEC_HANDSHAKE_FAILED`, `ASSOCIATION_FAILED`, identity `IDENTITY_READ_FAILED`, or basic registers `BASIC_REGISTERS_ALL_FAILED`) and **`diagnostics`** / **`error.details.mvpAmiDiagnostics`** where applicable.
 
 ## Next.js internal proxy
 
@@ -93,9 +106,13 @@ Then:
 curl -sS -X POST http://127.0.0.1:3000/api/internal/python-runtime/read-identity \
   -H 'Content-Type: application/json' \
   -d '{"meterId":"test-1"}' | jq .
+
+curl -sS -X POST http://127.0.0.1:3000/api/internal/python-runtime/read-basic-registers \
+  -H 'Content-Type: application/json' \
+  -d '{"meterId":"test-1"}' | jq .
 ```
 
-(If `RUNTIME_PYTHON_SIDECAR_URL` is unset, the route returns **503** with `PYTHON_SIDECAR_NOT_CONFIGURED` — by design.)
+(If `RUNTIME_PYTHON_SIDECAR_URL` is unset, these routes return **503** with `PYTHON_SIDECAR_NOT_CONFIGURED` — by design.)
 
 ## Failure codes (honest diagnostics)
 
@@ -108,4 +125,6 @@ curl -sS -X POST http://127.0.0.1:3000/api/internal/python-runtime/read-identity
 | `IEC_HANDSHAKE_FAILED` | MVP-AMI `initial_request` failed. |
 | `ASSOCIATION_FAILED` / `ASSOCIATION_NOT_REACHED` / `MVP_AMI_CANCELLED` | Association not completed. |
 | `IDENTITY_READ_FAILED` | Association OK but identity OBIS row missing value or has error. |
+| `BASIC_REGISTERS_OBIS_EMPTY` | Configured OBIS list empty (misconfiguration). |
+| `BASIC_REGISTERS_ALL_FAILED` | Association OK but every OBIS in the basic set failed (see `error.details`). |
 | `MVP_AMI_RUNTIME_ERROR` | Unexpected exception from `run_phase1`. |

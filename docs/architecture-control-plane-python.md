@@ -12,12 +12,19 @@
 
 1. Python **FastAPI** listens on `SUNRISE_RUNTIME_PORT` (default **8766**).
 2. Next.js calls the sidecar **only from the server** via `lib/runtime/python-sidecar/client.ts`.
-3. **Internal** route: `POST /api/internal/python-runtime/read-identity` — proxies to Python `POST /v1/runtime/read-identity`.
-4. The public `POST /api/runtime/read-identity` route is **unchanged** (still uses the in-process TypeScript adapter factory). UI is not switched to the sidecar in this step.
+3. **Internal** routes (server-only, when `RUNTIME_PYTHON_SIDECAR_URL` is set):
+   - `POST /api/internal/python-runtime/read-identity` → Python `POST /v1/runtime/read-identity`
+   - `POST /api/internal/python-runtime/read-basic-registers` → Python `POST /v1/runtime/read-basic-registers`
+4. Public `POST /api/runtime/read-identity` and `POST /api/runtime/read-basic-registers` remain **unchanged** (in-process TypeScript adapter factory). The UI is not switched to the sidecar by default.
 
-## Real adapter: `mvp_ami` (serial identity read)
+## Real adapter: `mvp_ami` (serial reads)
 
-When the Python process runs with `SUNRISE_RUNTIME_ADAPTER=mvp_ami` and `SUNRISE_RUNTIME_MVP_AMI_ROOT` pointing at a local **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)** checkout, `POST /v1/runtime/read-identity` executes **one** host-initiated serial pipeline (open → IEC → association → single identity OBIS read) and returns the same **`RuntimeResponseEnvelope`** as the stub. Details, env vars, and curl examples: **`docs/runtime-python-mvp-ami-adapter.md`**.
+With `SUNRISE_RUNTIME_ADAPTER=mvp_ami` and `SUNRISE_RUNTIME_MVP_AMI_ROOT` set to a local **[MVP-AMI](https://github.com/devtlco1/MVP-AMI)** checkout, the sidecar runs the same host-initiated serial pipeline (open → IEC → association → COSEM reads) for:
+
+- **`read-identity`** — one identity OBIS (default `0.0.96.1.1.255`).
+- **`read-basic-registers`** — a **small fixed OBIS set** (clock, energy, voltage — configurable; see **`docs/runtime-python-mvp-ami-adapter.md`**).
+
+Both return the same **`RuntimeResponseEnvelope`** shape as the stub (`operation` discriminates the payload). Env vars and curl examples: **`docs/runtime-python-mvp-ami-adapter.md`**.
 
 ## Environment (Next.js server)
 

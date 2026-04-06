@@ -4,7 +4,7 @@
 
 Live inbound TCP experiments reached **strict UA** and **Gurux-aligned AARQ** with **no post-AARQ RX** in both auto and staged modes — see **`docs/runtime-ingress.md`** and the architecture handoff **`docs/protocol-runtime-handoff.md`**. The **stub/real adapter** contracts below remain the right **UI-facing** shape; **on-wire execution** for production reads should move toward a **separate protocol service** (e.g. Python/MVP-AMI-class sidecar) rather than further ingress tuning in this repo.
 
-A first **Python FastAPI sidecar** scaffold lives under **`apps/runtime-python/`**; Next.js can proxy **`readIdentity`** to it via **`POST /api/internal/python-runtime/read-identity`** when **`RUNTIME_PYTHON_SIDECAR_URL`** is set — see **`docs/architecture-control-plane-python.md`**. Async **queue/workers** are documented only as a **later phase** (`docs/job-queue-foundation.md`).
+A **Python FastAPI sidecar** lives under **`apps/runtime-python/`**; Next.js can proxy **`readIdentity`** and **`readBasicRegisters`** via **`POST /api/internal/python-runtime/read-identity`** and **`POST /api/internal/python-runtime/read-basic-registers`** when **`RUNTIME_PYTHON_SIDECAR_URL`** is set — see **`docs/architecture-control-plane-python.md`**. Async **queue/workers** are documented only as a **later phase** (`docs/job-queue-foundation.md`).
 
 ## Purpose
 

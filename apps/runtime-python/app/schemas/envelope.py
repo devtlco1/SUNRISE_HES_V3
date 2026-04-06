@@ -4,7 +4,7 @@ Runtime response contracts aligned with `types/runtime.ts` (RuntimeResponseEnvel
 Field names and semantics mirror the TypeScript control-plane model.
 """
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +64,22 @@ class IdentityPayload(BaseModel):
     logicalDeviceName: Optional[str] = None
 
 
+class BasicRegisterReading(BaseModel):
+    """One OBIS row mapped for API consumers (aligned with `types/runtime.ts`)."""
+
+    value: str
+    unit: Optional[str] = None
+    quality: Optional[str] = None
+    error: Optional[str] = Field(
+        default=None,
+        description="MVP-AMI read error or missing value for this OBIS.",
+    )
+
+
+class BasicRegistersPayload(BaseModel):
+    registers: dict[str, BasicRegisterReading]
+
+
 class RuntimeResponseEnvelope(BaseModel):
     ok: bool
     simulated: bool
@@ -75,6 +91,6 @@ class RuntimeResponseEnvelope(BaseModel):
     message: str
     transportState: TransportState
     associationState: AssociationState
-    payload: Optional[IdentityPayload] = None
+    payload: Optional[Union[IdentityPayload, BasicRegistersPayload]] = None
     error: Optional[RuntimeErrorInfo] = None
     diagnostics: Optional[RuntimeExecutionDiagnostics] = None

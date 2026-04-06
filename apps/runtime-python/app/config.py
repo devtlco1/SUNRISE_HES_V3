@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     mvp_ami_config_path: Optional[str] = None
     """Logical name read after association (default identity OBIS)."""
     identity_obis: str = "0.0.96.1.1.255"
+    """
+    Comma-separated OBIS list for read-basic-registers (default: clock, active import, L1 voltage).
+    """
+    basic_registers_obis: str = "0.0.1.0.0.255,1.0.1.8.0.255,1.0.32.7.0.255"
 
 
 @lru_cache

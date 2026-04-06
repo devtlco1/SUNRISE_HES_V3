@@ -6,7 +6,7 @@
  */
 
 /** Logical operation a queued meter job may perform (extend over time). */
-export type QueuedMeterOperation = "readIdentity"
+export type QueuedMeterOperation = "readIdentity" | "readBasicRegisters"
 
 export type MeterReadJobStatus = "pending" | "running" | "completed" | "failed"
 

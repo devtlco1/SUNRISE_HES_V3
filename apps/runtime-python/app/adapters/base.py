@@ -3,10 +3,14 @@
 from abc import ABC, abstractmethod
 
 from app.schemas.envelope import RuntimeResponseEnvelope
-from app.schemas.requests import ReadIdentityRequest
+from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
 
 
 class ProtocolRuntimeAdapter(ABC):
     @abstractmethod
     def read_identity(self, request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+        raise NotImplementedError
+
+    @abstractmethod
+    def read_basic_registers(self, request: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
         raise NotImplementedError

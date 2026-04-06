@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.config import Settings, get_settings
 from app.schemas.envelope import RuntimeResponseEnvelope
-from app.schemas.requests import ReadIdentityRequest
+from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
+from app.services.read_basic_registers import execute_read_basic_registers
 from app.services.read_identity import execute_read_identity
 
 log = logging.getLogger(__name__)
@@ -40,3 +41,13 @@ def verify_service_token(
 def post_read_identity(body: ReadIdentityRequest) -> RuntimeResponseEnvelope:
     log.info("http_read_identity", extra={"meter_id": body.meterId})
     return execute_read_identity(body)
+
+
+@router.post(
+    "/read-basic-registers",
+    response_model=RuntimeResponseEnvelope,
+    dependencies=[Depends(verify_service_token)],
+)
+def post_read_basic_registers(body: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
+    log.info("http_read_basic_registers", extra={"meter_id": body.meterId})
+    return execute_read_basic_registers(body)
