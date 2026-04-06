@@ -52,6 +52,30 @@ export type IngressOutboundAarqDiagPublic = OutboundAarqPayloadDiag & {
   clientAddressHexForIframe: string
 }
 
+/** Bounded operator-facing summary of how the server built and sent the AARQ HDLC leg. */
+export type OutboundAssociationHdlcDiagPublic = {
+  uaNegotiatedParseSource: string
+  uaNegotiatedMaxInfoTX: number
+  uaNegotiatedMaxInfoRX: number
+  uaNegotiatedWindowSizeTX: number
+  uaNegotiatedWindowSizeRX: number
+  uaInformationFieldHexCapped: string | null
+  uaNegotiatedParseNote: string
+  aarqInitiateProfileLabel: string
+  aarqInitiateMaxPduSize: number
+  aarqInitiateProposedConformanceHex: string
+  aarqHdlcSegmentCount: number
+  aarqHdlcMultiSegment: boolean
+  aarqHdlcMaxInfoTXUsed: number
+  aarqHdlcControlsHex: string[]
+  aarqHdlcFormatBytesHex: string[]
+  aarqHdlcLengthBytes: number[]
+  aarqHdlcPayloadBytesPerSegment: number[]
+  hdlcIframeBuilderId: string
+  /** One-line pointer to Gurux sources of truth. */
+  guruxReferenceNote: string
+}
+
 /** Bounded last-session protocol evidence for operator debugging (no secrets). */
 export type IngressProtocolTracePublic = {
   startedAtIso: string | null
@@ -117,6 +141,11 @@ export type IngressProtocolTracePublic = {
   lastAareHuntReport: IngressAareHuntReportPublic | null
   /** Payload breakdown for the last transmitted AARQ I-frame (may embed password in AC TLV hex). */
   lastOutboundAarqDiagnostic: IngressOutboundAarqDiagPublic | null
+  /**
+   * HDLC association outbound path: UA-negotiated sizes, AARQ initiate profile, Gurux-style
+   * segmentation (`getHdlcFrame` / `getLnMessages` behaviour).
+   */
+  lastOutboundAssociationHdlcDiagnostic: OutboundAssociationHdlcDiagPublic | null
 }
 
 export type MeterIngressConfig = {

@@ -1,12 +1,17 @@
 import type net from "node:net"
 
 import { classifyInboundPreview } from "@/lib/runtime/ingress/classify"
-import type { InboundMeterProtocolProfile } from "@/lib/runtime/ingress/inbound-profile"
+import {
+  inboundAarqInitiateSnapshot,
+  inboundAarqInitiateWireOptions,
+  type InboundMeterProtocolProfile,
+} from "@/lib/runtime/ingress/inbound-profile"
 import { flushIngressTraceToFile } from "@/lib/runtime/ingress/protocol-trace-file"
 import {
   traceAareHuntStep,
   traceMeterAccumSnapshot,
   traceOutboundAarqDiagnostic,
+  traceOutboundAssociationHdlcDiagnostic,
   traceOutboundFrame,
   traceProtocolStep,
 } from "@/lib/runtime/ingress/protocol-trace"
@@ -33,15 +38,20 @@ import {
 import {
   enumerateAllValidHdlcParses,
   findFirstStrictSnrmVariant,
+  findFirstStrictUaFrameBytes,
   findFirstStrictUaVariant,
   hasStrictUaFrame,
 } from "@/lib/runtime/real/hdlc-frame-inspect"
+import { createClientHdlcIframeState } from "@/lib/runtime/real/hdlc-client-sequence"
+import {
+  buildGuruxStyleClientHdlcIFrames,
+  nextClientIframeControlAfterSegments,
+} from "@/lib/runtime/real/hdlc-gurux-iframe"
+import { parseNegotiatedHdlcFromUaFrame } from "@/lib/runtime/real/hdlc-ua-negotiated"
 import {
   buildHdlcIFrame,
   buildHdlcUFrame,
   HDLC_DISC,
-  HDLC_I_FRAME_FIRST,
-  HDLC_I_FRAME_SECOND,
   HDLC_SNRM,
   HDLC_UA,
   splitHdlcFrames,
@@ -210,10 +220,52 @@ export async function runInboundDlmsOnSocket(
       )
     }
 
-    const aarq =
+    const uaFrameBytes = findFirstStrictUaFrameBytes(accum)
+    const negotiated = uaFrameBytes
+      ? parseNegotiatedHdlcFromUaFrame(uaFrameBytes)
+      : parseNegotiatedHdlcFromUaFrame(new Uint8Array(0))
+
+    const hdlcSeq = createClientHdlcIframeState()
+
+    const aarqPayload =
       profile.auth === "LOW" && profile.password
-        ? buildAarqLlsLnPayload(profile.password)
+        ? buildAarqLlsLnPayload(
+            profile.password,
+            inboundAarqInitiateWireOptions(profile.aarqInitiate)
+          )
         : buildAarqPayload()
+
+    const { frames: aarqFrames, diag: aarqHdlcDiag } = buildGuruxStyleClientHdlcIFrames({
+      serverAddress: meter,
+      clientAddress: client,
+      payload: aarqPayload,
+      maxInfoTX: negotiated.maxInfoTX,
+      seq: hdlcSeq,
+    })
+
+    traceOutboundAssociationHdlcDiagnostic({
+      uaNegotiatedParseSource: negotiated.parseSource,
+      uaNegotiatedMaxInfoTX: negotiated.maxInfoTX,
+      uaNegotiatedMaxInfoRX: negotiated.maxInfoRX,
+      uaNegotiatedWindowSizeTX: negotiated.windowSizeTX,
+      uaNegotiatedWindowSizeRX: negotiated.windowSizeRX,
+      uaInformationFieldHexCapped: negotiated.uaInformationFieldHexCapped,
+      uaNegotiatedParseNote: negotiated.parseNote,
+      aarqInitiateProfileLabel: profile.aarqInitiate.profileLabel,
+      aarqInitiateMaxPduSize: profile.aarqInitiate.maxPduSize,
+      aarqInitiateProposedConformanceHex:
+        profile.aarqInitiate.proposedConformance24.toString(16),
+      aarqHdlcSegmentCount: aarqHdlcDiag.segmentCount,
+      aarqHdlcMultiSegment: aarqHdlcDiag.multiSegment,
+      aarqHdlcMaxInfoTXUsed: aarqHdlcDiag.maxInfoTXInput,
+      aarqHdlcControlsHex: aarqHdlcDiag.controlsHex,
+      aarqHdlcFormatBytesHex: aarqHdlcDiag.formatBytesHex,
+      aarqHdlcLengthBytes: aarqHdlcDiag.lengthBytes,
+      aarqHdlcPayloadBytesPerSegment: aarqHdlcDiag.payloadBytesPerSegment,
+      hdlcIframeBuilderId: aarqHdlcDiag.builderId,
+      guruxReferenceNote:
+        "Gurux_GXDLMS.getLnMessages+getHdlcFrame;_GXDLMS.parseSnrmUaResponse_updates_hdlc.maxInfoTX",
+    })
 
     setInboundProtocolPhase("aarq_sent", "")
     setInboundAssociationOutcome({
@@ -231,7 +283,14 @@ export async function runInboundDlmsOnSocket(
       configuredPasswordSourceLabel:
         profile.auth === "LOW" ? "RUNTIME_INGRESS_DLMS_PASSWORD" : "N_A_AUTH_NOT_LOW",
     }
-    const aarqDiag = describeOutboundAarqPayload(aarq, aarqBuilder, aarqPasswordCtx)
+    const initiateSnapshot =
+      profile.auth === "LOW" ? inboundAarqInitiateSnapshot(profile.aarqInitiate) : undefined
+    const aarqDiag = describeOutboundAarqPayload(
+      aarqPayload,
+      aarqBuilder,
+      aarqPasswordCtx,
+      initiateSnapshot
+    )
     traceOutboundAarqDiagnostic({
       ...aarqDiag,
       meterAddressHexForIframe: meter.toString("hex"),
@@ -239,9 +298,11 @@ export async function runInboundDlmsOnSocket(
     })
     traceProtocolStep(
       "aarq_iframe_sent",
-      `builder=${aarqBuilder}_meter=${meter.toString("hex")}_client=${client.toString("hex")}_llc_ref_ok=${String(aarqDiag.llcMatchesReference)}_gurux_aarq_ref_match=${String(aarqDiag.cosemAarqApduMatchesGuruxReference)}_aarq_gurux_diff=${aarqDiag.aarqGuruxDiffSummary}_pwd_tx_len=${aarqDiag.transmittedPasswordUtf8ByteLength ?? "n/a"}_pwd_cfg_match_octets=${String(aarqDiag.configuredUtf8BytesMatchTransmittedOctets)}_pwd_note=${aarqDiag.passwordComparisonNote}`
+      `builder=${aarqBuilder}_segs=${aarqFrames.length}_maxInfoTX=${negotiated.maxInfoTX}_ua_parse=${negotiated.parseSource}_init_profile=${profile.aarqInitiate.profileLabel}_meter=${meter.toString("hex")}_client=${client.toString("hex")}_llc_ref_ok=${String(aarqDiag.llcMatchesReference)}_gurux_aarq_ref_match=${String(aarqDiag.cosemAarqApduMatchesGuruxReference)}_aarq_gurux_diff=${aarqDiag.aarqGuruxDiffSummary}_pwd_tx_len=${aarqDiag.transmittedPasswordUtf8ByteLength ?? "n/a"}_pwd_cfg_match_octets=${String(aarqDiag.configuredUtf8BytesMatchTransmittedOctets)}_pwd_note=${aarqDiag.passwordComparisonNote}`
     )
-    await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq), "aarq_iframe")
+    for (let seg = 0; seg < aarqFrames.length; seg++) {
+      await writeMeter(socket, aarqFrames[seg]!, `aarq_iframe_seg_${seg}`)
+    }
     accum = await extendAccum(socket, accum, profile, "after_aarq")
     traceAareHuntStep("after_aarq", accum, postAarqRxBoundary, postAarqRxBoundary)
 
@@ -341,7 +402,12 @@ export async function runInboundDlmsOnSocket(
       valueHex: null,
     })
 
-    await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_SECOND, getPdu), "identity_get")
+    const identityCtrl = nextClientIframeControlAfterSegments(hdlcSeq)
+    await writeMeter(
+      socket,
+      buildHdlcIFrame(meter, client, identityCtrl, getPdu),
+      "identity_get"
+    )
     accum = await extendAccum(socket, accum, profile, "after_identity_get")
 
     let getHit = findGetResponse(accum)

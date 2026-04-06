@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 import {
   buildGuruxStyleLowLnCosemAarqApdu,
   GURUX_INITIAL_LN_PROPOSED_CONFORMANCE,
+  type AarqInitiateWireOptions,
 } from "@/lib/runtime/real/dlms-aarq-lls"
 import { LLC_SEND } from "@/lib/runtime/real/dlms-apdu"
 
@@ -70,8 +71,19 @@ export type OutboundAarqPayloadDiag = {
   aarqGuruxDiffSummary: string
   /** Short note on what UA parsing changes in Gurux (HDLC only for AARQ body). */
   guruxUaParseEffectNote: string
+  /** Initiate-request shaping for LOW AARQ (`RUNTIME_INGRESS_DLMS_AARQ_*`); null when builder is not LOW. */
+  aarqInitiateProfileLabel: string | null
+  aarqInitiateMaxPduSize: number | null
+  aarqInitiateProposedConformanceHex: string | null
   /** Reminder that this diagnostic can embed secrets. */
   secretsExposureNote: string
+}
+
+/** Snapshot of env-driven initiate options (mirrors `InboundAarqInitiateProfile`). */
+export type OutboundAarqInitiateSnapshot = {
+  profileLabel: string
+  maxPduSize: number
+  proposedConformance24: number
 }
 
 type ExtractedAuth = {
@@ -225,11 +237,12 @@ function comparePasswords(
   }
 }
 
-/** Describe LLC + AARQ bytes (payload of `buildHdlcIFrame`). */
+/** Describe LLC + AARQ bytes (logical LLC+APDU inside the HDLC information field). */
 export function describeOutboundAarqPayload(
   llcPlusApdu: Uint8Array,
   builder: AarqBuilderKind,
-  passwordCtx?: OutboundAarqPasswordContext
+  passwordCtx?: OutboundAarqPasswordContext,
+  initiateSnapshot?: OutboundAarqInitiateSnapshot
 ): OutboundAarqPayloadDiag {
   const expectedLlcSendHex = Buffer.from(LLC_SEND).toString("hex")
   const llcHex = Buffer.from(llcPlusApdu.subarray(0, Math.min(3, llcPlusApdu.length))).toString("hex")
@@ -245,18 +258,35 @@ export function describeOutboundAarqPayload(
   let cosemAarqApduMatchesGuruxReference: boolean | null = null
   let aarqGuruxDiffSummary = "n_a"
   let guruxUaParseEffectNote =
-    "Gurux_parseUAResponse_updates_hdlc_maxInfo_window_only;_AARQ_body_from_generateAarq_is_unaffected_by_UA_info_field."
+    "Gurux_parseUAResponse_updates_hdlc_maxInfo_window;_getHdlcFrame_segments_by_maxInfoTX;_getLnMessages_emits_one_or_more_frames."
+
+  let aarqInitiateProfileLabel: string | null = null
+  let aarqInitiateMaxPduSize: number | null = null
+  let aarqInitiateProposedConformanceHex: string | null = null
 
   if (builder === "LOW_LLS_LN") {
     const pwd =
       passwordCtx?.configuredPasswordUtf8 ?? auth.passwordWireAsUtf8 ?? ""
-    const ref = buildGuruxStyleLowLnCosemAarqApdu(pwd)
+    const wire: AarqInitiateWireOptions | undefined = initiateSnapshot
+      ? {
+          maxPduSize: initiateSnapshot.maxPduSize,
+          proposedConformance24: initiateSnapshot.proposedConformance24,
+        }
+      : undefined
+    const ref = buildGuruxStyleLowLnCosemAarqApdu(pwd, wire)
     guruxReferenceCosemAarqApduHex = Buffer.from(ref).toString("hex")
     cosemAarqApduMatchesGuruxReference = Buffer.from(rest).equals(Buffer.from(ref))
     aarqGuruxDiffSummary = cosemAarqApduMatchesGuruxReference
       ? "match"
       : summarizeBinaryDiff(rest, ref)
-    guruxUaParseEffectNote = `Same_as_note_above_conformance_ref_0x${GURUX_INITIAL_LN_PROPOSED_CONFORMANCE.toString(16)}_maxpdu_ffff_dlmsver_6`
+    const confHex = (
+      initiateSnapshot?.proposedConformance24 ?? GURUX_INITIAL_LN_PROPOSED_CONFORMANCE
+    ).toString(16)
+    const maxPdu = initiateSnapshot?.maxPduSize ?? 0xffff
+    aarqInitiateProfileLabel = initiateSnapshot?.profileLabel ?? "gurux_default"
+    aarqInitiateMaxPduSize = maxPdu
+    aarqInitiateProposedConformanceHex = confHex
+    guruxUaParseEffectNote = `Initiate_conformance_0x${confHex}_maxpdu_${maxPdu}_dlmsver_6;_HDLC_segmentation_uses_UA_negotiated_maxInfoTX_in_ingress_runtime.`
   }
 
   return {
@@ -284,6 +314,9 @@ export function describeOutboundAarqPayload(
     cosemAarqApduMatchesGuruxReference,
     aarqGuruxDiffSummary,
     guruxUaParseEffectNote,
+    aarqInitiateProfileLabel,
+    aarqInitiateMaxPduSize,
+    aarqInitiateProposedConformanceHex,
     secretsExposureNote:
       "Ingress trace may include plaintext LLS password and AC hex; verify only on controlled hosts. UI-entered passwords elsewhere are not this runtime secret unless they equal RUNTIME_INGRESS_DLMS_PASSWORD.",
   }

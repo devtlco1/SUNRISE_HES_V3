@@ -1,6 +1,73 @@
 import { encodeHdlcAddress1Byte } from "@/lib/runtime/real/hdlc-address"
+import type { OutboundAarqInitiateSnapshot } from "@/lib/runtime/real/dlms-aarq-diag"
+import {
+  GURUX_INITIAL_LN_PROPOSED_CONFORMANCE,
+  type AarqInitiateWireOptions,
+} from "@/lib/runtime/real/dlms-aarq-lls"
 
 export type InboundDlmsAuthMode = "LOW" | "NONE"
+
+/** Env-driven xDLMS InitiateRequest fields inside AARQ user-information (LOW path). */
+export type InboundAarqInitiateProfile = {
+  profileLabel: "gurux_default" | "conservative" | "custom_env"
+  maxPduSize: number
+  proposedConformance24: number
+}
+
+function defaultAarqInitiateProfile(): InboundAarqInitiateProfile {
+  return {
+    profileLabel: "gurux_default",
+    maxPduSize: 0xffff,
+    proposedConformance24: GURUX_INITIAL_LN_PROPOSED_CONFORMANCE,
+  }
+}
+
+function loadInboundAarqInitiateProfile(): InboundAarqInitiateProfile {
+  const conservative =
+    process.env.RUNTIME_INGRESS_DLMS_AARQ_PROFILE?.trim().toLowerCase() === "conservative"
+  let profileLabel: InboundAarqInitiateProfile["profileLabel"] = "gurux_default"
+  let maxPdu = 0xffff
+  let conf = GURUX_INITIAL_LN_PROPOSED_CONFORMANCE
+
+  if (conservative) {
+    profileLabel = "conservative"
+    maxPdu = 1024
+    conf = 0x80_000
+  }
+
+  const confHex = process.env.RUNTIME_INGRESS_DLMS_AARQ_CONFORMANCE_HEX?.trim()
+  if (confHex && /^[0-9a-fA-F]{6}$/.test(confHex)) {
+    profileLabel = "custom_env"
+    conf = Number.parseInt(confHex, 16) & 0xffffff
+  }
+
+  const maxPduRaw = process.env.RUNTIME_INGRESS_DLMS_AARQ_MAX_PDU?.trim()
+  if (maxPduRaw && maxPduRaw.length > 0) {
+    const n = Number.parseInt(maxPduRaw, 10)
+    if (Number.isFinite(n)) {
+      profileLabel = "custom_env"
+      maxPdu = Math.max(64, Math.min(n, 0xffff))
+    }
+  }
+
+  return { profileLabel, maxPduSize: maxPdu, proposedConformance24: conf }
+}
+
+/** Map profile → `buildAarqLlsLnPayload` / initiate builder options. */
+export function inboundAarqInitiateWireOptions(p: InboundAarqInitiateProfile): AarqInitiateWireOptions {
+  return {
+    maxPduSize: p.maxPduSize,
+    proposedConformance24: p.proposedConformance24,
+  }
+}
+
+export function inboundAarqInitiateSnapshot(p: InboundAarqInitiateProfile): OutboundAarqInitiateSnapshot {
+  return {
+    profileLabel: p.profileLabel,
+    maxPduSize: p.maxPduSize,
+    proposedConformance24: p.proposedConformance24,
+  }
+}
 
 /**
  * Non-secret baseline for MVP-AMI–style meters. Override any field via env on the VPS.
@@ -75,6 +142,7 @@ export type InboundMeterProtocolProfile = {
   identityObis: string
   identityClassId: number
   identityAttributeId: number
+  aarqInitiate: InboundAarqInitiateProfile
 }
 
 function parseHexOrNull(hex: string | undefined): Buffer | null {
@@ -108,6 +176,11 @@ export function loadInboundMeterProtocolProfile(): InboundMeterProtocolProfile {
   const auth: InboundDlmsAuthMode = authRaw === "NONE" ? "NONE" : "LOW"
 
   /**
+   * Optional AARQ xDLMS InitiateRequest shaping (LOW path only on the wire):
+   * - `RUNTIME_INGRESS_DLMS_AARQ_PROFILE=conservative` → max PDU 1024, conformance GET-only (`0x80000`).
+   * - `RUNTIME_INGRESS_DLMS_AARQ_MAX_PDU` / `RUNTIME_INGRESS_DLMS_AARQ_CONFORMANCE_HEX` (6 hex digits) override.
+   * See `lastOutboundAssociationHdlcDiagnostic` + `lastOutboundAarqDiagnostic` on the ingress trace.
+   *
    * LLS secret for ingress DLMS only. Source of truth is this env var at process start — not any
    * UI form or DB profile from other HES surfaces. Confirm on-wire bytes via
    * `status.inboundProtocolTrace.lastOutboundAarqDiagnostic` on a controlled host.
@@ -138,6 +211,7 @@ export function loadInboundMeterProtocolProfile(): InboundMeterProtocolProfile {
       identityObis: VENDOR_BASELINE.identityObis,
       identityClassId: VENDOR_BASELINE.identityClassId,
       identityAttributeId: VENDOR_BASELINE.identityAttributeId,
+      aarqInitiate: defaultAarqInitiateProfile(),
     }
   }
 
@@ -167,6 +241,7 @@ export function loadInboundMeterProtocolProfile(): InboundMeterProtocolProfile {
       identityObis: "",
       identityClassId: 0,
       identityAttributeId: 0,
+      aarqInitiate: defaultAarqInitiateProfile(),
     }
   }
 
@@ -197,6 +272,7 @@ export function loadInboundMeterProtocolProfile(): InboundMeterProtocolProfile {
       identityObis: "",
       identityClassId: 0,
       identityAttributeId: 0,
+      aarqInitiate: defaultAarqInitiateProfile(),
     }
   }
 
@@ -263,6 +339,8 @@ export function loadInboundMeterProtocolProfile(): InboundMeterProtocolProfile {
     VENDOR_BASELINE.identityAttributeId
   )
 
+  const aarqInitiate = loadInboundAarqInitiateProfile()
+
   return {
     valid: true,
     configError: null,
@@ -284,5 +362,6 @@ export function loadInboundMeterProtocolProfile(): InboundMeterProtocolProfile {
     identityObis,
     identityClassId,
     identityAttributeId,
+    aarqInitiate,
   }
 }

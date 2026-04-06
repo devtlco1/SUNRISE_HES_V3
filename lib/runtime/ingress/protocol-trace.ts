@@ -2,6 +2,7 @@ import type {
   IngressAareHuntReportPublic,
   IngressOutboundAarqDiagPublic,
   IngressProtocolTracePublic,
+  OutboundAssociationHdlcDiagPublic,
 } from "@/lib/runtime/ingress/types"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
 import { buildAareSearchReport } from "@/lib/runtime/real/dlms-aare-hunt"
@@ -38,6 +39,7 @@ export function emptyIngressProtocolTrace(): IngressProtocolTracePublic {
     aarqAareSteps: [],
     lastAareHuntReport: null,
     lastOutboundAarqDiagnostic: null,
+    lastOutboundAssociationHdlcDiagnostic: null,
   }
 }
 
@@ -117,6 +119,10 @@ export function traceAareHuntStep(
 
 export function traceOutboundAarqDiagnostic(diag: IngressOutboundAarqDiagPublic): void {
   trace().lastOutboundAarqDiagnostic = diag
+}
+
+export function traceOutboundAssociationHdlcDiagnostic(diag: OutboundAssociationHdlcDiagPublic): void {
+  trace().lastOutboundAssociationHdlcDiagnostic = diag
 }
 
 export function traceOutboundFrame(phase: string, data: Buffer): void {

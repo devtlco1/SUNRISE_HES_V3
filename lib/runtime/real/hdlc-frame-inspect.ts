@@ -281,4 +281,16 @@ export function findFirstStrictUaVariant(buffer: Uint8Array): HdlcParseVariant |
   return null
 }
 
+/** First complete 7E…7E UA frame in `buffer` with strict FCS-valid parse, or null. */
+export function findFirstStrictUaFrameBytes(buffer: Uint8Array): Uint8Array | null {
+  for (const raw of splitHdlcFrames(buffer)) {
+    const ea = parseHdlcFrameGuruxEa(raw)
+    if (ea && ea.parsed.control === HDLC_UA) return raw
+    for (const v of enumerateValidHdlcParses(raw)) {
+      if (v.parsed.control === HDLC_UA) return raw
+    }
+  }
+  return null
+}
+
 export type { GuruxEaFrameDiagnostics }

@@ -69,14 +69,23 @@ export function buildGuruxStyleUserInformationBe(initiateOctets: Uint8Array): Ui
  * COSEM AARQ APDU (tag 60…) for LN + LOW auth, matching Gurux `_GXAPDU.generateAarq` field order:
  * application context → ACSE sender requirements + mechanism + calling authentication → user-information (initiate).
  */
-export function buildGuruxStyleLowLnCosemAarqApdu(passwordAscii: string): Uint8Array {
+export type AarqInitiateWireOptions = {
+  proposedConformance24?: number
+  maxPduSize?: number
+  dlmsVersion?: number
+}
+
+export function buildGuruxStyleLowLnCosemAarqApdu(
+  passwordAscii: string,
+  initiate?: AarqInitiateWireOptions
+): Uint8Array {
   const pwd = Buffer.from(passwordAscii, "utf8")
   const acBlock = Buffer.concat([
     Buffer.from([0xac, pwd.length + 2, 0x80, pwd.length]),
     pwd,
   ])
-  const initiate = buildGuruxStyleInitiateRequestOctets()
-  const userInfo = buildGuruxStyleUserInformationBe(initiate)
+  const initiateOctets = buildGuruxStyleInitiateRequestOctets(initiate)
+  const userInfo = buildGuruxStyleUserInformationBe(initiateOctets)
   const inner = Buffer.concat([
     Buffer.from([
       0xa1, 0x09, 0x06, 0x07, 0x60, 0x85, 0x74, 0x05, 0x08, 0x01, 0x01,
@@ -94,8 +103,11 @@ export function buildGuruxStyleLowLnCosemAarqApdu(passwordAscii: string): Uint8A
 /**
  * LLC `e6e600` + Gurux-shaped LOW-auth LN AARQ (MVP-AMI `aarqRequest()` / `getLnMessages` payload body).
  */
-export function buildAarqLlsLnPayload(passwordAscii: string): Uint8Array {
-  const aarq = buildGuruxStyleLowLnCosemAarqApdu(passwordAscii)
+export function buildAarqLlsLnPayload(
+  passwordAscii: string,
+  initiate?: AarqInitiateWireOptions
+): Uint8Array {
+  const aarq = buildGuruxStyleLowLnCosemAarqApdu(passwordAscii, initiate)
   const out = new Uint8Array(LLC_SEND.length + aarq.length)
   out.set(LLC_SEND, 0)
   out.set(aarq, LLC_SEND.length)
