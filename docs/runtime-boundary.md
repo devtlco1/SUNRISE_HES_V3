@@ -10,21 +10,23 @@ It exists **before** any verified live DLMS/COSEM transport so that:
 - UI and aggregation code do not need to be rewritten when a real adapter is introduced.
 - All current behavior is explicitly **simulated** and traceable to `data/runtime-simulator.json`.
 
-## Current status (pre-hardware)
+## Current status (pre-verified DLMS)
 
-- **No** verified on-air meter communication, **no** sockets, **no** Gurux/DLMS execution in this repository path.
-- **Default adapter:** **`StubRuntimeAdapter`** via `lib/runtime/runtime-factory.ts` when `RUNTIME_ADAPTER` is unset or `stub`.
-- **Stub:** successful paths return **`simulated: true`** and messages that state outcomes are **simulator-backed** (`data/runtime-simulator.json`).
-- **Real adapter skeleton:** `lib/runtime/real-runtime-adapter.ts` implements the same interface but returns **`ok: false`**, **`simulated: false`**, and **`REAL_ADAPTER_NOT_WIRED`** — explicitly **not** live hardware.
+- **No** verified DLMS/COSEM **on-wire proof** in this repository (`verifiedOnWire` remains **false** everywhere today).
+- **Default adapter:** **`StubRuntimeAdapter`** when `RUNTIME_ADAPTER` is unset or `stub`.
+- **Stub:** **`simulated: true`**, **`diagnostics.outcome: simulated_success`**, **`verifiedOnWire: false`**; data from **`data/runtime-simulator.json`**.
+- **Real adapter (`RealRuntimeAdapter`):** modular code under **`lib/runtime/real/`**.
+  - **Probe:** optional **TCP** connect to **`RUNTIME_PROBE_HOST`** + **`RUNTIME_PROBE_PORT`** (opt-in). Success ⇒ **`ok: true`**, **`diagnostics.outcome: transport_reachable_unverified`**, **`verifiedOnWire: false`** — **not** a meter or DLMS confirmation. If env unset ⇒ **`not_attempted`**. TCP failure ⇒ **`attempted_failed`**.
+  - **Associate / identity / clock / registers / relay:** **`not_implemented`** envelopes with stable **`error.code`** values (no COSEM, no relay hardware).
 
-Relay disconnect/reconnect (stub) return **simulated acceptance** only; they **do not** imply a physical relay change. The skeleton relay methods return the same **not-wired** envelope as other operations.
+Relay (stub) remains **simulated acceptance** only. Real relay methods return **`not_implemented`**.
 
 ## Adapter selection
 
 Environment variable **`RUNTIME_ADAPTER`**:
 
 - **`stub`** or unset → `StubRuntimeAdapter`.
-- **`real`** or **`dlms`** → `RealRuntimeAdapter` (skeleton; **no** transport).
+- **`real`** or **`dlms`** → `RealRuntimeAdapter` (staged; optional TCP probe only; **no** DLMS).
 - **Unknown value** → fallback to stub + server warning; see **`GET /api/runtime/status`** for `configuredMode: "unknown"`.
 
 ## Developer harness
@@ -62,26 +64,31 @@ Invalid JSON or body shape → **400** with `{ error, message? }`. Unexpected se
 
 Responses follow `RuntimeResponseEnvelope` in `types/runtime.ts`:
 
-- `ok` — stub success paths use `true`; the real **skeleton** uses `false` for every operation until transport exists.
-- `simulated` — **`true`** on stub simulator outcomes; **`false`** on the skeleton (means “not stub,” **not** “verified hardware”).
+- `ok` — stub success paths use `true`; real adapter uses `true` only for **TCP probe success** (still not DLMS-verified); otherwise `false` for not-implemented / failed probe.
+- `simulated` — **`true`** on stub; **`false`** on real path (means “not stub,” **not** “verified hardware”).
 - `operation` — discriminant matching the logical operation name.
 - `meterId` — echoed target identifier.
 - `startedAt` / `finishedAt` — ISO-8601 timestamps.
 - `durationMs` — elapsed wall time for the handler (stub includes a small bounded delay for realism).
-- `message` — human-readable, **non-deceptive** description (simulator wording).
-- `transportState` / `associationState` — high-level state hints for UI/diagnostics (stub uses consistent simulated values).
-- `payload` — operation-specific data (`ProbeConnectionPayload`, `IdentityPayload`, etc.).
-- `error` — optional structured error; reserved for future real adapters and failure paths.
+- `message` — human-readable, **non-deceptive** description.
+- `transportState` / `associationState` — high-level hints (real TCP probe success may use `transportState: connected` without association).
+- `payload` — operation-specific data; probe includes **`probeKind`**: `simulator` | `tcp_socket` | `none`.
+- `error` — structured error when `ok: false` (stable `code` values on the real adapter).
+- **`diagnostics`** (optional but set by current adapters) — **`RuntimeExecutionDiagnostics`**: `outcome`, `capabilityStage`, `transportAttempted`, `associationAttempted`, **`verifiedOnWire`**, optional `detailCode`. Use this for staging and the dev harness.
 
 Types are mirrored in `lib/runtime/contracts.ts` (including the simulator file shape) and the adapter interface in `lib/runtime/runtime-adapter.ts`.
 
 ## What must change for real DLMS integration
 
-1. Implement transport and COSEM logic (e.g. HDLC, application association, reads) **inside** `RealRuntimeAdapter` or a dedicated module it calls — replace the skeleton `not-wired` returns with real outcomes.
-2. On **verified** on-wire success, return **`ok: true`**, **`simulated: false`**, and populate **`payload`**. Use **`simulated: true`** only for deliberate lab/dry-run modes if needed.
-3. Extend envelopes with real **`error`** codes (timeouts, NACK, security rejections) without breaking existing fields.
-4. Keep **`getRuntimeAdapter()`** selecting **`real`** when `RUNTIME_ADAPTER=real` (or introduce additional modes if required).
+1. Extend **`lib/runtime/real/`** (e.g. HDLC, `association-stage.ts`, `cosem-reads-stage.ts`) — replace **`not_implemented`** returns with real protocol flows.
+2. When the stack can **prove** a COSEM/DLMS result, set **`diagnostics.verifiedOnWire: true`**, **`diagnostics.outcome: verified_on_wire_success`**, and populate **`payload`** with meter-sourced data. Until then, keep **`verifiedOnWire: false`**.
+3. Keep **`error`** / **`detailCode`** stable and specific (timeouts, NACK, security rejections).
+4. Relay: implement only after reads and policy gates; update **`relay-stage.ts`** last.
 5. Keep **HTTP route handlers thin** — validate input, call the adapter, return JSON.
+
+## Next milestone after TCP probe
+
+Implement **DLMS application association** in the real path (e.g. AARQ/AARE or stack wrapper), then **read identity** as the first COSEM read — still updating **`verifiedOnWire`** only when the implementation can honestly assert on-wire verification.
 
 Do **not** couple DLMS types to React components; keep protocol details inside the adapter implementation.
 
@@ -100,7 +107,8 @@ Do **not** couple DLMS types to React components; keep protocol details inside t
 - `lib/runtime/contracts.ts` — request validation, simulator JSON typing.
 - `lib/runtime/runtime-adapter.ts` — adapter interface.
 - `lib/runtime/stub-runtime-adapter.ts` — deterministic stub.
-- `lib/runtime/real-runtime-adapter.ts` — skeleton (not-wired) implementation.
+- `lib/runtime/real-runtime-adapter.ts` — real adapter façade (delegates to `lib/runtime/real/*`).
+- `lib/runtime/real/` — transport config, TCP probe, probe/association/COSEM/relay **stages**, envelope helpers.
 - `lib/runtime/adapter-mode.ts` — env parsing and status DTO for `GET /api/runtime/status`.
 - `lib/runtime/runtime-factory.ts` — adapter resolution.
 - `lib/runtime/post-action.ts` — shared POST wiring for API routes.

@@ -1,6 +1,8 @@
 import { getRuntimeAdapterPublicStatus } from "@/lib/runtime/adapter-mode"
 import { NextResponse } from "next/server"
 
+export const runtime = "nodejs"
+
 export const dynamic = "force-dynamic"
 
 /**

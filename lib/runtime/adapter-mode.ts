@@ -52,15 +52,20 @@ export function getRuntimeAdapterPublicStatus(): RuntimeAdapterPublicStatus {
   }
 
   if (parsed.kind === "real") {
+    const probeConfigured =
+      (process.env.RUNTIME_PROBE_HOST?.trim() ?? "") !== "" &&
+      (process.env.RUNTIME_PROBE_PORT?.trim() ?? "") !== ""
+    const probeLine = probeConfigured
+      ? "RUNTIME_PROBE_* is set: probe may perform TCP reachability only (diagnostics.outcome may be transport_reachable_unverified; never verifiedOnWire)."
+      : "RUNTIME_PROBE_HOST/PORT unset: probe returns not_attempted (PROBE_TARGET_NOT_CONFIGURED). Association/reads/relay remain not_implemented."
     return {
       configuredMode: "real",
       effectiveAdapter: "real",
       simulatedResponses: false,
       envValue: envDisplay,
-      summary:
-        "Real adapter skeleton: no DLMS transport — every operation returns ok: false and REAL_ADAPTER_NOT_WIRED (not hardware).",
+      summary: `Real adapter (staged): ${probeLine} No DLMS/COSEM execution in this repo revision.`,
       warning:
-        "Placeholder only. Responses are not meter communication; restart with RUNTIME_ADAPTER=stub for simulated success paths.",
+        "Not verified smart-meter communication. Use diagnostics on each response; restart with RUNTIME_ADAPTER=stub for full simulator success paths.",
     }
   }
 

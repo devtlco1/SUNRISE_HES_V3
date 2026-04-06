@@ -18,6 +18,7 @@ import type {
   RelayDisconnectRequest,
   RelayReconnectRequest,
   RelaySimulatedPayload,
+  RuntimeExecutionDiagnostics,
   RuntimeOperation,
   RuntimeResponseEnvelope,
 } from "@/types/runtime"
@@ -61,13 +62,29 @@ async function delayMs(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms))
 }
 
+function stubDiagnostics(
+  capabilityStage: RuntimeExecutionDiagnostics["capabilityStage"],
+  transportAttempted: boolean,
+  associationAttempted: boolean
+): RuntimeExecutionDiagnostics {
+  return {
+    outcome: "simulated_success",
+    capabilityStage,
+    transportAttempted,
+    associationAttempted,
+    verifiedOnWire: false,
+    detailCode: "STUB_SIMULATOR",
+  }
+}
+
 function envelope<T>(
   operation: RuntimeOperation,
   meterId: string,
   startedAt: Date,
   finishedAt: Date,
   message: string,
-  payload: T
+  payload: T,
+  diagnostics: RuntimeExecutionDiagnostics
 ): RuntimeResponseEnvelope<T> {
   const durationMs = finishedAt.getTime() - startedAt.getTime()
   return {
@@ -82,6 +99,7 @@ function envelope<T>(
     transportState: "connected",
     associationState: "associated",
     payload,
+    diagnostics,
   }
 }
 
@@ -101,6 +119,7 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       reachable: true,
       latencyMsSimulated: d,
       protocolStackHint: SIM_DATA.profile.protocolStackHint,
+      probeKind: "simulator",
     }
     return envelope(
       "probeConnection",
@@ -108,7 +127,8 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       startedAt,
       finishedAt,
       "Simulated probe: target is reachable in the HES runtime stub only (no live transport).",
-      payload
+      payload,
+      stubDiagnostics("transport_probe", true, false)
     )
   }
 
@@ -130,7 +150,8 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       startedAt,
       finishedAt,
       "Simulated association: logical link modeled in software only (not a verified DLMS association).",
-      payload
+      payload,
+      stubDiagnostics("dlms_association", true, true)
     )
   }
 
@@ -162,7 +183,8 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       startedAt,
       finishedAt,
       "Simulated identity read: values come from the runtime simulator dataset, not an on-air meter interrogation.",
-      payload
+      payload,
+      stubDiagnostics("cosem_read", true, true)
     )
   }
 
@@ -190,7 +212,8 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       startedAt,
       finishedAt,
       "Simulated clock read: timestamp is from simulator configuration (not synchronized with field hardware).",
-      payload
+      payload,
+      stubDiagnostics("cosem_read", true, true)
     )
   }
 
@@ -210,7 +233,8 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       startedAt,
       finishedAt,
       "Simulated register snapshot: OBIS keys and values are fixture-backed for contract testing only.",
-      payload
+      payload,
+      stubDiagnostics("cosem_read", true, true)
     )
   }
 
@@ -232,7 +256,8 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       startedAt,
       finishedAt,
       "Simulated relay disconnect workflow completed in software only (no execution on meter hardware).",
-      payload
+      payload,
+      stubDiagnostics("relay_control", true, true)
     )
   }
 
@@ -254,7 +279,8 @@ export class StubRuntimeAdapter implements SmartMeterRuntimeAdapter {
       startedAt,
       finishedAt,
       "Simulated relay reconnect workflow completed in software only (no execution on meter hardware).",
-      payload
+      payload,
+      stubDiagnostics("relay_control", true, true)
     )
   }
 }

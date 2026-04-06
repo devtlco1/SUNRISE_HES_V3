@@ -123,9 +123,15 @@ export function DevRuntimeHarnessClient() {
         </h1>
         <p className="text-muted-foreground">
           Calls internal POST <code className="text-foreground">/api/runtime/*</code>{" "}
-          routes. Stub mode returns <code className="text-foreground">simulated: true</code>
-          ; real skeleton returns <code className="text-foreground">ok: false</code> with{" "}
-          <code className="text-foreground">REAL_ADAPTER_NOT_WIRED</code>.
+          routes. Stub: <code className="text-foreground">simulated: true</code>,{" "}
+          <code className="text-foreground">diagnostics.outcome: simulated_success</code>
+          . Real: see <code className="text-foreground">diagnostics</code> (
+          <code className="text-foreground">not_attempted</code>,{" "}
+          <code className="text-foreground">not_implemented</code>,{" "}
+          <code className="text-foreground">attempted_failed</code>,{" "}
+          <code className="text-foreground">transport_reachable_unverified</code>, etc.);{" "}
+          <code className="text-foreground">verifiedOnWire</code> stays false until true DLMS
+          proof exists.
         </p>
       </header>
 
@@ -299,6 +305,47 @@ function EnvelopeViewer({ envelope }: { envelope: RuntimeResponseEnvelope }) {
           <dt className="text-muted-foreground">message</dt>
           <dd className="text-foreground">{envelope.message}</dd>
         </div>
+        {envelope.diagnostics && (
+          <div className="sm:col-span-2 rounded border border-border bg-muted/30 p-2">
+            <dt className="text-muted-foreground">diagnostics</dt>
+            <dd className="mt-1 grid gap-1 font-mono text-[11px] text-foreground sm:grid-cols-2">
+              <div>
+                <span className="text-muted-foreground">outcome:</span>{" "}
+                {envelope.diagnostics.outcome}
+              </div>
+              <div>
+                <span className="text-muted-foreground">capabilityStage:</span>{" "}
+                {envelope.diagnostics.capabilityStage}
+              </div>
+              <div>
+                <span className="text-muted-foreground">transportAttempted:</span>{" "}
+                {String(envelope.diagnostics.transportAttempted)}
+              </div>
+              <div>
+                <span className="text-muted-foreground">associationAttempted:</span>{" "}
+                {String(envelope.diagnostics.associationAttempted)}
+              </div>
+              <div className="sm:col-span-2">
+                <span className="text-muted-foreground">verifiedOnWire:</span>{" "}
+                <span
+                  className={
+                    envelope.diagnostics.verifiedOnWire
+                      ? "font-semibold text-green-700 dark:text-green-400"
+                      : "font-semibold"
+                  }
+                >
+                  {String(envelope.diagnostics.verifiedOnWire)}
+                </span>
+              </div>
+              {envelope.diagnostics.detailCode && (
+                <div className="sm:col-span-2">
+                  <span className="text-muted-foreground">detailCode:</span>{" "}
+                  {envelope.diagnostics.detailCode}
+                </div>
+              )}
+            </dd>
+          </div>
+        )}
         {envelope.error && (
           <div className="sm:col-span-2 rounded border border-destructive/30 bg-destructive/5 p-2">
             <dt className="text-muted-foreground">error</dt>
