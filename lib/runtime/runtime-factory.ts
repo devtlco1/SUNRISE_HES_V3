@@ -1,29 +1,34 @@
+import { parseRuntimeAdapterEnv } from "@/lib/runtime/adapter-mode"
 import type { SmartMeterRuntimeAdapter } from "@/lib/runtime/runtime-adapter"
+import { RealRuntimeAdapter } from "@/lib/runtime/real-runtime-adapter"
 import { StubRuntimeAdapter } from "@/lib/runtime/stub-runtime-adapter"
 
-export type RuntimeAdapterKind = "stub"
+export type RuntimeAdapterKind = "stub" | "real"
 
 /**
  * Resolves the process-wide runtime adapter.
- * Default: stub. Set `RUNTIME_ADAPTER=stub` explicitly if desired.
- * Future: add `dlms` or similar when a real adapter ships (factory returns it here).
+ *
+ * - `RUNTIME_ADAPTER` unset or `stub` → {@link StubRuntimeAdapter} (default).
+ * - `real` or `dlms` → {@link RealRuntimeAdapter} (skeleton; not live transport).
+ * - Any other value → stub + console warning.
  */
 export function getRuntimeAdapter(): SmartMeterRuntimeAdapter {
-  const kind = (process.env.RUNTIME_ADAPTER ?? "stub").toLowerCase() as string
-  if (kind === "stub" || kind === "") {
+  const parsed = parseRuntimeAdapterEnv(process.env.RUNTIME_ADAPTER)
+  if (parsed.kind === "stub") {
     return new StubRuntimeAdapter()
   }
-  if (kind === "real" || kind === "dlms") {
-    throw new Error(
-      "RUNTIME_ADAPTER is set to a non-stub value but no real protocol adapter is registered in this build."
-    )
+  if (parsed.kind === "real") {
+    return new RealRuntimeAdapter()
   }
-  console.warn(`[runtime] Unknown RUNTIME_ADAPTER="${kind}", falling back to stub.`)
+  console.warn(
+    `[runtime] Unknown RUNTIME_ADAPTER="${parsed.raw}", falling back to stub.`
+  )
   return new StubRuntimeAdapter()
 }
 
+/** Effective adapter kind after env resolution (unknown → stub). */
 export function getRuntimeAdapterKind(): RuntimeAdapterKind {
-  const kind = (process.env.RUNTIME_ADAPTER ?? "stub").toLowerCase()
-  if (kind === "stub" || kind === "") return "stub"
+  const parsed = parseRuntimeAdapterEnv(process.env.RUNTIME_ADAPTER)
+  if (parsed.kind === "real") return "real"
   return "stub"
 }

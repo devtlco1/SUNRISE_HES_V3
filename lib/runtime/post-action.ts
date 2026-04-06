@@ -41,12 +41,6 @@ export async function handleRuntimePost(
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : "RUNTIME_INTERNAL_ERROR"
-    if (msg.includes("RUNTIME_ADAPTER") || msg.includes("non-stub")) {
-      return NextResponse.json(
-        { error: "RUNTIME_CONFIG", message: msg },
-        { status: 500 }
-      )
-    }
     return NextResponse.json(
       { error: "RUNTIME_INTERNAL_ERROR", message: msg },
       { status: 500 }
