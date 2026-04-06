@@ -56,16 +56,16 @@ export function getRuntimeAdapterPublicStatus(): RuntimeAdapterPublicStatus {
       (process.env.RUNTIME_PROBE_HOST?.trim() ?? "") !== "" &&
       (process.env.RUNTIME_PROBE_PORT?.trim() ?? "") !== ""
     const probeLine = probeConfigured
-      ? "RUNTIME_PROBE_* is set: probe may perform TCP reachability only (diagnostics.outcome may be transport_reachable_unverified; never verifiedOnWire)."
-      : "RUNTIME_PROBE_HOST/PORT unset: probe returns not_attempted (PROBE_TARGET_NOT_CONFIGURED). Association/reads/relay remain not_implemented."
+      ? "RUNTIME_PROBE_* is set: TCP probe (transport only) + associate may run HDLC SNRM/UA + AARQ/AARE (verifiedOnWire only if AARE association-result=0 parsed)."
+      : "RUNTIME_PROBE_HOST/PORT unset: probe/associate return not_attempted for transport; reads/relay stay not_implemented."
     return {
       configuredMode: "real",
       effectiveAdapter: "real",
       simulatedResponses: false,
       envValue: envDisplay,
-      summary: `Real adapter (staged): ${probeLine} No DLMS/COSEM execution in this repo revision.`,
+      summary: `Real adapter: ${probeLine} Reads/relay still not implemented.`,
       warning:
-        "Not verified smart-meter communication. Use diagnostics on each response; restart with RUNTIME_ADAPTER=stub for full simulator success paths.",
+        "Treat verifiedOnWire as true only when diagnostics show it (successful AARE parse). Restart with RUNTIME_ADAPTER=stub for simulator-only paths.",
     }
   }
 

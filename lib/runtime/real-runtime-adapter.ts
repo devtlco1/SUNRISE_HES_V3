@@ -7,7 +7,7 @@
  * Future DLMS/HDLC/COSEM logic should live under `lib/runtime/real/` and be called from here.
  */
 
-import { associateNotImplemented } from "@/lib/runtime/real/association-stage"
+import { runRealAssociate } from "@/lib/runtime/real/association-stage"
 import {
   readBasicRegistersNotImplemented,
   readClockNotImplemented,
@@ -46,7 +46,7 @@ export class RealRuntimeAdapter implements SmartMeterRuntimeAdapter {
   associate(
     request: AssociateRequest
   ): Promise<RuntimeResponseEnvelope<AssociatePayload>> {
-    return Promise.resolve(associateNotImplemented(request))
+    return runRealAssociate(request)
   }
 
   readIdentity(

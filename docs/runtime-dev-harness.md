@@ -8,7 +8,7 @@ It exists so engineers can:
 
 - Manually verify request validation and JSON envelopes.
 - See **`simulated: true`** and **`diagnostics.outcome: simulated_success`** when the **stub** adapter is active.
-- See **`diagnostics`** on the **real** adapter: **`not_attempted`**, **`not_implemented`**, **`attempted_failed`**, or **`transport_reachable_unverified`** (TCP only). **`verifiedOnWire`** remains **false** until true DLMS proof is implemented.
+- See **`diagnostics`** on the **real** adapter: **`not_attempted`**, **`not_implemented`**, **`attempted_failed`**, **`transport_reachable_unverified`** (TCP probe), or **`verified_on_wire_success`** after **associate** when an **AARE** with **association-result 0** is parsed. **`verifiedOnWire: true`** only in that associate success case (not for TCP-only probe).
 
 This is **not** an end-user feature. It is gated in production unless explicitly enabled (see below).
 
@@ -41,7 +41,18 @@ If host/port are **unset**, probe returns **`ok: false`**, **`diagnostics.outcom
 
 If TCP succeeds: **`ok: true`**, **`diagnostics.outcome: transport_reachable_unverified`**, **`verifiedOnWire: false`** — this is **not** DLMS and **not** proof of a smart meter.
 
-Runtime API routes use **`export const runtime = "nodejs"`** because the probe uses Node **`net`**.
+## DLMS associate (real adapter)
+
+Uses the same **`RUNTIME_PROBE_*`** TCP target. Optional HDLC logical addresses:
+
+- **`RUNTIME_DLMS_HDLC_SERVER_LOGICAL`** — default **`1`**
+- **`RUNTIME_DLMS_HDLC_CLIENT_LOGICAL`** — default **`16`**
+- **`RUNTIME_DLMS_READ_MAX_MS`** — max wait per read burst (default **12000**)
+- **`RUNTIME_DLMS_READ_IDLE_MS`** — idle gap to end a burst (default **400**)
+
+Flow: **SNRM → UA → I-frame (LLC + AARQ) → parse AARE**. **`verifiedOnWire: true`** only if **association-result** enum **0** appears in the parsed AARE. The adapter sends **DISC** after the attempt (no read session kept).
+
+Runtime API routes use **`export const runtime = "nodejs"`** because of Node **`net`**.
 
 ## Adapter modes (`RUNTIME_ADAPTER`)
 
@@ -49,8 +60,8 @@ Runtime API routes use **`export const runtime = "nodejs"`** because the probe u
 | ------------- | --------------------- | ----- |
 | *(unset)*     | `StubRuntimeAdapter`  | `simulated: true`, simulator JSON |
 | `stub`        | `StubRuntimeAdapter`  | Same |
-| `real`        | `RealRuntimeAdapter`  | Staged: TCP probe optional; association/reads/relay **`not_implemented`** |
-| `dlms`        | `RealRuntimeAdapter`  | Alias of **`real`** (no live DLMS in this repo yet) |
+| `real`        | `RealRuntimeAdapter`  | TCP probe + **HDLC associate** when probe env set; reads/relay **`not_implemented`** |
+| `dlms`        | `RealRuntimeAdapter`  | Alias of **`real`** |
 | anything else | Falls back to **stub** | Server warning; status API **unknown** |
 
 Default remains **stub**. Changing env requires a **server restart**.
@@ -59,13 +70,16 @@ Default remains **stub**. Changing env requires a **server restart**.
 
 - **`lib/runtime/real-runtime-adapter.ts`** — thin façade.
 - **`lib/runtime/real/probe-connection.ts`** — optional TCP reachability.
-- **`lib/runtime/real/association-stage.ts`**, **`cosem-reads-stage.ts`**, **`relay-stage.ts`** — explicit **`not_implemented`** envelopes with stable codes.
+- **`lib/runtime/real/association-stage.ts`** — **`runRealAssociate`** (HDLC + AARQ/AARE).
+- **`cosem-reads-stage.ts`**, **`relay-stage.ts`** — **`not_implemented`** on the real path.
 
-**There is still no verified on-wire DLMS** in this repository until future work sets **`verifiedOnWire: true`** with a real stack.
+**`verifiedOnWire: true`** is possible **only** after a successful **AARE** parse on **associate**; it is **not** implied by TCP or probe alone.
 
-## Current limitations (before hardware proof)
+## Current limitations
 
-- No Gurux/DLMS framing, no application association, no COSEM reads, no relay execution on the real path.
+- **AARQ** is a minimal **no dedicated security** profile; many production meters require **auth/ciphering** — then associate returns **`attempted_failed`** / missing AARE until those layers exist.
+- **HDLC** uses **1-byte** logical addresses only in this revision.
+- No **read identity / clock / registers** and no **relay** on the real path yet.
 - Stub data remains **`data/runtime-simulator.json`** only.
 
 ## Related docs
@@ -83,4 +97,4 @@ When implementing the real stack, validate in this order:
 5. Read basic registers  
 6. Relay actions **only after** the above are verified and policy allows  
 
-**Next milestone:** implement **association** in `association-stage.ts`, then first **identity** read in the COSEM stage — only then consider expanding registers and relay.
+**Next milestone:** **read identity** over the same HDLC session policy (reconnect or keep-alive), then clock/registers; relay last.

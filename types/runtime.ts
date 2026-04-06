@@ -45,7 +45,7 @@ export type RuntimeCapabilityStage =
  * Explicit outcome semantics — do not conflate with HTTP status.
  * - `simulated_success`: stub only; never implies on-wire proof.
  * - `transport_reachable_unverified`: e.g. TCP connect OK; DLMS not verified.
- * - `verified_on_wire_success`: reserved for future true COSEM/DLMS confirmation.
+ * - `verified_on_wire_success`: DLMS AARE association-result accepted (0) parsed from wire bytes.
  */
 export type RuntimeOperationOutcome =
   | "not_attempted"
@@ -122,8 +122,16 @@ export interface ProbeConnectionPayload {
 export interface AssociatePayload {
   associationLevel: string
   securitySuite: string
-  /** Opaque simulator token — not a live DLMS association context. */
-  simulatedAssociationToken: string
+  /** Stub only — not a live DLMS security context. */
+  simulatedAssociationToken?: string
+  /** Real path: HDLC over TCP when used. */
+  linkChannel?: "hdlc_tcp"
+  /** COSEM association-result enum from parsed AARE (0 = accepted). */
+  aareAssociationResult?: number
+  /** Raw AARE APDU (starts with 0x61) as hex for audit; omit when absent. */
+  aareApduHex?: string
+  hdlcServerAddress?: number
+  hdlcClientAddress?: number
 }
 
 export interface IdentityPayload {

@@ -129,9 +129,10 @@ export function DevRuntimeHarnessClient() {
           <code className="text-foreground">not_attempted</code>,{" "}
           <code className="text-foreground">not_implemented</code>,{" "}
           <code className="text-foreground">attempted_failed</code>,{" "}
-          <code className="text-foreground">transport_reachable_unverified</code>, etc.);{" "}
-          <code className="text-foreground">verifiedOnWire</code> stays false until true DLMS
-          proof exists.
+          <code className="text-foreground">transport_reachable_unverified</code>,{" "}
+          <code className="text-foreground">verified_on_wire_success</code> (e.g. AARE accepted
+          on associate), etc.). <code className="text-foreground">verifiedOnWire</code> is true
+          only when diagnostics say so (not for TCP-only probe).
         </p>
       </header>
 

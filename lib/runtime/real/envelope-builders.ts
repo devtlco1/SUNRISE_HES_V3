@@ -103,3 +103,17 @@ export function diagnosticsTransportUnverified(
     detailCode,
   }
 }
+
+/** AARE association-result accepted (0) after on-wire parse — use only with real proof. */
+export function diagnosticsVerifiedAssociation(
+  detailCode: string
+): RuntimeExecutionDiagnostics {
+  return {
+    outcome: "verified_on_wire_success",
+    capabilityStage: "dlms_association",
+    transportAttempted: true,
+    associationAttempted: true,
+    verifiedOnWire: true,
+    detailCode,
+  }
+}

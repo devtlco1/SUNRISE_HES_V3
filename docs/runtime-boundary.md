@@ -8,16 +8,17 @@ It exists **before** any verified live DLMS/COSEM transport so that:
 
 - API and domain shapes stay stable while the implementation moves from **stub → real protocol**.
 - UI and aggregation code do not need to be rewritten when a real adapter is introduced.
-- All current behavior is explicitly **simulated** and traceable to `data/runtime-simulator.json`.
+- Stub behavior is explicitly **simulated** and traceable to `data/runtime-simulator.json`; the real adapter may perform **on-wire** steps when configured (see status below).
 
-## Current status (pre-verified DLMS)
+## Current status (DLMS association staged)
 
-- **No** verified DLMS/COSEM **on-wire proof** in this repository (`verifiedOnWire` remains **false** everywhere today).
+- **`verifiedOnWire: true`** is set **only** when the **real** adapter parses an on-wire **AARE** with **association-result = 0** (accepted). TCP-only probe success **never** sets it.
 - **Default adapter:** **`StubRuntimeAdapter`** when `RUNTIME_ADAPTER` is unset or `stub`.
 - **Stub:** **`simulated: true`**, **`diagnostics.outcome: simulated_success`**, **`verifiedOnWire: false`**; data from **`data/runtime-simulator.json`**.
 - **Real adapter (`RealRuntimeAdapter`):** modular code under **`lib/runtime/real/`**.
-  - **Probe:** optional **TCP** connect to **`RUNTIME_PROBE_HOST`** + **`RUNTIME_PROBE_PORT`** (opt-in). Success ⇒ **`ok: true`**, **`diagnostics.outcome: transport_reachable_unverified`**, **`verifiedOnWire: false`** — **not** a meter or DLMS confirmation. If env unset ⇒ **`not_attempted`**. TCP failure ⇒ **`attempted_failed`**.
-  - **Associate / identity / clock / registers / relay:** **`not_implemented`** envelopes with stable **`error.code`** values (no COSEM, no relay hardware).
+  - **Probe:** optional **TCP** to **`RUNTIME_PROBE_HOST`** + **`RUNTIME_PROBE_PORT`**. Success ⇒ **`transport_reachable_unverified`**, **`verifiedOnWire: false`**.
+  - **Associate:** **HDLC** SNRM → UA → **I-frame** with LLC + **AARQ** (LN, no dedicated security in the emitted AARQ). Parses **AARE** for **association-result**. **`verified_on_wire_success`** + **`verifiedOnWire: true`** only when result **0**. Wrong peer, encryption required, address mismatch, or non-standard framing ⇒ **`attempted_failed`** with explicit **`detailCode`**. Link closed with **DISC** after the attempt (no session held for reads).
+  - **Read identity / clock / registers / relay:** still **`not_implemented`** on the real path.
 
 Relay (stub) remains **simulated acceptance** only. Real relay methods return **`not_implemented`**.
 
@@ -26,7 +27,7 @@ Relay (stub) remains **simulated acceptance** only. Real relay methods return **
 Environment variable **`RUNTIME_ADAPTER`**:
 
 - **`stub`** or unset → `StubRuntimeAdapter`.
-- **`real`** or **`dlms`** → `RealRuntimeAdapter` (staged; optional TCP probe only; **no** DLMS).
+- **`real`** or **`dlms`** → `RealRuntimeAdapter` (TCP probe + **HDLC/AARQ–AARE** associate when transport env set; reads/relay not implemented).
 - **Unknown value** → fallback to stub + server warning; see **`GET /api/runtime/status`** for `configuredMode: "unknown"`.
 
 ## Developer harness
@@ -86,9 +87,9 @@ Types are mirrored in `lib/runtime/contracts.ts` (including the simulator file s
 4. Relay: implement only after reads and policy gates; update **`relay-stage.ts`** last.
 5. Keep **HTTP route handlers thin** — validate input, call the adapter, return JSON.
 
-## Next milestone after TCP probe
+## Next milestone after association
 
-Implement **DLMS application association** in the real path (e.g. AARQ/AARE or stack wrapper), then **read identity** as the first COSEM read — still updating **`verifiedOnWire`** only when the implementation can honestly assert on-wire verification.
+Reuse a **persistent** HDLC session (or reconnect policy) and implement **read identity** (GET / LN) in `cosem-reads-stage.ts`, setting **`verifiedOnWire`** only when COSEM response bytes are parsed as a real meter-sourced value.
 
 Do **not** couple DLMS types to React components; keep protocol details inside the adapter implementation.
 
@@ -108,7 +109,7 @@ Do **not** couple DLMS types to React components; keep protocol details inside t
 - `lib/runtime/runtime-adapter.ts` — adapter interface.
 - `lib/runtime/stub-runtime-adapter.ts` — deterministic stub.
 - `lib/runtime/real-runtime-adapter.ts` — real adapter façade (delegates to `lib/runtime/real/*`).
-- `lib/runtime/real/` — transport config, TCP probe, probe/association/COSEM/relay **stages**, envelope helpers.
+- `lib/runtime/real/` — transport config, TCP probe, **HDLC + AARQ/AARE** associate, COSEM/relay placeholders, envelope helpers.
 - `lib/runtime/adapter-mode.ts` — env parsing and status DTO for `GET /api/runtime/status`.
 - `lib/runtime/runtime-factory.ts` — adapter resolution.
 - `lib/runtime/post-action.ts` — shared POST wiring for API routes.
