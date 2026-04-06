@@ -15,6 +15,7 @@
 3. **Internal** routes (server-only, when `RUNTIME_PYTHON_SIDECAR_URL` is set):
    - `POST /api/internal/python-runtime/read-identity` → Python `POST /v1/runtime/read-identity` (sync)
    - `POST /api/internal/python-runtime/read-basic-registers` → Python `POST /v1/runtime/read-basic-registers` (sync)
+   - `POST /api/internal/python-runtime/discover-supported-obis` → Python `POST /v1/runtime/discover-supported-obis` (association object list — see **`docs/runtime-python-discovery.md`**)
    - **Async jobs (v1 local queue):**  
      `POST .../jobs/read-identity` → Python `POST /v1/jobs/read-identity` (**202** + `jobId`),  
      `POST .../jobs/read-basic-registers` → Python `POST /v1/jobs/read-basic-registers`,  

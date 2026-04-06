@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional, Union
 
 from app.adapters.base import ProtocolRuntimeAdapter
+from app.adapters.mvp_ami_discovery import run_association_view_discovery
 from app.adapters.mvp_ami_shared import (
     MvpAmiBootstrapFailure,
     diagnostic_dump,
@@ -22,13 +23,20 @@ from app.config import get_settings
 from app.schemas.envelope import (
     BasicRegisterReading,
     BasicRegistersPayload,
+    DiscoveredObjectRow,
+    DiscoverSupportedObisPayload,
     IdentityPayload,
+    RuntimeCapabilityStage,
     RuntimeErrorInfo,
     RuntimeExecutionDiagnostics,
     RuntimeOperation,
     RuntimeResponseEnvelope,
 )
-from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
+from app.schemas.requests import (
+    DiscoverSupportedObisRequest,
+    ReadBasicRegistersRequest,
+    ReadIdentityRequest,
+)
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +61,7 @@ def _failure_envelope(
     outcome: str,
     detail_code: str,
     err_details: Optional[dict] = None,
+    capability_stage: RuntimeCapabilityStage = "cosem_read",
 ) -> RuntimeResponseEnvelope:
     duration_ms = max(1, int((finished - started).total_seconds() * 1000))
     return RuntimeResponseEnvelope(
@@ -70,7 +79,7 @@ def _failure_envelope(
         error=RuntimeErrorInfo(code=code, message=message, details=err_details),
         diagnostics=RuntimeExecutionDiagnostics(
             outcome=outcome,  # type: ignore[arg-type]
-            capabilityStage="cosem_read",
+            capabilityStage=capability_stage,
             transportAttempted=transport_attempted,
             associationAttempted=association_attempted,
             verifiedOnWire=verified,
@@ -85,13 +94,14 @@ def _success_envelope(
     operation: RuntimeOperation,
     started: datetime,
     finished: datetime,
-    payload: Union[IdentityPayload, BasicRegistersPayload],
+    payload: Union[IdentityPayload, BasicRegistersPayload, DiscoverSupportedObisPayload],
     message: str,
     transport_attempted: bool,
     association_attempted: bool,
     verified: bool,
     detail_code: Optional[str],
     outcome_override: Optional[str] = None,
+    capability_stage: RuntimeCapabilityStage = "cosem_read",
 ) -> RuntimeResponseEnvelope:
     duration_ms = max(1, int((finished - started).total_seconds() * 1000))
     out = outcome_override or ("verified_on_wire_success" if verified else "attempted_failed")
@@ -110,7 +120,7 @@ def _success_envelope(
         error=None,
         diagnostics=RuntimeExecutionDiagnostics(
             outcome=out,  # type: ignore[arg-type]
-            capabilityStage="cosem_read",
+            capabilityStage=capability_stage,
             transportAttempted=transport_attempted,
             associationAttempted=association_attempted,
             verifiedOnWire=verified,
@@ -529,4 +539,96 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             verified=verified,
             detail_code=detail,
             outcome_override="verified_on_wire_success" if verified else "attempted_failed",
+        )
+
+    def discover_supported_obis(self, request: DiscoverSupportedObisRequest) -> RuntimeResponseEnvelope:
+        settings = get_settings()
+        started = datetime.now(timezone.utc)
+
+        boot = mvp_ami_bootstrap(settings, request.channel)
+        if isinstance(boot, MvpAmiBootstrapFailure):
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="discoverSupportedObis",
+                started=started,
+                finished=finished,
+                message=boot.message,
+                code=boot.code,
+                transport_state="disconnected",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code=boot.code,
+                err_details=boot.details,
+                capability_stage="object_discovery",
+            )
+
+        assoc_ln = (settings.discovery_association_ln or "").strip() or "0.0.40.0.0.255"
+        disc = run_association_view_discovery(settings, request.channel, boot.meter_mod, assoc_ln)
+        finished = datetime.now(timezone.utc)
+
+        if not disc.ok:
+            transport_attempted = any(d.get("stage") == "open_port" and d.get("success") for d in disc.diagnostics)
+            assoc_attempted = any(d.get("stage") == "association" for d in disc.diagnostics)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="discoverSupportedObis",
+                started=started,
+                finished=finished,
+                message=disc.error_message or "Association view discovery failed.",
+                code=disc.error_code or "DISCOVERY_FAILED",
+                transport_state="error" if disc.error_code == "SERIAL_OPEN_FAILED" else "disconnected",
+                association_state="associated" if disc.error_code == "ASSOCIATION_VIEW_READ_FAILED" else "failed",
+                transport_attempted=transport_attempted,
+                association_attempted=assoc_attempted,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code=disc.error_code or "DISCOVERY_FAILED",
+                err_details={
+                    "sunDiscoveryDiagnostics": disc.diagnostics,
+                    "guruxFrameCount": len(disc.gurux_frames_extra),
+                    "associationLogicalName": assoc_ln,
+                },
+                capability_stage="object_discovery",
+            )
+
+        rows: List[DiscoveredObjectRow] = []
+        for o in disc.objects:
+            try:
+                rows.append(DiscoveredObjectRow.model_validate(o))
+            except Exception:  # noqa: BLE001
+                rows.append(
+                    DiscoveredObjectRow(
+                        classId=int(o.get("classId", -1)) if isinstance(o, dict) else -1,
+                        obis=str(o.get("obis", "")) if isinstance(o, dict) else "",
+                        version=int(o.get("version", 0)) if isinstance(o, dict) else 0,
+                        error="row_validate_failed",
+                    )
+                )
+
+        payload = DiscoverSupportedObisPayload(
+            associationLogicalName=assoc_ln,
+            totalCount=len(rows),
+            objects=rows,
+        )
+        port_ref = disc.port_used
+        verified = True
+        return _success_envelope(
+            meter_id=request.meterId,
+            operation="discoverSupportedObis",
+            started=started,
+            finished=finished,
+            payload=payload,
+            message=(
+                f"Association object list read via Gurux (LN={assoc_ln!r}, port={port_ref!r}, "
+                f"objects={len(rows)}, verifiedOnWire=True)."
+            ),
+            transport_attempted=True,
+            association_attempted=True,
+            verified=verified,
+            detail_code="MVP_AMI_DISCOVERY_OK",
+            capability_stage="object_discovery",
         )

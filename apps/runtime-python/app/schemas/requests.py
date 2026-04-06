@@ -26,3 +26,12 @@ class ReadBasicRegistersRequest(BaseModel):
     endpointId: Optional[str] = Field(default=None, max_length=256)
     channelHint: Optional[str] = Field(default=None, max_length=256)
     channel: Optional[ChannelSpec] = None
+
+
+class DiscoverSupportedObisRequest(BaseModel):
+    """Dedicated discovery call (not for routine polling). Same transport hints as read-identity."""
+
+    meterId: str = Field(..., min_length=1, max_length=128)
+    endpointId: Optional[str] = Field(default=None, max_length=256)
+    channelHint: Optional[str] = Field(default=None, max_length=256)
+    channel: Optional[ChannelSpec] = None

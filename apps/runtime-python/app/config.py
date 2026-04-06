@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     Comma-separated OBIS list for read-basic-registers (default: clock, active import, L1 voltage).
     """
     basic_registers_obis: str = "0.0.1.0.0.255,1.0.1.8.0.255,1.0.32.7.0.255"
+    """Association LN logical name whose attribute 2 (object list) is read for discovery."""
+    discovery_association_ln: str = "0.0.40.0.0.255"
 
 
 @lru_cache

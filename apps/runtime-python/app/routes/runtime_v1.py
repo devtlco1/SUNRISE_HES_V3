@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.config import Settings, get_settings
 from app.schemas.envelope import RuntimeResponseEnvelope
-from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
+from app.schemas.requests import (
+    DiscoverSupportedObisRequest,
+    ReadBasicRegistersRequest,
+    ReadIdentityRequest,
+)
+from app.services.discover_supported_obis import execute_discover_supported_obis
 from app.services.read_basic_registers import execute_read_basic_registers
 from app.services.read_identity import execute_read_identity
 
@@ -51,3 +56,13 @@ def post_read_identity(body: ReadIdentityRequest) -> RuntimeResponseEnvelope:
 def post_read_basic_registers(body: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
     log.info("http_read_basic_registers", extra={"meter_id": body.meterId})
     return execute_read_basic_registers(body)
+
+
+@router.post(
+    "/discover-supported-obis",
+    response_model=RuntimeResponseEnvelope,
+    dependencies=[Depends(verify_service_token)],
+)
+def post_discover_supported_obis(body: DiscoverSupportedObisRequest) -> RuntimeResponseEnvelope:
+    log.info("http_discover_supported_obis", extra={"meter_id": body.meterId})
+    return execute_discover_supported_obis(body)

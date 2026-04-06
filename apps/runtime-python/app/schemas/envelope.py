@@ -4,7 +4,7 @@ Runtime response contracts aligned with `types/runtime.ts` (RuntimeResponseEnvel
 Field names and semantics mirror the TypeScript control-plane model.
 """
 
-from typing import Any, Literal, Optional, Union
+from typing import Any, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,7 @@ RuntimeOperation = Literal[
     "readIdentity",
     "readClock",
     "readBasicRegisters",
+    "discoverSupportedObis",
     "relayDisconnect",
     "relayReconnect",
 ]
@@ -32,6 +33,7 @@ RuntimeCapabilityStage = Literal[
     "transport_probe",
     "dlms_association",
     "cosem_read",
+    "object_discovery",
     "relay_control",
 ]
 RuntimeOperationOutcome = Literal[
@@ -80,6 +82,30 @@ class BasicRegistersPayload(BaseModel):
     registers: dict[str, BasicRegisterReading]
 
 
+class DiscoveredObjectRow(BaseModel):
+    """One entry from the meter association object list (COSEM class + logical name)."""
+
+    classId: int
+    obis: str = ""
+    version: int = 0
+    classIdName: Optional[str] = None
+    description: Optional[str] = None
+    shortName: Optional[int] = None
+    error: Optional[str] = Field(default=None, description="Normalization error only.")
+
+
+class DiscoverSupportedObisPayload(BaseModel):
+    """Association-view snapshot: objects the meter exposes in the current AA (not a global OBIS dictionary)."""
+
+    associationLogicalName: str
+    totalCount: int
+    objects: List[DiscoveredObjectRow]
+    source: str = Field(
+        default="gurux_association_ln_object_list_attr2",
+        description="How the catalog was obtained (Gurux GET on Association LN attribute 2).",
+    )
+
+
 class RuntimeResponseEnvelope(BaseModel):
     ok: bool
     simulated: bool
@@ -91,6 +117,6 @@ class RuntimeResponseEnvelope(BaseModel):
     message: str
     transportState: TransportState
     associationState: AssociationState
-    payload: Optional[Union[IdentityPayload, BasicRegistersPayload]] = None
+    payload: Optional[Union[IdentityPayload, BasicRegistersPayload, DiscoverSupportedObisPayload]] = None
     error: Optional[RuntimeErrorInfo] = None
     diagnostics: Optional[RuntimeExecutionDiagnostics] = None

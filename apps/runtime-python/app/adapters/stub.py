@@ -6,11 +6,17 @@ from app.adapters.base import ProtocolRuntimeAdapter
 from app.schemas.envelope import (
     BasicRegisterReading,
     BasicRegistersPayload,
+    DiscoveredObjectRow,
+    DiscoverSupportedObisPayload,
     IdentityPayload,
     RuntimeExecutionDiagnostics,
     RuntimeResponseEnvelope,
 )
-from app.schemas.requests import ReadBasicRegistersRequest, ReadIdentityRequest
+from app.schemas.requests import (
+    DiscoverSupportedObisRequest,
+    ReadBasicRegistersRequest,
+    ReadIdentityRequest,
+)
 
 
 class StubRuntimeAdapter(ProtocolRuntimeAdapter):
@@ -102,5 +108,55 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
             transportState="disconnected",
             associationState="none",
             payload=BasicRegistersPayload(registers=registers),
+            diagnostics=diagnostics,
+        )
+
+    def discover_supported_obis(self, request: DiscoverSupportedObisRequest) -> RuntimeResponseEnvelope:
+        started = datetime.now(timezone.utc)
+        finished = datetime.now(timezone.utc)
+        duration_ms = int((finished - started).total_seconds() * 1000) or 1
+
+        payload = DiscoverSupportedObisPayload(
+            associationLogicalName="0.0.40.0.0.255",
+            totalCount=2,
+            objects=[
+                DiscoveredObjectRow(
+                    classId=1,
+                    obis="0.0.0.0.0.255",
+                    version=0,
+                    classIdName="simulated",
+                    description="stub only — not from meter",
+                ),
+                DiscoveredObjectRow(
+                    classId=3,
+                    obis="0.0.96.1.1.255",
+                    version=0,
+                    classIdName="simulated",
+                ),
+            ],
+            source="python_stub_simulated",
+        )
+
+        diagnostics = RuntimeExecutionDiagnostics(
+            outcome="simulated_success",
+            capabilityStage="object_discovery",
+            transportAttempted=False,
+            associationAttempted=False,
+            verifiedOnWire=False,
+            detailCode="PYTHON_STUB_DISCOVER_SUPPORTED_OBIS",
+        )
+
+        return RuntimeResponseEnvelope(
+            ok=True,
+            simulated=True,
+            operation="discoverSupportedObis",
+            meterId=request.meterId,
+            startedAt=started.isoformat().replace("+00:00", "Z"),
+            finishedAt=finished.isoformat().replace("+00:00", "Z"),
+            durationMs=duration_ms,
+            message="Python sidecar stub: catalog is synthetic. No association view was read.",
+            transportState="disconnected",
+            associationState="none",
+            payload=payload,
             diagnostics=diagnostics,
         )

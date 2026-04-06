@@ -23,6 +23,7 @@ export type RuntimeOperation =
   | "readIdentity"
   | "readClock"
   | "readBasicRegisters"
+  | "discoverSupportedObis"
   | "relayDisconnect"
   | "relayReconnect"
 
@@ -39,6 +40,7 @@ export type RuntimeCapabilityStage =
   | "transport_probe"
   | "dlms_association"
   | "cosem_read"
+  | "object_discovery"
   | "relay_control"
 
 /**
@@ -101,6 +103,8 @@ export type AssociateRequest = RuntimeTargetRequest
 export type ReadIdentityRequest = RuntimeTargetRequest
 export type ReadClockRequest = RuntimeTargetRequest
 export type ReadBasicRegistersRequest = RuntimeTargetRequest
+/** Dedicated association-view discovery (not routine polling). */
+export type DiscoverSupportedObisRequest = RuntimeTargetRequest
 export type RelayDisconnectRequest = RuntimeTargetRequest
 export type RelayReconnectRequest = RuntimeTargetRequest
 
@@ -160,6 +164,26 @@ export interface BasicRegisterReading {
 export interface BasicRegistersPayload {
   /** OBIS-style keys; values are simulator-backed only. */
   registers: Record<string, BasicRegisterReading>
+}
+
+/** One row from the meter's association object list (current AA). */
+export interface DiscoveredObjectRow {
+  classId: number
+  obis: string
+  version: number
+  classIdName?: string
+  description?: string
+  shortName?: number
+  error?: string
+}
+
+/** Snapshot from GET Association LN object-list (attribute 2) via Gurux. */
+export interface DiscoverSupportedObisPayload {
+  associationLogicalName: string
+  totalCount: number
+  objects: DiscoveredObjectRow[]
+  /** e.g. gurux_association_ln_object_list_attr2 */
+  source?: string
 }
 
 export interface RelaySimulatedPayload {
