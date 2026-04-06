@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
 from app.routes.runtime_v1 import verify_service_token
 from app.schemas.envelope import RuntimeResponseEnvelope
@@ -67,12 +68,11 @@ def post_tcp_listener_read_basic_registers(
 
 @router.post(
     "/read-obis-selection",
-    response_model=RuntimeResponseEnvelope,
     dependencies=[Depends(verify_service_token)],
 )
 def post_tcp_listener_read_obis_selection(
     body: ReadObisSelectionRequest,
-) -> RuntimeResponseEnvelope:
+) -> JSONResponse:
     """
     Run read-obis-selection on the staged inbound TCP socket (one MVP-AMI phase1, multiple OBIS).
     Pops the staged socket; closes it when done.
@@ -81,4 +81,6 @@ def post_tcp_listener_read_obis_selection(
         "http_tcp_listener_read_obis_selection",
         extra={"meter_id": body.meterId, "items": len(body.selectedItems)},
     )
-    return execute_tcp_listener_read_obis_selection(body)
+    envelope = execute_tcp_listener_read_obis_selection(body)
+    # Avoid FastAPI response_model Union validation issues on payload variants.
+    return JSONResponse(content=envelope.model_dump(mode="json"))

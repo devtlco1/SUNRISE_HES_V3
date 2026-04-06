@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils"
 
 const pathTitle: Record<string, string> = {
   "/dashboard": "Dashboard",
+  "/scanner": "Scanner",
   "/readings": "Readings",
   "/obis-config": "OBIS catalog",
   "/meters": "Meters",

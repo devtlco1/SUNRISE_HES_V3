@@ -1,7 +1,7 @@
 import { MetersList } from "@/components/meters/meters-list"
 import { PageHeader } from "@/components/shared/page-header"
-import { Button } from "@/components/ui/button"
 import { mockMeterListRows } from "@/lib/mock/meters"
+import Link from "next/link"
 
 const useMockMeters = process.env.NEXT_PUBLIC_METERS_USE_MOCK === "true"
 
@@ -12,18 +12,16 @@ export default function MetersPage() {
         title="Meters"
         subtitle={
           useMockMeters
-            ? "Static catalog (mock mode). Clear NEXT_PUBLIC_METERS_USE_MOCK to use the read-only /api/meters feed."
-            : "Read-only meter registry from /api/meters. Search and filters run in the browser; no writes or realtime."
+            ? "Mock catalog (NEXT_PUBLIC_METERS_USE_MOCK)."
+            : "Registry from data/meters.json. Primary key: serial number."
         }
         actions={
-          <>
-            <Button type="button" size="sm" variant="outline" disabled>
-              Export (mock)
-            </Button>
-            <Button type="button" size="sm" disabled>
-              Add meter (mock)
-            </Button>
-          </>
+          <Link
+            href="/scanner"
+            className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+          >
+            Scanner
+          </Link>
         }
       />
 

@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.responses import JSONResponse
 
 from app.config import Settings, get_settings
 from app.schemas.envelope import RuntimeResponseEnvelope
@@ -62,15 +63,15 @@ def post_read_basic_registers(body: ReadBasicRegistersRequest) -> RuntimeRespons
 
 @router.post(
     "/read-obis-selection",
-    response_model=RuntimeResponseEnvelope,
     dependencies=[Depends(verify_service_token)],
 )
-def post_read_obis_selection(body: ReadObisSelectionRequest) -> RuntimeResponseEnvelope:
+def post_read_obis_selection(body: ReadObisSelectionRequest) -> JSONResponse:
     log.info(
         "http_read_obis_selection",
         extra={"meter_id": body.meterId, "items": len(body.selectedItems)},
     )
-    return execute_read_obis_selection(body)
+    envelope = execute_read_obis_selection(body)
+    return JSONResponse(content=envelope.model_dump(mode="json"))
 
 
 @router.post(

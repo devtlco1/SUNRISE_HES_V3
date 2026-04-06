@@ -28,6 +28,29 @@ async function parseJson(res: Response): Promise<unknown> {
   }
 }
 
+function formatReadingsProxyFailure(parsed: unknown, status: number): string {
+  if (parsed && typeof parsed === "object") {
+    const p = parsed as Record<string, unknown>
+    const msg = typeof p.message === "string" ? p.message : ""
+    const py = p.pythonDetail
+    if (Array.isArray(py)) {
+      const bits = py
+        .map((x) => (typeof x === "object" && x && "msg" in x ? String((x as { msg: unknown }).msg) : JSON.stringify(x)))
+        .filter(Boolean)
+      if (bits.length) return [msg, bits.join("; ")].filter(Boolean).join(" — ") || `HTTP ${status}`
+    }
+    if (py && typeof py === "object" && "detail" in py) {
+      const d = (py as { detail: unknown }).detail
+      if (typeof d === "string") return [msg, d].filter(Boolean).join(" — ") || d
+    }
+    if (typeof p.bodyPreview === "string" && p.bodyPreview.trim()) {
+      return [msg, p.bodyPreview.slice(0, 500)].filter(Boolean).join(" — ")
+    }
+    if (typeof p.error === "string") return [p.error, msg].filter(Boolean).join(": ") || p.error
+  }
+  return `HTTP ${status}`
+}
+
 export async function fetchTcpListenerStatus(
   signal?: AbortSignal
 ): Promise<ReadingsApiResult<TcpListenerStatus>> {
@@ -142,14 +165,11 @@ export async function postReadObisSelectionDirect(
     })
     const parsed = await parseJson(res)
     if (!res.ok) {
-      const err =
-        parsed &&
-        typeof parsed === "object" &&
-        "error" in parsed &&
-        typeof (parsed as { error: unknown }).error === "string"
-          ? (parsed as { error: string }).error
-          : `HTTP ${res.status}`
-      return { ok: false, error: err, status: res.status }
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
     }
     return {
       ok: true,
@@ -175,14 +195,11 @@ export async function postReadObisSelectionTcpListener(
     })
     const parsed = await parseJson(res)
     if (!res.ok) {
-      const err =
-        parsed &&
-        typeof parsed === "object" &&
-        "error" in parsed &&
-        typeof (parsed as { error: unknown }).error === "string"
-          ? (parsed as { error: string }).error
-          : `HTTP ${res.status}`
-      return { ok: false, error: err, status: res.status }
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
     }
     return {
       ok: true,

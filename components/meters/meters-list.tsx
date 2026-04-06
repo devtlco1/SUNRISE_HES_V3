@@ -54,8 +54,8 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 function MeterTableHeaderRow() {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead className="w-[200px]">Meter</TableHead>
-      <TableHead className="w-[120px]">Serial No.</TableHead>
+      <TableHead className="w-[140px]">Serial</TableHead>
+      <TableHead className="w-[160px] text-muted-foreground">Internal ID</TableHead>
       <TableHead className="min-w-[200px]">
         Location / Feeder
       </TableHead>
@@ -300,14 +300,7 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
         </div>
       </FilterBar>
 
-      <SectionCard
-        title="Meter registry"
-        description={
-          staticMode
-            ? "Static catalog — filters and pagination run client-side."
-            : "Served from GET /api/meters. Filters and pagination run client-side on the fetched row set."
-        }
-      >
+      <SectionCard title="Registry">
         <TableShell>
           <TableToolbar
             left={
@@ -377,14 +370,16 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
                               onClick={() => openDetails(row)}
                               className={operationalMonoIdTriggerClass}
                             >
-                              {row.id}
+                              {row.serialNumber}
                             </button>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {row.id}
+                            </span>
                             <div className="mt-0.5 text-xs text-muted-foreground">
                               {formatPhaseType(row.phaseType)}
                             </div>
-                          </TableCell>
-                          <TableCell className="align-top tabular-nums text-muted-foreground">
-                            {row.serialNumber}
                           </TableCell>
                           <TableCell className="align-top">
                             <div className="max-w-[220px] truncate text-foreground">

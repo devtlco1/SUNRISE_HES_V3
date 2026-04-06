@@ -3,26 +3,11 @@ import {
   PythonSidecarHttpError,
   PythonSidecarNotConfiguredError,
 } from "@/lib/runtime/python-sidecar/client"
-import type { ReadObisSelectionRequest } from "@/types/runtime"
+import { normalizeReadObisSelectionBody } from "@/lib/readings/normalize-read-obis-body"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-
-function isReadObisSelectionBody(v: unknown): v is ReadObisSelectionRequest {
-  if (v === null || typeof v !== "object" || Array.isArray(v)) return false
-  const o = v as Record<string, unknown>
-  if (typeof o.meterId !== "string" || !o.meterId.trim()) return false
-  if (!Array.isArray(o.selectedItems) || o.selectedItems.length === 0) return false
-  for (const it of o.selectedItems) {
-    if (it === null || typeof it !== "object" || Array.isArray(it)) return false
-    const row = it as Record<string, unknown>
-    if (typeof row.obis !== "string" || !row.obis.trim()) return false
-    if (typeof row.objectType !== "string" || !row.objectType.trim()) return false
-    if (typeof row.classId !== "number" || !Number.isFinite(row.classId)) return false
-  }
-  return true
-}
 
 export async function POST(req: Request) {
   let json: unknown
@@ -32,19 +17,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "INVALID_JSON" }, { status: 400 })
   }
 
-  if (!isReadObisSelectionBody(json)) {
+  const normalized = normalizeReadObisSelectionBody(json)
+  if (!normalized) {
     return NextResponse.json(
       {
         error: "INVALID_BODY",
         message:
-          "Expected meterId and non-empty selectedItems with obis, objectType, classId per item.",
+          "Expected meterId and selectedItems with obis, objectType, classId per item (classId may be coerced from string).",
       },
       { status: 400 }
     )
   }
 
   try {
-    const envelope = await postTcpListenerReadObisSelectionToPythonSidecar(json)
+    const envelope = await postTcpListenerReadObisSelectionToPythonSidecar(normalized)
     return NextResponse.json(envelope, {
       headers: { "Cache-Control": "no-store" },
     })
@@ -56,12 +42,19 @@ export async function POST(req: Request) {
       )
     }
     if (e instanceof PythonSidecarHttpError) {
+      let detail: unknown
+      try {
+        detail = JSON.parse(e.bodyText) as unknown
+      } catch {
+        detail = undefined
+      }
       return NextResponse.json(
         {
           error: "PYTHON_SIDECAR_HTTP_ERROR",
           status: e.status,
           message: e.message,
-          body: e.bodyText.slice(0, 2000),
+          pythonDetail: detail,
+          bodyPreview: e.bodyText.slice(0, 2000),
         },
         { status: 502 }
       )

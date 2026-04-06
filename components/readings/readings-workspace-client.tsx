@@ -23,10 +23,13 @@ import {
   READINGS_FETCH_NETWORK_ERROR,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
-import { getCatalogRowsForPack, OBIS_PACK_LABELS, OBIS_PACK_ORDER } from "@/lib/obis/catalog-seed"
+import {
+  getCatalogRowsForPackFromRows,
+  packKeysForCatalogRows,
+} from "@/lib/obis/catalog-seed"
 import { mergeObisSelectionIntoRowState, type ObisRowReadState } from "@/lib/obis/merge-read-results"
 import { obisSelectionRowSupportedV1Catalog } from "@/lib/obis/obis-selection-v1-client"
-import type { ObisCatalogEntry, ObisPackKey } from "@/lib/obis/types"
+import { packLabel, type ObisCatalogEntry } from "@/lib/obis/types"
 import type { MeterListRow } from "@/types/meter"
 import type { ObisSelectionItemInput, ReadObisSelectionPayload, RuntimeResponseEnvelope } from "@/types/runtime"
 import { cn } from "@/lib/utils"
@@ -53,9 +56,11 @@ function catalogEntryToSelectionItem(r: ObisCatalogEntry): ObisSelectionItemInpu
 }
 
 export function ReadingsWorkspaceClient() {
-  const [pack, setPack] = useState<ObisPackKey>("basic_setting")
+  const [catalog, setCatalog] = useState<ObisCatalogEntry[]>([])
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  const [pack, setPack] = useState<string>("basic_setting")
   const [transport, setTransport] = useState<TransportMode>("inbound")
-  const [meterId, setMeterId] = useState("hes-mt-10021")
+  const [meterId, setMeterId] = useState("")
   const [meters, setMeters] = useState<MeterListRow[]>([])
   const [metersError, setMetersError] = useState<string | null>(null)
 
@@ -70,12 +75,16 @@ export function ReadingsWorkspaceClient() {
 
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [hint, setHint] = useState<string | null>(null)
   const [lastEnv, setLastEnv] = useState<RuntimeResponseEnvelope<
     ReadObisSelectionPayload
   > | null>(null)
 
-  const catalogRows = useMemo(() => getCatalogRowsForPack(pack), [pack])
+  const packKeys = useMemo(() => packKeysForCatalogRows(catalog), [catalog])
+
+  const catalogRows = useMemo(
+    () => getCatalogRowsForPackFromRows(catalog, pack),
+    [catalog, pack]
+  )
 
   const v1SupportedRowsInPack = useMemo(
     () => catalogRows.filter((r) => r.enabled && obisSelectionRowSupportedV1Catalog(r)),
@@ -88,20 +97,50 @@ export function ReadingsWorkspaceClient() {
 
   useEffect(() => {
     const ac = new AbortController()
+    fetch("/api/obis-catalog", { signal: ac.signal, cache: "no-store" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setCatalog(data as ObisCatalogEntry[])
+          setCatalogError(null)
+        } else {
+          setCatalog([])
+          setCatalogError("OBIS catalog unavailable")
+        }
+      })
+      .catch(() => {
+        setCatalog([])
+        setCatalogError("OBIS catalog load failed")
+      })
+    return () => ac.abort()
+  }, [])
+
+  useEffect(() => {
+    if (packKeys.length === 0) return
+    if (!packKeys.includes(pack)) setPack(packKeys[0]!)
+  }, [packKeys, pack])
+
+  useEffect(() => {
+    const ac = new AbortController()
     fetch("/api/meters", { signal: ac.signal, cache: "no-store" })
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data)) {
-          setMeters(data as MeterListRow[])
+          const rows = data as MeterListRow[]
+          setMeters(rows)
           setMetersError(null)
+          setMeterId((prev) => {
+            if (prev && rows.some((m) => m.serialNumber === prev)) return prev
+            return rows[0]?.serialNumber ?? ""
+          })
         } else {
           setMeters([])
-          setMetersError("Meters catalog unavailable")
+          setMetersError("Meters unavailable")
         }
       })
       .catch(() => {
         setMeters([])
-        setMetersError("Meters catalog load failed")
+        setMetersError("Meters load failed")
       })
     return () => ac.abort()
   }, [])
@@ -170,13 +209,12 @@ export function ReadingsWorkspaceClient() {
 
   async function executeReadObisSelection(items: ObisSelectionItemInput[]): Promise<void> {
     setActionError(null)
-    setHint(null)
     if (items.length === 0) {
       setActionError("No OBIS rows to read.")
       return
     }
 
-    const mid = meterId.trim() || "meter-1"
+    const mid = meterId.trim() || "unknown-meter"
     const body = { meterId: mid, selectedItems: items }
 
     setBusy(true)
@@ -225,15 +263,9 @@ export function ReadingsWorkspaceClient() {
 
   async function onReadCategory() {
     if (v1SupportedRowsInPack.length === 0) {
-      setHint(
-        "No rows in this category are in selected-OBIS v1 (Data / Clock / Register, attribute 2). Profile, demand, and other classes stay visible but are not read here yet."
-      )
-      setActionError("Nothing to read for v1 in this category.")
+      setActionError("No v1-readable rows in this category (Data/Clock/Register, attr 2).")
       return
     }
-    setHint(
-      `Reading ${v1SupportedRowsInPack.length} v1-supported row(s) in this category (Data/Clock/Register, attr 2). Other catalog rows stay in the table but are skipped for this action.`
-    )
     const items = v1SupportedRowsInPack.map(catalogEntryToSelectionItem)
     await executeReadObisSelection(items)
   }
@@ -252,26 +284,15 @@ export function ReadingsWorkspaceClient() {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Readings"
-        subtitle="Meter-tool style workspace: packs, OBIS table, and runtime reads via Next server proxies (no browser→Python)."
-      />
-
-      {transport === "inbound" ? (
-        <div className="rounded-md border border-amber-200/80 bg-amber-50/50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
-          <strong>Inbound staged TCP:</strong> one trigger uses the modem socket for a full MVP-AMI
-          session and can read <strong>multiple selected OBIS</strong> in that trip; the socket is
-          closed when the trigger finishes — reconnect the modem before the next read.
-        </div>
-      ) : null}
+      <PageHeader title="Readings" subtitle="OBIS reads via Next → Python runtime." />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(200px,240px)_1fr] lg:items-start">
         <aside className="rounded-lg border border-border bg-card p-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Meter parameter
+            Pack
           </p>
           <ul className="mt-2 space-y-0.5">
-            {OBIS_PACK_ORDER.map((key) => (
+            {packKeys.map((key) => (
               <li key={key}>
                 <button
                   type="button"
@@ -283,14 +304,14 @@ export function ReadingsWorkspaceClient() {
                       : "text-muted-foreground hover:bg-muted/60"
                   )}
                 >
-                  {OBIS_PACK_LABELS[key]}
+                  {packLabel(key)}
                 </button>
               </li>
             ))}
           </ul>
-          <p className="mt-4 text-xs text-muted-foreground">
-            <a href="/obis-config" className="underline underline-offset-2">
-              OBIS catalog
+          <p className="mt-3 text-xs">
+            <a href="/obis-config" className="text-muted-foreground underline underline-offset-2">
+              Edit catalog
             </a>
           </p>
         </aside>
@@ -298,30 +319,31 @@ export function ReadingsWorkspaceClient() {
         <div className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
             <div className="flex min-w-[12rem] flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Meter</span>
+              <span className="text-xs font-medium text-muted-foreground">Meter (serial)</span>
               <select
                 className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={meters.some((m) => m.id === meterId) ? meterId : "__custom__"}
+                value={meters.some((m) => m.serialNumber === meterId) ? meterId : "__custom__"}
                 onChange={(e) => {
                   const v = e.target.value
                   if (v === "__custom__") return
                   setMeterId(v)
                 }}
               >
-                <option value="__custom__">Custom meterId…</option>
+                <option value="__custom__">Other…</option>
                 {meters.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.serialNumber} ({m.id})
+                  <option key={m.id} value={m.serialNumber}>
+                    {m.serialNumber}
                   </option>
                 ))}
               </select>
             </div>
             <div className="flex min-w-[10rem] flex-1 flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">meterId</span>
+              <span className="text-xs font-medium text-muted-foreground">Serial</span>
               <Input
                 value={meterId}
                 onChange={(e) => setMeterId(e.target.value)}
                 className="h-9 font-mono text-sm"
+                placeholder="Meter serial"
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -333,14 +355,8 @@ export function ReadingsWorkspaceClient() {
                   setTransport(e.target.value === "direct" ? "direct" : "inbound")
                 }
               >
-                <option value="inbound">Inbound modem (staged TCP)</option>
-                <option value="direct">Direct (serial / TCP client)</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Groups</span>
-              <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" disabled>
-                <option>Multi-meter (planned)</option>
+                <option value="inbound">Inbound (staged)</option>
+                <option value="direct">Direct</option>
               </select>
             </div>
           </div>
@@ -437,10 +453,12 @@ export function ReadingsWorkspaceClient() {
             </Button>
           </div>
 
+          {catalogError ? (
+            <p className="text-xs text-destructive">{catalogError}</p>
+          ) : null}
           {metersError ? (
             <p className="text-xs text-amber-700 dark:text-amber-300">{metersError}</p>
           ) : null}
-          {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
           {actionError ? (
             <p className="text-xs text-destructive">{actionError}</p>
           ) : null}
@@ -514,7 +532,7 @@ export function ReadingsWorkspaceClient() {
                         {r.attribute}
                       </TableCell>
                       <TableCell className="text-xs">{r.unit || "—"}</TableCell>
-                      <TableCell className="text-xs">{OBIS_PACK_LABELS[r.pack_key]}</TableCell>
+                      <TableCell className="text-xs">{packLabel(r.pack_key)}</TableCell>
                       <TableCell className="max-w-[140px] truncate font-mono text-xs">
                         {rs?.result ?? ""}
                       </TableCell>

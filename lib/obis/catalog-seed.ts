@@ -4,8 +4,9 @@
  */
 
 import type { ObisCatalogEntry, ObisPackKey } from "./types"
+import { OBIS_PACK_ORDER } from "./types"
 
-export { OBIS_PACK_LABELS, OBIS_PACK_ORDER } from "./types"
+export { OBIS_PACK_LABELS, OBIS_PACK_ORDER, packLabel } from "./types"
 
 function e(
   pack_key: ObisPackKey,
@@ -196,9 +197,24 @@ export const OBIS_CATALOG_SEED: ObisCatalogEntry[] = [
 ]
 
 export function getCatalogRowsForPack(pack: ObisPackKey): ObisCatalogEntry[] {
-  return OBIS_CATALOG_SEED.filter((r) => r.pack_key === pack).sort(
-    (a, b) => a.sort_order - b.sort_order
-  )
+  return getCatalogRowsForPackFromRows(OBIS_CATALOG_SEED, pack)
+}
+
+export function getCatalogRowsForPackFromRows(
+  rows: ObisCatalogEntry[],
+  pack: ObisPackKey
+): ObisCatalogEntry[] {
+  return rows.filter((r) => r.pack_key === pack).sort((a, b) => a.sort_order - b.sort_order)
+}
+
+/** Pack tabs: built-in order first, then other keys present in rows (sorted). */
+export function packKeysForCatalogRows(rows: ObisCatalogEntry[]): ObisPackKey[] {
+  const present = new Set(rows.map((r) => r.pack_key))
+  const ordered = OBIS_PACK_ORDER.filter((k) => present.has(k))
+  const extra = [...present]
+    .filter((k) => !OBIS_PACK_ORDER.includes(k))
+    .sort()
+  return [...ordered, ...extra]
 }
 
 export function getCatalogEntry(obis: string): ObisCatalogEntry | undefined {
