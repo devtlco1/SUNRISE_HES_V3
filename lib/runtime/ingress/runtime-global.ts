@@ -1,6 +1,6 @@
 import type net from "node:net"
 
-import type { IngressSessionClass } from "@/lib/runtime/ingress/types"
+import type { IngressProtocolTracePublic, IngressSessionClass } from "@/lib/runtime/ingress/types"
 
 const KEY = "__sunriseHesMeterIngressRuntime" as const
 
@@ -35,6 +35,7 @@ export type IngressDiagnosticsState = {
   inboundIdentityReadVerifiedOnWire: boolean
   inboundIdentityValueHex: string | null
   inboundLastProtocolDetail: string
+  inboundProtocolTrace: IngressProtocolTracePublic | null
 }
 
 export type IngressProcessRuntime = {
@@ -74,6 +75,7 @@ function createInitialDiagnostics(): IngressDiagnosticsState {
     inboundIdentityReadVerifiedOnWire: false,
     inboundIdentityValueHex: null,
     inboundLastProtocolDetail: "",
+    inboundProtocolTrace: null,
   }
 }
 

@@ -17,6 +17,7 @@ This deployment expects the **meter (or field gateway) to open the TCP connectio
 | `RUNTIME_TCP_METER_INGRESS_PORT` | **Required** when ingress is enabled: TCP port 1–65535. |
 | `RUNTIME_TCP_METER_INGRESS_SOCKET_TIMEOUT_SECONDS` | Idle timeout for **passive** preview sockets (default `120`). Active DLMS sessions clear the per-socket idle timer at start. |
 | `INTERNAL_API_TOKEN` | Reserved for future authenticated internal ingest/API hooks (not required for ingress status today). |
+| `RUNTIME_INGRESS_LAST_SESSION_TRACE_PATH` | Optional filesystem path; last bounded session trace JSON is written at session end (mode `600`). Protect this path on the VPS — it contains raw frame hex. |
 
 ## Environment variables — inbound DLMS session (vendor profile)
 
@@ -52,6 +53,8 @@ When ingress is enabled, a **vendor-style DLMS session** runs on each accepted s
 ## Diagnostics
 
 - **GET** `/api/runtime/ingress/status` — `config` (listener), `protocolProfile` (non-secret profile snapshot), and `status` (listener + last-session protocol outcomes).
+- **`status.inboundProtocolTrace`** — bounded evidence for the current TCP session: timestamped `steps`, `inboundFrames` / `outboundFrames` (full frame hex up to a cap), per-frame FCS-valid parse variants (dest/src lengths 1..8), heuristic `0x73` offsets when FCS does not validate, `lastMeterAccumHexCapped`, `leadingGarbageHex`, `lastIncompleteTailHex`, and summaries (`lastUaCandidateSummary`, `lastFcsValidationNote`). **Do not expose this endpoint to untrusted networks** while debugging (raw meter traffic).
+- Optional **trace file** via `RUNTIME_INGRESS_LAST_SESSION_TRACE_PATH` (same JSON, capped size on write).
 - Server logs prefixed with `[meter-ingress]` for bind, accept, close, and errors.
 
 ### On-wire truth fields (status)

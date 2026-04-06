@@ -2,6 +2,12 @@ import type net from "node:net"
 
 import { classifyInboundPreview } from "@/lib/runtime/ingress/classify"
 import type { InboundMeterProtocolProfile } from "@/lib/runtime/ingress/inbound-profile"
+import { flushIngressTraceToFile } from "@/lib/runtime/ingress/protocol-trace-file"
+import {
+  traceMeterAccumSnapshot,
+  traceOutboundFrame,
+  traceProtocolStep,
+} from "@/lib/runtime/ingress/protocol-trace"
 import {
   onIngressError,
   onSessionData,
@@ -21,6 +27,11 @@ import {
   parseGetResponseNormal,
 } from "@/lib/runtime/real/dlms-get-normal"
 import {
+  enumerateValidHdlcParses,
+  findFirstStrictSnrmVariant,
+  hasStrictUaFrame,
+} from "@/lib/runtime/real/hdlc-frame-inspect"
+import {
   buildHdlcIFrame,
   buildHdlcUFrame,
   HDLC_DISC,
@@ -28,7 +39,6 @@ import {
   HDLC_I_FRAME_SECOND,
   HDLC_SNRM,
   HDLC_UA,
-  parseHdlcFrameWithAddressWidths,
   splitHdlcFrames,
 } from "@/lib/runtime/real/hdlc-frame-variable"
 import { readSocketBurst, writeAll } from "@/lib/runtime/real/dlms-transport-session"
@@ -61,66 +71,26 @@ function bufferPrefixMatch(buf: Uint8Array, prefix: Buffer): boolean {
   return true
 }
 
-type ParsedUv = NonNullable<ReturnType<typeof tryParseUAny>>
-
-function tryParseUAny(frame: Uint8Array) {
-  for (const pair of [
-    [4, 1],
-    [1, 4],
-    [1, 1],
-  ] as const) {
-    const p = parseHdlcFrameWithAddressWidths(frame, pair[0], pair[1])
-    if (p?.kind === "u") return p
-  }
-  return null
-}
-
-function tryParseIAny(frame: Uint8Array) {
-  for (const pair of [
-    [4, 1],
-    [1, 4],
-    [1, 1],
-  ] as const) {
-    const p = parseHdlcFrameWithAddressWidths(frame, pair[0], pair[1])
-    if (p?.kind === "i") return p
-  }
-  return null
-}
-
-function findUa(accum: Uint8Array): boolean {
-  for (const raw of splitHdlcFrames(accum)) {
-    const p = tryParseUAny(raw)
-    if (p && p.control === HDLC_UA) return true
-  }
-  return false
-}
-
-function findMeterSnrm(accum: Uint8Array): ParsedUv | null {
-  for (const raw of splitHdlcFrames(accum)) {
-    const p = tryParseUAny(raw)
-    if (p && p.control === HDLC_SNRM) return p
-  }
-  return null
-}
-
 function findAare(accum: Uint8Array): { result: number; apdu: Buffer } | null {
   for (const raw of splitHdlcFrames(accum)) {
-    const p = tryParseIAny(raw)
-    if (!p || p.kind !== "i") continue
-    const apdu = stripLeadingLlcReply(p.llcAndApdu)
-    const hit = parseAareAssociationResult(apdu)
-    if (hit) return { result: hit.result, apdu: Buffer.from(apdu) }
+    for (const v of enumerateValidHdlcParses(raw)) {
+      if (v.parsed.kind !== "i") continue
+      const apdu = stripLeadingLlcReply(v.parsed.llcAndApdu)
+      const hit = parseAareAssociationResult(apdu)
+      if (hit) return { result: hit.result, apdu: Buffer.from(apdu) }
+    }
   }
   return null
 }
 
 function findGetResponse(accum: Uint8Array): ReturnType<typeof parseGetResponseNormal> | null {
   for (const raw of splitHdlcFrames(accum)) {
-    const p = tryParseIAny(raw)
-    if (!p || p.kind !== "i") continue
-    const apdu = stripLeadingLlcReply(p.llcAndApdu)
-    const g = parseGetResponseNormal(apdu)
-    if (g.verified) return g
+    for (const v of enumerateValidHdlcParses(raw)) {
+      if (v.parsed.kind !== "i") continue
+      const apdu = stripLeadingLlcReply(v.parsed.llcAndApdu)
+      const g = parseGetResponseNormal(apdu)
+      if (g.verified) return g
+    }
   }
   return null
 }
@@ -129,10 +99,17 @@ function capHex(hex: string, max = 512): string {
   return hex.length <= max ? hex : `${hex.slice(0, max)}…`
 }
 
+async function writeMeter(socket: net.Socket, data: Buffer, phase: string): Promise<void> {
+  traceOutboundFrame(phase, data)
+  traceProtocolStep(`tx_${phase}`, `${data.length}B`)
+  await writeAll(socket, data)
+}
+
 async function extendAccum(
   socket: net.Socket,
   accum: Acc,
-  profile: InboundMeterProtocolProfile
+  profile: InboundMeterProtocolProfile,
+  rxPhase: string
 ): Promise<Acc> {
   const chunk = await readSocketBurst(
     socket,
@@ -143,6 +120,7 @@ async function extendAccum(
   next.set(accum, 0)
   next.set(chunk, accum.length)
   touchAccum(next)
+  traceMeterAccumSnapshot(next, rxPhase)
   return Uint8Array.from(next) as Acc
 }
 
@@ -163,6 +141,7 @@ export async function runInboundDlmsOnSocket(
   let accum = new Uint8Array(0) as Acc
 
   try {
+    traceProtocolStep("session_start", "inbound_dlms")
     setInboundProtocolPhase("initial_read", "")
     const first = await readSocketBurst(
       socket,
@@ -171,42 +150,51 @@ export async function runInboundDlmsOnSocket(
     )
     accum = Uint8Array.from(first) as Acc
     touchAccum(accum)
+    traceMeterAccumSnapshot(accum, "initial_read")
 
     const ackHit = profile.iecAckHexCandidates.find((c) => bufferPrefixMatch(accum, c))
     if (ackHit && profile.afterIecSleepMs > 0) {
       setInboundProtocolPhase("iec_ack_matched", ackHit.toString("hex"))
+      traceProtocolStep("iec_ack_sleep", `${profile.afterIecSleepMs}ms`)
       await sleep(profile.afterIecSleepMs)
     }
 
-    const meterSnrm = findMeterSnrm(accum)
+    const meterSnrm = findFirstStrictSnrmVariant(accum)
     if (meterSnrm) {
       setInboundProtocolPhase("meter_snrm_seen", "")
-      const uaDest = Buffer.from(meterSnrm.src)
+      traceProtocolStep("meter_snrm_strict", `${meterSnrm.destLen}+${meterSnrm.srcLen}`)
+      const uaDest = Buffer.from(meterSnrm.parsed.src)
       const uaSrc = profile.uaSwapAddresses
-        ? Buffer.from(meterSnrm.dest)
+        ? Buffer.from(meterSnrm.parsed.dest)
         : profile.clientAddressWire
-      await writeAll(socket, buildHdlcUFrame(uaDest, uaSrc, HDLC_UA))
+      await writeMeter(socket, buildHdlcUFrame(uaDest, uaSrc, HDLC_UA), "ua_after_meter_snrm")
       setInboundProtocolPhase("ua_sent_after_meter_snrm", "")
-      accum = await extendAccum(socket, accum, profile)
+      accum = await extendAccum(socket, accum, profile, "after_ua_sent")
     } else if (
       profile.useBroadcastSnrmFirst &&
       profile.broadcastSnrm &&
       profile.broadcastSnrm.length > 0
     ) {
       setInboundProtocolPhase("broadcast_snrm_sent", "")
-      await writeAll(socket, profile.broadcastSnrm)
-      accum = await extendAccum(socket, accum, profile)
+      await writeMeter(socket, profile.broadcastSnrm, "broadcast_snrm")
+      accum = await extendAccum(socket, accum, profile, "after_broadcast_snrm")
     } else {
       setInboundProtocolPhase("targeted_snrm_sent", "")
-      await writeAll(socket, buildHdlcUFrame(meter, client, HDLC_SNRM))
-      accum = await extendAccum(socket, accum, profile)
+      await writeMeter(socket, buildHdlcUFrame(meter, client, HDLC_SNRM), "targeted_snrm")
+      accum = await extendAccum(socket, accum, profile, "after_targeted_snrm")
     }
 
     setInboundProtocolPhase("awaiting_ua", "")
-    for (let i = 0; i < 8 && !findUa(accum); i++) {
-      accum = await extendAccum(socket, accum, profile)
+    for (let i = 0; i < 8 && !hasStrictUaFrame(accum); i++) {
+      traceProtocolStep("await_ua_burst", String(i))
+      accum = await extendAccum(socket, accum, profile, `await_ua_${i}`)
     }
-    if (!findUa(accum)) {
+    if (!hasStrictUaFrame(accum)) {
+      traceMeterAccumSnapshot(accum, "ua_missing_final")
+      traceProtocolStep(
+        "ua_missing",
+        "no_strict_UA_FCS_ok_see_inboundProtocolTrace.inboundFrames"
+      )
       setInboundProtocolPhase("ua_missing", "no verifiable HDLC UA after SNRM/broadcast")
       onIngressError("inbound_ua_missing")
       onSessionData(
@@ -216,6 +204,8 @@ export async function runInboundDlmsOnSocket(
       )
       return
     }
+
+    traceProtocolStep("ua_strict_ok", "proceeding_to_aarq")
 
     const aarq =
       profile.auth === "LOW" && profile.password
@@ -230,15 +220,12 @@ export async function runInboundDlmsOnSocket(
       aareApduHex: null,
     })
 
-    await writeAll(
-      socket,
-      buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq)
-    )
-    accum = await extendAccum(socket, accum, profile)
+    await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq), "aarq_iframe")
+    accum = await extendAccum(socket, accum, profile, "after_aarq")
 
     let aareHit = findAare(accum)
     for (let i = 0; i < 8 && !aareHit; i++) {
-      accum = await extendAccum(socket, accum, profile)
+      accum = await extendAccum(socket, accum, profile, `await_aare_${i}`)
       aareHit = findAare(accum)
     }
 
@@ -314,15 +301,12 @@ export async function runInboundDlmsOnSocket(
       valueHex: null,
     })
 
-    await writeAll(
-      socket,
-      buildHdlcIFrame(meter, client, HDLC_I_FRAME_SECOND, getPdu)
-    )
-    accum = await extendAccum(socket, accum, profile)
+    await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_SECOND, getPdu), "identity_get")
+    accum = await extendAccum(socket, accum, profile, "after_identity_get")
 
     let getHit = findGetResponse(accum)
     for (let i = 0; i < 8 && !getHit?.verified; i++) {
-      accum = await extendAccum(socket, accum, profile)
+      accum = await extendAccum(socket, accum, profile, `await_get_${i}`)
       getHit = findGetResponse(accum)
     }
 
@@ -357,15 +341,20 @@ export async function runInboundDlmsOnSocket(
     const msg = e instanceof Error ? e.message : String(e)
     setInboundProtocolPhase("session_error", msg)
     onIngressError(`inbound_session_error: ${msg}`)
+    traceProtocolStep("session_error", msg)
     onSessionData(
       accum.length,
       Buffer.from(accum.subarray(0, Math.min(512, accum.length))),
       "inbound_session_failed"
     )
   } finally {
+    traceMeterAccumSnapshot(accum, "session_finally")
     if (profile.sendDiscBeforeClose) {
       try {
-        await writeAll(socket, buildHdlcUFrame(meter, client, HDLC_DISC))
+        const disc = buildHdlcUFrame(meter, client, HDLC_DISC)
+        traceOutboundFrame("disc_final", disc)
+        traceProtocolStep("tx_disc_final", `${disc.length}B`)
+        await writeAll(socket, disc)
         await readSocketBurst(
           socket,
           Math.max(300, profile.discDrainTimeoutMs),
@@ -375,6 +364,7 @@ export async function runInboundDlmsOnSocket(
         /* best-effort */
       }
     }
+    flushIngressTraceToFile("session_end")
     if (!socket.destroyed) socket.destroy()
   }
 }

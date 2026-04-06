@@ -16,6 +16,50 @@ export type IngressSessionClass =
   | "inbound_identity_read_verified"
   | "inbound_session_failed"
 
+/** Bounded last-session protocol evidence for operator debugging (no secrets). */
+export type IngressProtocolTracePublic = {
+  startedAtIso: string | null
+  steps: Array<{ t: string; phase: string; detail?: string }>
+  inboundFrames: Array<{
+    t: string
+    phase: string
+    frameHex: string
+    byteLength: number
+    formatByte: number | null
+    formatNote: string
+    lengthByte: number | null
+    variants: Array<{
+      destLen: number
+      srcLen: number
+      kind: string
+      control: number
+      controlLabel: string
+      destHex: string
+      srcHex: string
+      fcsValid: string
+    }>
+    heuristicUaOffsetsInInner: number[]
+    summary: string
+  }>
+  outboundFrames: Array<{
+    t: string
+    phase: string
+    frameHex: string
+    byteLength: number
+  }>
+  /** Capped full meter-side accumulation snapshot at last trace update. */
+  lastMeterAccumHexCapped: string | null
+  /** Bytes before first 0x7E in last accumulation (capped). */
+  leadingGarbageHex: string | null
+  /** Bytes after last 0x7E when stream does not end on a flag (capped). */
+  lastIncompleteTailHex: string | null
+  lastUaStrictFound: boolean
+  lastUaCandidateSummary: string | null
+  lastSnrmStrictSummary: string | null
+  lastFrameParseSummary: string
+  lastFcsValidationNote: string
+}
+
 export type MeterIngressConfig = {
   enabled: boolean
   host: string
@@ -62,5 +106,7 @@ export type MeterIngressPublicStatus = {
   inboundIdentityReadVerifiedOnWire: boolean
   inboundIdentityValueHex: string | null
   inboundLastProtocolDetail: string
+  /** Last inbound DLMS session protocol trace (bounded; meter->server / server->meter). */
+  inboundProtocolTrace: IngressProtocolTracePublic | null
   disclaimer: string
 }

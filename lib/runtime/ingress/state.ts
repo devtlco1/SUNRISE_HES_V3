@@ -1,4 +1,5 @@
 import type { IngressSessionClass, MeterIngressPublicStatus } from "@/lib/runtime/ingress/types"
+import { markNewIngressProtocolSession } from "@/lib/runtime/ingress/protocol-trace"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
 
 const DISCLAIMER =
@@ -22,6 +23,7 @@ function resetLastSessionProtocolFields(): void {
   s.inboundIdentityReadVerifiedOnWire = false
   s.inboundIdentityValueHex = null
   s.inboundLastProtocolDetail = ""
+  markNewIngressProtocolSession()
 }
 
 export function resetIngressStateForTestsOnly(): void {
@@ -56,6 +58,7 @@ export function resetIngressStateForTestsOnly(): void {
     inboundIdentityReadVerifiedOnWire: false,
     inboundIdentityValueHex: null,
     inboundLastProtocolDetail: "",
+    inboundProtocolTrace: null,
   })
 }
 
@@ -197,6 +200,7 @@ export function getMeterIngressPublicStatus(
     inboundIdentityReadVerifiedOnWire: s.inboundIdentityReadVerifiedOnWire,
     inboundIdentityValueHex: s.inboundIdentityValueHex,
     inboundLastProtocolDetail: s.inboundLastProtocolDetail,
+    inboundProtocolTrace: s.inboundProtocolTrace,
     disclaimer: DISCLAIMER,
   }
 }
