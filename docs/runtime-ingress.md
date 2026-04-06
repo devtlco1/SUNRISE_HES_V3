@@ -27,7 +27,7 @@ When ingress is enabled, a **vendor-style DLMS session** runs on each accepted s
 | -------- | ------- |
 | `RUNTIME_INGRESS_DLMS_SESSION_ENABLED` | Set to `false` / `0` to disable the session runner (passive byte preview only). Default: on when ingress is enabled. |
 | `RUNTIME_INGRESS_DLMS_AUTH` | `LOW` (default) or `NONE`. `LOW` requires `RUNTIME_INGRESS_DLMS_PASSWORD` on the server. |
-| `RUNTIME_INGRESS_DLMS_PASSWORD` | LLS password (server env only). |
+| `RUNTIME_INGRESS_DLMS_PASSWORD` | LLS password (server env only). **This env value is what the ingress runtime encodes in the AARQ** — it is not implied by passwords typed into a separate web UI unless that UI writes this env (or your orchestration copies it here). |
 | `RUNTIME_INGRESS_DLMS_CLIENT_LOGICAL` | Client logical address (default `1`). |
 | `RUNTIME_INGRESS_DLMS_METER_ADDRESS_HEX` | Meter HDLC destination address (hex), e.g. `0002046303`. |
 | `RUNTIME_INGRESS_VENDOR_USE_BROADCAST_SNRM_FIRST` | `true`/`false`; default follows MVP baseline (broadcast SNRM first). |
@@ -54,6 +54,7 @@ When ingress is enabled, a **vendor-style DLMS session** runs on each accepted s
 
 - **GET** `/api/runtime/ingress/status` — `config` (listener), `protocolProfile` (non-secret profile snapshot), and `status` (listener + last-session protocol outcomes).
 - **`status.inboundProtocolTrace`** — bounded evidence for the current TCP session: timestamped `steps`, `inboundFrames` / `outboundFrames` (full frame hex up to a cap), per-frame FCS-valid parse variants (dest/src lengths 1..8), heuristic `0x73` offsets when FCS does not validate, `lastMeterAccumHexCapped`, `leadingGarbageHex`, `lastIncompleteTailHex`, and summaries (`lastUaCandidateSummary`, `lastFcsValidationNote`). **Do not expose this endpoint to untrusted networks** while debugging (raw meter traffic).
+- **`lastOutboundAarqDiagnostic`** (inside the trace) — outbound AARQ payload proof for LOW auth: `configuredPasswordSourceLabel`, plaintext **`configuredPasswordUtf8`** (from `RUNTIME_INGRESS_DLMS_PASSWORD`), **`transmittedPasswordOctetsHex`** / UTF-8 decode **`passwordWireAsUtf8`**, **`configuredUtf8BytesMatchTransmittedOctets`**, **`passwordComparisonNote`**, and **`configuredPasswordSha256Hex`**. Use this to resolve “which password hit the wire” vs operator memory or UI history.
 - Optional **trace file** via `RUNTIME_INGRESS_LAST_SESSION_TRACE_PATH` (same JSON, capped size on write).
 - Server logs prefixed with `[meter-ingress]` for bind, accept, close, and errors.
 

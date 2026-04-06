@@ -2,7 +2,7 @@ import { LLC_SEND } from "@/lib/runtime/real/dlms-apdu"
 
 /**
  * LN context AARQ with LLS password (calling-authentication-value / AC block).
- * Password is sent as ASCII octets inside context-specific [0] per common COSEM stacks.
+ * Password → UTF-8 octets in AC / OCTET STRING, matching MVP-AMI Gurux LOW-auth `aarqRequest()` usage.
  */
 export function buildAarqLlsLnPayload(passwordAscii: string): Uint8Array {
   const pwd = Buffer.from(passwordAscii, "utf8")

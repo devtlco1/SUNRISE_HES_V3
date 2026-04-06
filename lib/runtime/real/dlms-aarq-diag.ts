@@ -1,10 +1,20 @@
+import { createHash, timingSafeEqual } from "node:crypto"
+
 import { LLC_SEND } from "@/lib/runtime/real/dlms-apdu"
 
 export type AarqBuilderKind = "LOW_LLS_LN" | "LN_MINIMAL_NO_AUTH"
 
+/** Optional: compare built AARQ AC field to the runtime-configured password (MVP-AMI: UTF-8 → OCTET STRING in AC). */
+export type OutboundAarqPasswordContext = {
+  /** Plaintext from `RUNTIME_INGRESS_DLMS_PASSWORD` when LOW; null otherwise. */
+  configuredPasswordUtf8: string | null
+  /** Human-readable source label (env key or `N/A_*`). */
+  configuredPasswordSourceLabel: string
+}
+
 /**
  * Developer-oriented breakdown of the LLC + COSEM AARQ payload (I-frame information field).
- * `callingAuthenticationValueHex` embeds password octets — treat as secret in exported traces.
+ * May include **plaintext password** and AC TLV hex — treat as secret; keep `/api/runtime/ingress/status` off untrusted networks.
  */
 export type OutboundAarqPayloadDiag = {
   builder: AarqBuilderKind
@@ -16,26 +26,49 @@ export type OutboundAarqPayloadDiag = {
   cosemAarqApduHex: string
   /** Full LLC + APDU as transmitted inside I-frame information field. */
   llcPlusApduHex: string
+  /** Same as transmitted password octet length when AC present; legacy field name. */
   passwordUtf8ByteLength: number | null
   /** Raw TLV for context [0] calling-authentication-value (tag AC…), or null if absent. */
   callingAuthenticationValueHex: string | null
-  /** ASCII interpretation of the OCTET STRING inside AC when valid UTF-8. */
+  /** OCTET STRING payload only (password bytes on wire), hex. */
+  transmittedPasswordOctetsHex: string | null
+  /** Length of `transmittedPasswordOctetsHex` / 2 when present. */
+  transmittedPasswordUtf8ByteLength: number | null
+  /** UTF-8 round-trip of transmitted octets when valid; else null (binary / invalid UTF-8). */
   passwordWireAsUtf8: string | null
+  /** Runtime source label for the configured secret (not proof of value until compared below). */
+  configuredPasswordSourceLabel: string
+  /** Plaintext password from runtime profile at send time (for controlled VPS proof). */
+  configuredPasswordUtf8: string | null
+  configuredPasswordUtf8ByteLength: number | null
+  /** SHA-256 (hex) of configured UTF-8 password; empty string if none. */
+  configuredPasswordSha256Hex: string
+  /** True iff `Buffer.from(configured,'utf8')` equals transmitted octets (same length + timingSafeEqual). */
+  configuredUtf8BytesMatchTransmittedOctets: boolean | null
+  /** True when wire octets are valid UTF-8 and decode equals configured string. */
+  configuredStringMatchesWireUtf8Decoding: boolean | null
+  /** One-line outcome for operators. */
+  passwordComparisonNote: string
   /**
    * MVP-AMI uses Gurux `parseUAResponse(ua_info)` before `aarqRequest()`; negotiated
-   * max-PDU / window may differ from this static LN+LLS template. Compare on-wire hex if meter is silent.
+   * max-PDU / window may differ from this static LN+LLS template.
    */
   mvpAmiAlignmentNote: string
+  /** Reminder that this diagnostic can embed secrets. */
+  secretsExposureNote: string
+}
+
+type ExtractedAuth = {
+  callingAuthenticationValueHex: string | null
+  transmittedOctets: Uint8Array | null
+  passwordWireAsUtf8: string | null
 }
 
 /**
  * Find first AC (0xac) calling-authentication block; assumes short definite length on AC.
+ * Matches MVP-AMI / Gurux LLS: AC wrapping OCTET STRING (tag 80) of password bytes (UTF-8 in typical stacks).
  */
-function extractCallingAuthDiag(apdu: Uint8Array): {
-  callingAuthenticationValueHex: string | null
-  passwordUtf8ByteLength: number | null
-  passwordWireAsUtf8: string | null
-} {
+function extractCallingAuthDiag(apdu: Uint8Array): ExtractedAuth {
   for (let i = 0; i < apdu.length - 4; i++) {
     if (apdu[i] !== 0xac) continue
     const L = apdu[i + 1]
@@ -56,33 +89,129 @@ function extractCallingAuthDiag(apdu: Uint8Array): {
         }
         return {
           callingAuthenticationValueHex: Buffer.from(block).toString("hex"),
-          passwordUtf8ByteLength: oct.length,
+          transmittedOctets: Uint8Array.from(oct),
           passwordWireAsUtf8: utf8,
         }
       }
     }
     return {
       callingAuthenticationValueHex: Buffer.from(block).toString("hex"),
-      passwordUtf8ByteLength: null,
+      transmittedOctets: null,
       passwordWireAsUtf8: null,
     }
   }
   return {
     callingAuthenticationValueHex: null,
-    passwordUtf8ByteLength: null,
+    transmittedOctets: null,
     passwordWireAsUtf8: null,
+  }
+}
+
+function comparePasswords(
+  auth: ExtractedAuth,
+  ctx: OutboundAarqPasswordContext | undefined,
+  builder: AarqBuilderKind
+): Pick<
+  OutboundAarqPayloadDiag,
+  | "configuredPasswordSourceLabel"
+  | "configuredPasswordUtf8"
+  | "configuredPasswordUtf8ByteLength"
+  | "configuredPasswordSha256Hex"
+  | "configuredUtf8BytesMatchTransmittedOctets"
+  | "configuredStringMatchesWireUtf8Decoding"
+  | "passwordComparisonNote"
+> {
+  const label = ctx?.configuredPasswordSourceLabel ?? "not_provided_to_diagnostic"
+  const configured = ctx?.configuredPasswordUtf8 ?? null
+  const cfgLen = configured !== null ? Buffer.byteLength(configured, "utf8") : null
+  const cfgSha =
+    configured !== null && configured.length > 0
+      ? createHash("sha256").update(configured, "utf8").digest("hex")
+      : configured === ""
+        ? createHash("sha256").update("", "utf8").digest("hex")
+        : ""
+
+  const oct = auth.transmittedOctets
+
+  if (builder === "LN_MINIMAL_NO_AUTH") {
+    const hasUnexpectedPw = oct !== null && oct.length > 0
+    return {
+      configuredPasswordSourceLabel: label,
+      configuredPasswordUtf8: configured,
+      configuredPasswordUtf8ByteLength: cfgLen,
+      configuredPasswordSha256Hex: cfgSha,
+      configuredUtf8BytesMatchTransmittedOctets: hasUnexpectedPw ? false : true,
+      configuredStringMatchesWireUtf8Decoding: null,
+      passwordComparisonNote: hasUnexpectedPw
+        ? "unexpected_password_octets_in_AARQ_while_builder_is_NONE"
+        : "auth_NONE_expected_no_password_in_AARQ",
+    }
+  }
+
+  if (!oct || oct.length === 0) {
+    return {
+      configuredPasswordSourceLabel: label,
+      configuredPasswordUtf8: configured,
+      configuredPasswordUtf8ByteLength: cfgLen,
+      configuredPasswordSha256Hex: cfgSha,
+      configuredUtf8BytesMatchTransmittedOctets: null,
+      configuredStringMatchesWireUtf8Decoding: null,
+      passwordComparisonNote: "LOW_builder_but_no_AC_password_octets_extracted",
+    }
+  }
+
+  const txHex = Buffer.from(oct).toString("hex")
+
+  if (configured === null) {
+    return {
+      configuredPasswordSourceLabel: label,
+      configuredPasswordUtf8: null,
+      configuredPasswordUtf8ByteLength: null,
+      configuredPasswordSha256Hex: "",
+      configuredUtf8BytesMatchTransmittedOctets: null,
+      configuredStringMatchesWireUtf8Decoding: null,
+      passwordComparisonNote: `transmitted_password_octets_len_${oct.length}_hex_${txHex}_no_configured_secret_passed_to_diag`,
+    }
+  }
+
+  const cfgBuf = Buffer.from(configured, "utf8")
+  const octBuf = Buffer.from(oct)
+  const bytesMatch = cfgBuf.length === octBuf.length && timingSafeEqual(cfgBuf, octBuf)
+  const strMatch = auth.passwordWireAsUtf8 !== null && auth.passwordWireAsUtf8 === configured
+
+  const note = bytesMatch
+    ? "configured_utf8_bytes_MATCH_transmitted_AC_octets"
+    : auth.passwordWireAsUtf8 === null
+      ? `MISMATCH_or_non_utf8_wire_compare_fields_lengths_cfg_${cfgBuf.length}_tx_${oct.length}`
+      : `MISMATCH_compare_fields_configuredPasswordUtf8_passwordWireAsUtf8_transmittedPasswordOctetsHex_lengths_cfg_${cfgBuf.length}_tx_${oct.length}`
+
+  return {
+    configuredPasswordSourceLabel: label,
+    configuredPasswordUtf8: configured,
+    configuredPasswordUtf8ByteLength: cfgLen,
+    configuredPasswordSha256Hex: cfgSha,
+    configuredUtf8BytesMatchTransmittedOctets: bytesMatch,
+    configuredStringMatchesWireUtf8Decoding: strMatch,
+    passwordComparisonNote: note,
   }
 }
 
 /** Describe LLC + AARQ bytes (payload of `buildHdlcIFrame`). */
 export function describeOutboundAarqPayload(
   llcPlusApdu: Uint8Array,
-  builder: AarqBuilderKind
+  builder: AarqBuilderKind,
+  passwordCtx?: OutboundAarqPasswordContext
 ): OutboundAarqPayloadDiag {
   const expectedLlcSendHex = Buffer.from(LLC_SEND).toString("hex")
   const llcHex = Buffer.from(llcPlusApdu.subarray(0, Math.min(3, llcPlusApdu.length))).toString("hex")
   const rest = llcPlusApdu.length > 3 ? llcPlusApdu.subarray(3) : new Uint8Array(0)
   const auth = extractCallingAuthDiag(rest)
+  const oct = auth.transmittedOctets
+  const txLen = oct ? oct.length : null
+  const txHex = oct ? Buffer.from(oct).toString("hex") : null
+
+  const cmp = comparePasswords(auth, passwordCtx, builder)
+
   return {
     builder,
     llcHex,
@@ -90,10 +219,21 @@ export function describeOutboundAarqPayload(
     llcMatchesReference: llcHex === expectedLlcSendHex,
     cosemAarqApduHex: Buffer.from(rest).toString("hex"),
     llcPlusApduHex: Buffer.from(llcPlusApdu).toString("hex"),
-    passwordUtf8ByteLength: auth.passwordUtf8ByteLength,
+    passwordUtf8ByteLength: txLen,
     callingAuthenticationValueHex: auth.callingAuthenticationValueHex,
+    transmittedPasswordOctetsHex: txHex,
+    transmittedPasswordUtf8ByteLength: txLen,
     passwordWireAsUtf8: auth.passwordWireAsUtf8,
+    configuredPasswordSourceLabel: cmp.configuredPasswordSourceLabel,
+    configuredPasswordUtf8: cmp.configuredPasswordUtf8,
+    configuredPasswordUtf8ByteLength: cmp.configuredPasswordUtf8ByteLength,
+    configuredPasswordSha256Hex: cmp.configuredPasswordSha256Hex,
+    configuredUtf8BytesMatchTransmittedOctets: cmp.configuredUtf8BytesMatchTransmittedOctets,
+    configuredStringMatchesWireUtf8Decoding: cmp.configuredStringMatchesWireUtf8Decoding,
+    passwordComparisonNote: cmp.passwordComparisonNote,
     mvpAmiAlignmentNote:
-      "MVP-AMI/Gurux: parseUAResponse(UA info) then aarqRequest(); static template may omit UA-negotiated sizes.",
+      "MVP-AMI/Gurux LOW: password string → UTF-8 octets in AC calling-authentication-value; parseUAResponse(UA) before aarqRequest() may change other AARQ fields.",
+    secretsExposureNote:
+      "Ingress trace may include plaintext LLS password and AC hex; verify only on controlled hosts. UI-entered passwords elsewhere are not this runtime secret unless they equal RUNTIME_INGRESS_DLMS_PASSWORD.",
   }
 }

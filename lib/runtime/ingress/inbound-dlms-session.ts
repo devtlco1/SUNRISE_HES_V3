@@ -23,6 +23,7 @@ import { buildAareSearchReport, findAareInMeterAccum } from "@/lib/runtime/real/
 import {
   describeOutboundAarqPayload,
   type AarqBuilderKind,
+  type OutboundAarqPasswordContext,
 } from "@/lib/runtime/real/dlms-aarq-diag"
 import {
   buildGetRequestNormalPayload,
@@ -225,7 +226,12 @@ export async function runInboundDlmsOnSocket(
     const postAarqRxBoundary = accum.length
     const aarqBuilder: AarqBuilderKind =
       profile.auth === "LOW" && profile.password ? "LOW_LLS_LN" : "LN_MINIMAL_NO_AUTH"
-    const aarqDiag = describeOutboundAarqPayload(aarq, aarqBuilder)
+    const aarqPasswordCtx: OutboundAarqPasswordContext = {
+      configuredPasswordUtf8: profile.password,
+      configuredPasswordSourceLabel:
+        profile.auth === "LOW" ? "RUNTIME_INGRESS_DLMS_PASSWORD" : "N_A_AUTH_NOT_LOW",
+    }
+    const aarqDiag = describeOutboundAarqPayload(aarq, aarqBuilder, aarqPasswordCtx)
     traceOutboundAarqDiagnostic({
       ...aarqDiag,
       meterAddressHexForIframe: meter.toString("hex"),
@@ -233,7 +239,7 @@ export async function runInboundDlmsOnSocket(
     })
     traceProtocolStep(
       "aarq_iframe_sent",
-      `builder=${aarqBuilder}_meter=${meter.toString("hex")}_client=${client.toString("hex")}_llc_ref_ok=${String(aarqDiag.llcMatchesReference)}_pwd_wire_utf8_len=${aarqDiag.passwordUtf8ByteLength ?? "n/a"}`
+      `builder=${aarqBuilder}_meter=${meter.toString("hex")}_client=${client.toString("hex")}_llc_ref_ok=${String(aarqDiag.llcMatchesReference)}_pwd_tx_len=${aarqDiag.transmittedPasswordUtf8ByteLength ?? "n/a"}_pwd_cfg_match_octets=${String(aarqDiag.configuredUtf8BytesMatchTransmittedOctets)}_pwd_note=${aarqDiag.passwordComparisonNote}`
     )
     await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq), "aarq_iframe")
     accum = await extendAccum(socket, accum, profile, "after_aarq")

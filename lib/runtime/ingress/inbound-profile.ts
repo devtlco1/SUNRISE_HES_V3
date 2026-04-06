@@ -107,6 +107,11 @@ export function loadInboundMeterProtocolProfile(): InboundMeterProtocolProfile {
   const authRaw = (process.env.RUNTIME_INGRESS_DLMS_AUTH ?? "LOW").trim().toUpperCase()
   const auth: InboundDlmsAuthMode = authRaw === "NONE" ? "NONE" : "LOW"
 
+  /**
+   * LLS secret for ingress DLMS only. Source of truth is this env var at process start — not any
+   * UI form or DB profile from other HES surfaces. Confirm on-wire bytes via
+   * `status.inboundProtocolTrace.lastOutboundAarqDiagnostic` on a controlled host.
+   */
   const passwordRaw = process.env.RUNTIME_INGRESS_DLMS_PASSWORD?.trim()
   const password = passwordRaw && passwordRaw.length > 0 ? passwordRaw : null
 
