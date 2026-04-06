@@ -13,8 +13,13 @@
 1. Python **FastAPI** listens on `SUNRISE_RUNTIME_PORT` (default **8766**).
 2. Next.js calls the sidecar **only from the server** via `lib/runtime/python-sidecar/client.ts`.
 3. **Internal** routes (server-only, when `RUNTIME_PYTHON_SIDECAR_URL` is set):
-   - `POST /api/internal/python-runtime/read-identity` → Python `POST /v1/runtime/read-identity`
-   - `POST /api/internal/python-runtime/read-basic-registers` → Python `POST /v1/runtime/read-basic-registers`
+   - `POST /api/internal/python-runtime/read-identity` → Python `POST /v1/runtime/read-identity` (sync)
+   - `POST /api/internal/python-runtime/read-basic-registers` → Python `POST /v1/runtime/read-basic-registers` (sync)
+   - **Async jobs (v1 local queue):**  
+     `POST .../jobs/read-identity` → Python `POST /v1/jobs/read-identity` (**202** + `jobId`),  
+     `POST .../jobs/read-basic-registers` → Python `POST /v1/jobs/read-basic-registers`,  
+     `GET .../jobs/[jobId]` → Python `GET /v1/jobs/{jobId}`  
+     See **`docs/job-queue-foundation.md`**.
 4. Public `POST /api/runtime/read-identity` and `POST /api/runtime/read-basic-registers` remain **unchanged** (in-process TypeScript adapter factory). The UI is not switched to the sidecar by default.
 
 ## Real adapter: `mvp_ami` (serial reads)

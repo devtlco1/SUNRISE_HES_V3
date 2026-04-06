@@ -111,3 +111,155 @@ export async function postReadBasicRegistersToPythonSidecar(
 
   return json as RuntimeResponseEnvelope<BasicRegistersPayload>
 }
+
+/** v1 local sidecar queue — enqueue response (202). */
+export interface PythonReadJobEnqueueResponse {
+  jobId: string
+  kind: "readIdentity" | "readBasicRegisters"
+  status: "queued"
+  meterId: string
+  createdAt: string
+  note?: string
+}
+
+export type PythonReadJobLifecycleStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+
+/** Full job record from GET /v1/jobs/{jobId}. */
+export interface PythonReadJobGetResponse {
+  jobId: string
+  kind: "readIdentity" | "readBasicRegisters"
+  status: PythonReadJobLifecycleStatus
+  meterId: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  /** RuntimeResponseEnvelope JSON when worker finished without crashing. */
+  result?: Record<string, unknown>
+  /** Worker crash only; meter failures use result.ok === false. */
+  error?: string
+  note?: string
+}
+
+/**
+ * Server-only: enqueue read-identity job (async execution on sidecar).
+ */
+export async function postReadIdentityJobToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<PythonReadJobEnqueueResponse> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/jobs/read-identity`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as PythonReadJobEnqueueResponse
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as PythonReadJobEnqueueResponse
+}
+
+/**
+ * Server-only: enqueue read-basic-registers job.
+ */
+export async function postReadBasicRegistersJobToPythonSidecar(
+  body: PythonReadBasicRegistersRequest
+): Promise<PythonReadJobEnqueueResponse> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/jobs/read-basic-registers`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as PythonReadJobEnqueueResponse
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as PythonReadJobEnqueueResponse
+}
+
+/**
+ * Server-only: poll job status / result.
+ */
+export async function getPythonReadJobFromSidecar(
+  jobId: string
+): Promise<PythonReadJobGetResponse> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {}
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/jobs/${encodeURIComponent(jobId)}`
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as PythonReadJobGetResponse
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as PythonReadJobGetResponse
+}

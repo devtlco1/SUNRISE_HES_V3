@@ -107,6 +107,6 @@ Then validate **serial** against the meter that showed **`post_aarq_zero_rx`** o
 - Inbound diagnostics: `docs/runtime-ingress.md`, `GET /api/runtime/ingress/status`.
 - Control-plane boundary: `docs/runtime-boundary.md`.
 - Topology comparison (API): `status.mvpAmiTopologyComparison`.
-- **Python sidecar:** `apps/runtime-python/` (FastAPI — `GET /health`, `POST /v1/runtime/read-identity`, `POST /v1/runtime/read-basic-registers`).
-- **Next.js → Python proxy (internal):** `POST /api/internal/python-runtime/read-identity`, `POST /api/internal/python-runtime/read-basic-registers`, `docs/architecture-control-plane-python.md`.
-- **Queue placeholder:** `docs/job-queue-foundation.md`, `lib/jobs/foundation.ts`, `apps/runtime-python/app/jobs/read_job_foundation.py`.
+- **Python sidecar:** `apps/runtime-python/` (FastAPI — direct reads under `/v1/runtime/*`, async jobs under `/v1/jobs/*`).
+- **Next.js → Python proxy (internal):** sync + job enqueue/poll under `app/api/internal/python-runtime/`, `docs/architecture-control-plane-python.md`.
+- **Read-job queue (v1):** `docs/job-queue-foundation.md`, `lib/jobs/foundation.ts`, `apps/runtime-python/app/jobs/local_read_job_queue.py`.

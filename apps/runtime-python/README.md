@@ -17,6 +17,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
   Body: `{"meterId":"hes-mt-demo-1"}` (stub) or real `mvp_ami` config — see below.
 - **Read basic registers:** `POST http://127.0.0.1:8766/v1/runtime/read-basic-registers`  
   Same body shape; `mvp_ami` uses `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` (see `docs/runtime-python-mvp-ami-adapter.md`).
+- **Async read jobs (v1, in-process):**  
+  `POST /v1/jobs/read-identity` / `POST /v1/jobs/read-basic-registers` → **202** + `jobId`;  
+  `GET /v1/jobs/{jobId}` → status + `result` envelope. Not durable. See **`../../docs/job-queue-foundation.md`**.
 
 ## Configuration (environment)
 

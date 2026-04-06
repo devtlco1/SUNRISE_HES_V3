@@ -1,8 +1,8 @@
 """
-Minimal read-job domain foundation — no queue, no workers yet.
+Read-job domain types for v1 local queue and future Redis/Celery replacement.
 
-Future: a worker process will dequeue `ReadJobKind` work items and call the same adapter
-methods as the synchronous HTTP routes (`execute_read_identity`, `execute_read_basic_registers`).
+Execution: `app.jobs.local_read_job_queue` runs jobs by calling the same services as
+direct HTTP (`execute_read_identity`, `execute_read_basic_registers`).
 """
 
 from __future__ import annotations
@@ -21,34 +21,17 @@ class ReadJobKind(str, Enum):
 
 
 class ReadJobStatus(str, Enum):
-    PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
-    COMPLETED = "completed"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
 
 
 class ReadJobRequestShape(BaseModel):
-    """Serializable unit of work (what would be enqueued)."""
+    """Serializable unit of work (enqueue body + kind)."""
 
     meterId: str = Field(..., min_length=1, max_length=128)
     kind: ReadJobKind
     endpointId: Optional[str] = Field(default=None, max_length=256)
     channelHint: Optional[str] = Field(default=None, max_length=256)
     channel: Optional[ChannelSpec] = None
-
-
-class ReadJobPlaceholder(BaseModel):
-    """Mirror of `lib/jobs/foundation.ts` — not persisted."""
-
-    id: str
-    meterId: str
-    operation: ReadJobKind
-    status: ReadJobStatus
-    queueRef: Optional[str] = None
-    createdAtIso: Optional[str] = None
-    finishedAtIso: Optional[str] = None
-
-
-def enqueue_read_job_placeholder(_job: ReadJobRequestShape) -> None:
-    """Reserved: wire to Redis/BullMQ/Celery in a later phase."""
-    raise NotImplementedError("Queue-backed enqueue is not implemented yet.")
