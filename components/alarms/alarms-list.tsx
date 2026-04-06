@@ -1,0 +1,502 @@
+"use client"
+
+import { MoreHorizontalIcon, SearchIcon } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+
+import { AlarmDetailsSheet } from "@/components/alarms/alarm-details-sheet"
+import { TableBodySkeleton } from "@/components/data-table/table-body-skeleton"
+import { TableEmpty } from "@/components/data-table/table-empty"
+import { TablePagination } from "@/components/data-table/table-pagination"
+import { TableShell } from "@/components/data-table/table-shell"
+import { TableToolbar } from "@/components/data-table/table-toolbar"
+import { FilterBar } from "@/components/shared/filter-bar"
+import { FilterSelect } from "@/components/shared/filter-select"
+import { SectionCard } from "@/components/shared/section-card"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  formatAlarmAck,
+  formatAlarmSeverity,
+  formatAlarmState,
+} from "@/lib/alarms/format"
+import { mockAlarmListRows } from "@/lib/mock/alarms"
+import type { AlarmListRow } from "@/types/alarm"
+
+const ALL = "all"
+const UNASSIGNED = "unassigned"
+const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
+
+function AlarmsTableHeaderRow() {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableHead className="w-[120px] bg-muted/25">Alarm</TableHead>
+      <TableHead className="min-w-[140px] bg-muted/25">Meter / Serial</TableHead>
+      <TableHead className="min-w-[200px] bg-muted/25">Location / Feeder</TableHead>
+      <TableHead className="min-w-[140px] bg-muted/25">Type</TableHead>
+      <TableHead className="w-[92px] bg-muted/25">Severity</TableHead>
+      <TableHead className="w-[112px] bg-muted/25">State</TableHead>
+      <TableHead className="w-[120px] bg-muted/25">First Seen</TableHead>
+      <TableHead className="w-[120px] bg-muted/25">Last Seen</TableHead>
+      <TableHead className="w-[72px] bg-muted/25 text-right">Count</TableHead>
+      <TableHead className="w-[130px] bg-muted/25">Acknowledgement</TableHead>
+      <TableHead className="w-[72px] bg-muted/25 text-right">Actions</TableHead>
+    </TableRow>
+  )
+}
+
+type AlarmsListProps = {
+  rows?: AlarmListRow[]
+}
+
+function matchesSearch(row: AlarmListRow, q: string) {
+  if (!q.trim()) return true
+  const n = q.trim().toLowerCase()
+  return [
+    row.id,
+    row.meterId,
+    row.serialNumber,
+    row.customerName,
+    row.feeder,
+    row.zone,
+    row.alarmType,
+    row.summary,
+    row.sourceDomain,
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(n)
+}
+
+export function AlarmsList({ rows: sourceRows = mockAlarmListRows }: AlarmsListProps) {
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState("")
+  const [severityFilter, setSeverityFilter] = useState<string>(ALL)
+  const [typeFilter, setTypeFilter] = useState<string>(ALL)
+  const [stateFilter, setStateFilter] = useState<string>(ALL)
+  const [ackFilter, setAckFilter] = useState<string>(ALL)
+  const [assigneeFilter, setAssigneeFilter] = useState<string>(ALL)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [selected, setSelected] = useState<AlarmListRow | null>(null)
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setLoading(false), 380)
+    return () => window.clearTimeout(t)
+  }, [])
+
+  const resetPage = useCallback(() => setPage(1), [])
+
+  const typeOptions = useMemo(() => {
+    const set = new Set(sourceRows.map((r) => r.alarmType))
+    return [
+      { value: ALL, label: "All alarm types" },
+      ...[...set]
+        .sort((a, b) => a.localeCompare(b))
+        .map((v) => ({ value: v, label: v })),
+    ]
+  }, [sourceRows])
+
+  const assigneeOptions = useMemo(() => {
+    const set = new Set(
+      sourceRows.map((r) => r.assignedTo).filter(Boolean) as string[]
+    )
+    return [
+      { value: ALL, label: "All assignees" },
+      { value: UNASSIGNED, label: "Unassigned" },
+      ...[...set]
+        .sort((a, b) => a.localeCompare(b))
+        .map((v) => ({ value: v, label: v })),
+    ]
+  }, [sourceRows])
+
+  const filtered = useMemo(() => {
+    return sourceRows.filter((row) => {
+      if (!matchesSearch(row, search)) return false
+      if (severityFilter !== ALL && row.severity !== severityFilter) return false
+      if (typeFilter !== ALL && row.alarmType !== typeFilter) return false
+      if (stateFilter !== ALL && row.state !== stateFilter) return false
+      if (ackFilter !== ALL && row.ackState !== ackFilter) return false
+      if (assigneeFilter === UNASSIGNED && row.assignedTo !== null)
+        return false
+      if (
+        assigneeFilter !== ALL &&
+        assigneeFilter !== UNASSIGNED &&
+        row.assignedTo !== assigneeFilter
+      )
+        return false
+      return true
+    })
+  }, [
+    sourceRows,
+    search,
+    severityFilter,
+    typeFilter,
+    stateFilter,
+    ackFilter,
+    assigneeFilter,
+  ])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize) || 1)
+  const currentPage = Math.min(Math.max(1, page), totalPages)
+  const sliceStart = (currentPage - 1) * pageSize
+  const pageRows = filtered.slice(sliceStart, sliceStart + pageSize)
+
+  const filtersActive =
+    search.trim() !== "" ||
+    severityFilter !== ALL ||
+    typeFilter !== ALL ||
+    stateFilter !== ALL ||
+    ackFilter !== ALL ||
+    assigneeFilter !== ALL
+
+  function clearFilters() {
+    setSearch("")
+    setSeverityFilter(ALL)
+    setTypeFilter(ALL)
+    setStateFilter(ALL)
+    setAckFilter(ALL)
+    setAssigneeFilter(ALL)
+    resetPage()
+  }
+
+  function openDetails(row: AlarmListRow) {
+    setSelected(row)
+    setSheetOpen(true)
+  }
+
+  function onSheetOpenChange(open: boolean) {
+    setSheetOpen(open)
+    if (!open) setSelected(null)
+  }
+
+  const emptyCatalog = sourceRows.length === 0
+  const noResults = !emptyCatalog && filtered.length === 0
+
+  return (
+    <>
+      <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          Triage
+        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" disabled>
+            Acknowledge selected
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled>
+            Assign selected
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={clearFilters}
+            disabled={!filtersActive}
+          >
+            Clear filters
+          </Button>
+          <Button type="button" size="sm" variant="secondary" disabled>
+            Export
+          </Button>
+        </div>
+      </div>
+
+      <FilterBar>
+        <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <FilterSelect
+              id="alm-filter-severity"
+              label="Severity"
+              value={severityFilter}
+              onChange={(v) => {
+                setSeverityFilter(v)
+                resetPage()
+              }}
+              options={[
+                { value: ALL, label: "All severities" },
+                { value: "critical", label: "Critical" },
+                { value: "major", label: "Major" },
+                { value: "minor", label: "Minor" },
+                { value: "warning", label: "Warning" },
+                { value: "info", label: "Info" },
+              ]}
+            />
+            <FilterSelect
+              id="alm-filter-type"
+              label="Alarm type"
+              value={typeFilter}
+              onChange={(v) => {
+                setTypeFilter(v)
+                resetPage()
+              }}
+              options={typeOptions}
+            />
+            <FilterSelect
+              id="alm-filter-state"
+              label="State"
+              value={stateFilter}
+              onChange={(v) => {
+                setStateFilter(v)
+                resetPage()
+              }}
+              options={[
+                { value: ALL, label: "All states" },
+                { value: "open", label: "Open" },
+                { value: "acknowledged", label: "Acknowledged" },
+                { value: "in_progress", label: "In progress" },
+                { value: "cleared", label: "Cleared" },
+                { value: "suppressed", label: "Suppressed" },
+              ]}
+            />
+            <FilterSelect
+              id="alm-filter-ack"
+              label="Acknowledgement"
+              value={ackFilter}
+              onChange={(v) => {
+                setAckFilter(v)
+                resetPage()
+              }}
+              options={[
+                { value: ALL, label: "All" },
+                { value: "unacknowledged", label: "Unacknowledged" },
+                { value: "acknowledged", label: "Acknowledged" },
+                { value: "assigned", label: "Assigned" },
+              ]}
+            />
+            <FilterSelect
+              id="alm-filter-assignee"
+              label="Assigned to"
+              value={assigneeFilter}
+              onChange={(v) => {
+                setAssigneeFilter(v)
+                resetPage()
+              }}
+              options={assigneeOptions}
+            />
+          </div>
+          {filtersActive ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={clearFilters}
+            >
+              Clear filters
+            </Button>
+          ) : null}
+        </div>
+      </FilterBar>
+
+      <SectionCard
+        title="Active alarms"
+        description="Operational alarm feed — filters and triage actions are mock-only."
+      >
+        <TableShell>
+          <TableToolbar
+            left={
+              <div className="relative w-full min-w-[200px] max-w-sm flex-1">
+                <SearchIcon
+                  className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <Input
+                  className="h-8 pl-8"
+                  placeholder="Search alarm ID, meter, site, type, summary…"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value)
+                    resetPage()
+                  }}
+                  aria-label="Search alarms"
+                />
+              </div>
+            }
+            right={
+              <>
+                <Button type="button" variant="outline" size="sm" disabled>
+                  Refresh
+                </Button>
+                <Button type="button" variant="secondary" size="sm" disabled>
+                  Columns
+                </Button>
+              </>
+            }
+          />
+
+          {loading ? (
+            <div className="relative min-w-0">
+              <div className="min-w-[1280px]">
+                <Table>
+                  <TableHeader>
+                    <AlarmsTableHeaderRow />
+                  </TableHeader>
+                  <TableBodySkeleton rows={6} columns={11} />
+                </Table>
+              </div>
+            </div>
+          ) : emptyCatalog || noResults ? null : (
+            <div className="relative min-w-0">
+              <div className="min-w-[1280px]">
+                <Table>
+                  <TableHeader>
+                    <AlarmsTableHeaderRow />
+                  </TableHeader>
+                  <TableBody>
+                    {pageRows.map((row) => {
+                      const sev = formatAlarmSeverity(row.severity)
+                      const st = formatAlarmState(row.state)
+                      const ack = formatAlarmAck(row.ackState)
+                      return (
+                        <TableRow key={row.id}>
+                          <TableCell className="align-top">
+                            <button
+                              type="button"
+                              onClick={() => openDetails(row)}
+                              className="text-left font-mono text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                            >
+                              {row.id}
+                            </button>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <div className="text-sm font-medium text-foreground">
+                              {row.meterId}
+                            </div>
+                            <div className="tabular-nums text-xs text-muted-foreground">
+                              {row.serialNumber}
+                            </div>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <div className="max-w-[220px] truncate text-sm text-foreground">
+                              {row.customerName}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {row.feeder} · {row.zone}
+                            </div>
+                          </TableCell>
+                          <TableCell className="align-top text-sm text-muted-foreground">
+                            {row.alarmType}
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <StatusBadge variant={sev.variant}>{sev.label}</StatusBadge>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <StatusBadge variant={st.variant}>{st.label}</StatusBadge>
+                          </TableCell>
+                          <TableCell className="align-top tabular-nums text-xs text-muted-foreground">
+                            {row.firstSeen}
+                          </TableCell>
+                          <TableCell className="align-top tabular-nums text-xs text-muted-foreground">
+                            {row.lastSeen}
+                          </TableCell>
+                          <TableCell className="align-top text-right tabular-nums text-sm text-foreground">
+                            {row.occurrenceCount}
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <StatusBadge variant={ack.variant}>{ack.label}</StatusBadge>
+                          </TableCell>
+                          <TableCell className="align-top text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                aria-label={`Actions for ${row.id}`}
+                              >
+                                <MoreHorizontalIcon className="size-4" />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-52">
+                                <DropdownMenuLabel className="font-mono text-xs text-muted-foreground">
+                                  {row.id}
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => openDetails(row)}
+                                >
+                                  View details
+                                </DropdownMenuItem>
+                                <DropdownMenuItem disabled>View meter</DropdownMenuItem>
+                                <DropdownMenuItem disabled>
+                                  View connectivity
+                                </DropdownMenuItem>
+                                <DropdownMenuItem disabled>
+                                  Open commands
+                                </DropdownMenuItem>
+                                <DropdownMenuItem disabled>
+                                  Acknowledge
+                                </DropdownMenuItem>
+                                <DropdownMenuItem disabled>Assign</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          {!loading && emptyCatalog ? (
+            <TableEmpty
+              title="No active alarms"
+              description="When the alarm feed is connected, rows will use this layout. Pass an empty list to verify this state."
+            />
+          ) : null}
+
+          {!loading && noResults ? (
+            <TableEmpty
+              title="No alarms match filters"
+              description="Clear filters or broaden severity and state criteria."
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={clearFilters}
+                >
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : null}
+
+          <TablePagination
+            page={currentPage}
+            pageSize={pageSize}
+            total={filtered.length}
+            onPrevious={() => setPage(Math.max(1, currentPage - 1))}
+            onNext={() => setPage(Math.min(totalPages, currentPage + 1))}
+            pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+            onPageSizeChange={(n) => {
+              setPageSize(n)
+              setPage(1)
+            }}
+          />
+        </TableShell>
+      </SectionCard>
+
+      <AlarmDetailsSheet
+        alarm={selected}
+        open={sheetOpen}
+        onOpenChange={onSheetOpenChange}
+      />
+    </>
+  )
+}

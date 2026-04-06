@@ -28,6 +28,7 @@ This document captures Day-1 layout rules so pages stay consistent. Prefer editi
 - Empty datasets: use `TableEmpty` (built on `EmptyState`) so empty and filled states share width and tone.
 - **Connectivity** is the **canonical** operational table: dense columns, `FilterBar` + toolbar search, row actions, details sheet, skeleton loading, pagination with rows-per-page, empty and no-match states. **Meters** follows the same pattern for registry-specific fields.
 - **Commands** adds a **workflow layout**: request panel + jobs table (same table chrome as Connectivity) + inline selected-job detail with per-meter results; use this when the screen is process-oriented, not list-only.
+- **Alarms** uses the **Connectivity-style** list + **compact triage strip** above filters (bulk actions disabled until selection logic exists); detail **sheet** matches other operational panels.
 - Shared detail layout primitives: `DetailBlock` and `DlGrid` in `components/shared/entity-detail-blocks.tsx`.
 
 ## Badges
