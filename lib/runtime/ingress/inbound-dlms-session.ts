@@ -8,6 +8,10 @@ import {
 } from "@/lib/runtime/ingress/inbound-profile"
 import { flushIngressTraceToFile } from "@/lib/runtime/ingress/protocol-trace-file"
 import {
+  attachIngressSocketCloseInstrumentation,
+  finalizeIngressSocketCloseDiagnostic,
+  markIngressSocketServerTeardownStarted,
+  recordIngressReadBurstForSocketClose,
   traceAareHuntStep,
   traceMeterAccumSnapshot,
   traceOutboundAarqDiagnostic,
@@ -56,7 +60,7 @@ import {
   HDLC_UA,
   splitHdlcFrames,
 } from "@/lib/runtime/real/hdlc-frame-variable"
-import { readSocketBurst, writeAll } from "@/lib/runtime/real/dlms-transport-session"
+import { readSocketBurstWithReason, writeAll } from "@/lib/runtime/real/dlms-transport-session"
 
 import type { IngressSessionClass } from "@/lib/runtime/ingress/types"
 
@@ -115,11 +119,13 @@ async function extendAccum(
   profile: InboundMeterProtocolProfile,
   rxPhase: string
 ): Promise<Acc> {
-  const chunk = await readSocketBurst(
+  const burst = await readSocketBurstWithReason(
     socket,
     profile.dlmsReadTimeoutMs,
     profile.dlmsReadIdleMs
   )
+  recordIngressReadBurstForSocketClose(rxPhase, burst.endReason, burst.data.length)
+  const chunk = burst.data
   const next = new Uint8Array(accum.length + chunk.length)
   next.set(accum, 0)
   next.set(chunk, accum.length)
@@ -139,6 +145,7 @@ export async function runInboundDlmsOnSocket(
   if (!profile.sessionEnabled || !profile.valid) return
 
   socket.setTimeout(0)
+  attachIngressSocketCloseInstrumentation(socket)
 
   let meter = Buffer.from(profile.meterServerAddress)
   const client = profile.clientAddressWire
@@ -147,11 +154,17 @@ export async function runInboundDlmsOnSocket(
   try {
     traceProtocolStep("session_start", "inbound_dlms")
     setInboundProtocolPhase("initial_read", "")
-    const first = await readSocketBurst(
+    const firstBurst = await readSocketBurstWithReason(
       socket,
       profile.dlmsReadTimeoutMs,
       profile.dlmsReadIdleMs
     )
+    recordIngressReadBurstForSocketClose(
+      "initial_read",
+      firstBurst.endReason,
+      firstBurst.data.length
+    )
+    const first = firstBurst.data
     accum = Uint8Array.from(first) as Acc
     touchAccum(accum)
     traceMeterAccumSnapshot(accum, "initial_read")
@@ -454,6 +467,7 @@ export async function runInboundDlmsOnSocket(
       "inbound_session_failed"
     )
   } finally {
+    markIngressSocketServerTeardownStarted()
     traceMeterAccumSnapshot(accum, "session_finally")
     if (profile.sendDiscBeforeClose) {
       try {
@@ -461,15 +475,23 @@ export async function runInboundDlmsOnSocket(
         traceOutboundFrame("disc_final", disc)
         traceProtocolStep("tx_disc_final", `${disc.length}B`)
         await writeAll(socket, disc)
-        await readSocketBurst(
+        const drain = await readSocketBurstWithReason(
           socket,
           Math.max(300, profile.discDrainTimeoutMs),
           Math.min(150, profile.dlmsReadIdleMs)
+        )
+        recordIngressReadBurstForSocketClose(
+          "disc_drain",
+          drain.endReason,
+          drain.data.length
         )
       } catch {
         /* best-effort */
       }
     }
+    finalizeIngressSocketCloseDiagnostic({
+      discConfigured: profile.sendDiscBeforeClose,
+    })
     flushIngressTraceToFile("session_end")
     if (!socket.destroyed) socket.destroy()
   }

@@ -52,6 +52,40 @@ export type IngressOutboundAarqDiagPublic = OutboundAarqPayloadDiag & {
   clientAddressHexForIframe: string
 }
 
+/** Who ended the inbound TCP session and why (observational). */
+export type IngressSocketCloseOrigin =
+  | "closed_after_disc_final"
+  | "closed_after_post_aarq_timeout"
+  | "socket_closed_by_peer"
+  | "socket_error_before_close"
+
+/** Timestamps and classification for the meter TCP session teardown. */
+export type IngressSocketCloseDiagnosticPublic = {
+  closeOrigin: IngressSocketCloseOrigin
+  /** ISO time of the last outbound HDLC (or other) frame recorded on the trace. */
+  lastOutboundFrameIso: string | null
+  lastOutboundFramePhase: string | null
+  /** ISO time when a post-AARQ read burst ended on `max_wait_ms` (RX deadline). */
+  timeoutExpiryIso: string | null
+  /** Phase tag for the read that hit `max_wait_ms` (post-AARQ hunt only when applicable). */
+  timeoutExpiryPhase: string | null
+  /** ISO time of the TCP `close` event (if observed). */
+  socketCloseIso: string | null
+  socketCloseHadError: boolean
+  /** Whether DISC was written in `finally` (best-effort). */
+  discFinalAttempted: boolean
+  discFinalIso: string | null
+  /** True when a post-AARQ burst returned 0 bytes because `max_wait_ms` fired. */
+  postAarqMaxWaitZeroRx: boolean
+  /** Meter appeared to close TCP before server began intentional teardown (`finally`). */
+  peerClosedBeforeServerTeardown: boolean
+  /** First `error` event on the socket during the session, if any. */
+  socketErrorIso: string | null
+  socketErrorMessage: string | null
+  finalizedAtIso: string
+  detailNote: string
+}
+
 /** Bounded operator-facing summary of how the server built and sent the AARQ HDLC leg. */
 export type OutboundAssociationHdlcDiagPublic = {
   uaNegotiatedParseSource: string
@@ -146,6 +180,8 @@ export type IngressProtocolTracePublic = {
    * segmentation (`getHdlcFrame` / `getLnMessages` behaviour).
    */
   lastOutboundAssociationHdlcDiagnostic: OutboundAssociationHdlcDiagPublic | null
+  /** TCP teardown: who closed and key timestamps (last TX, read deadline, socket close). */
+  socketCloseDiagnostic: IngressSocketCloseDiagnosticPublic | null
 }
 
 export type MeterIngressConfig = {

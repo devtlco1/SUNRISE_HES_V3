@@ -1,10 +1,15 @@
+import type net from "node:net"
+
 import type {
   IngressAareHuntReportPublic,
   IngressOutboundAarqDiagPublic,
   IngressProtocolTracePublic,
+  IngressSocketCloseDiagnosticPublic,
+  IngressSocketCloseOrigin,
   OutboundAssociationHdlcDiagPublic,
 } from "@/lib/runtime/ingress/types"
 import { getIngressProcessRuntime } from "@/lib/runtime/ingress/runtime-global"
+import type { SocketBurstEndReason } from "@/lib/runtime/real/dlms-transport-session"
 import { buildAareSearchReport } from "@/lib/runtime/real/dlms-aare-hunt"
 import {
   capHex,
@@ -20,6 +25,82 @@ const MAX_ACCUM_HEX_CHARS = 24000
 const MAX_FRAME_HEX_CHARS = 4096
 
 let loggedFrameFingerprints = new Set<string>()
+
+type MutableIngressSocketSession = {
+  lastOutboundIso: string | null
+  lastOutboundPhase: string | null
+  timeoutExpiryIso: string | null
+  timeoutExpiryPhase: string | null
+  postAarqMaxWaitZeroRx: boolean
+  socketErrorIso: string | null
+  socketErrorMessage: string | null
+  socketCloseIso: string | null
+  socketCloseHadError: boolean
+  peerClosedBeforeServerTeardown: boolean
+  serverTeardownStarted: boolean
+  discFinalAttempted: boolean
+  discFinalIso: string | null
+}
+
+function emptyMutableSocketSession(): MutableIngressSocketSession {
+  return {
+    lastOutboundIso: null,
+    lastOutboundPhase: null,
+    timeoutExpiryIso: null,
+    timeoutExpiryPhase: null,
+    postAarqMaxWaitZeroRx: false,
+    socketErrorIso: null,
+    socketErrorMessage: null,
+    socketCloseIso: null,
+    socketCloseHadError: false,
+    peerClosedBeforeServerTeardown: false,
+    serverTeardownStarted: false,
+    discFinalAttempted: false,
+    discFinalIso: null,
+  }
+}
+
+let mutableSocketSession = emptyMutableSocketSession()
+
+function isPostAarqReadPhase(phase: string): boolean {
+  return phase === "after_aarq" || phase.startsWith("await_aare_")
+}
+
+/** Attach once per accepted inbound DLMS socket (before reads/writes). */
+export function attachIngressSocketCloseInstrumentation(socket: net.Socket): void {
+  socket.once("error", (err: Error) => {
+    mutableSocketSession.socketErrorIso = new Date().toISOString()
+    mutableSocketSession.socketErrorMessage = err.message
+  })
+  socket.once("close", (hadError: boolean) => {
+    mutableSocketSession.socketCloseIso = new Date().toISOString()
+    mutableSocketSession.socketCloseHadError = Boolean(hadError)
+    if (!mutableSocketSession.serverTeardownStarted) {
+      mutableSocketSession.peerClosedBeforeServerTeardown = true
+    }
+  })
+}
+
+/** Call at the start of inbound session `finally` before DISC / destroy. */
+export function markIngressSocketServerTeardownStarted(): void {
+  mutableSocketSession.serverTeardownStarted = true
+}
+
+export function recordIngressReadBurstForSocketClose(
+  phase: string,
+  endReason: SocketBurstEndReason,
+  byteLength: number
+): void {
+  if (!isPostAarqReadPhase(phase)) return
+  if (endReason === "max_wait_ms") {
+    const iso = new Date().toISOString()
+    mutableSocketSession.timeoutExpiryIso = iso
+    mutableSocketSession.timeoutExpiryPhase = phase
+    if (byteLength === 0) {
+      mutableSocketSession.postAarqMaxWaitZeroRx = true
+    }
+  }
+}
 
 export function emptyIngressProtocolTrace(): IngressProtocolTracePublic {
   return {
@@ -40,6 +121,7 @@ export function emptyIngressProtocolTrace(): IngressProtocolTracePublic {
     lastAareHuntReport: null,
     lastOutboundAarqDiagnostic: null,
     lastOutboundAssociationHdlcDiagnostic: null,
+    socketCloseDiagnostic: null,
   }
 }
 
@@ -52,6 +134,7 @@ function trace(): IngressProtocolTracePublic {
 /** New TCP session: reset trace bucket and per-session frame deduplication. */
 export function markNewIngressProtocolSession(): void {
   loggedFrameFingerprints = new Set()
+  mutableSocketSession = emptyMutableSocketSession()
   getIngressProcessRuntime().diagnostics.inboundProtocolTrace = emptyIngressProtocolTrace()
 }
 
@@ -127,14 +210,79 @@ export function traceOutboundAssociationHdlcDiagnostic(diag: OutboundAssociation
 
 export function traceOutboundFrame(phase: string, data: Buffer): void {
   const t = trace()
+  const iso = new Date().toISOString()
+  mutableSocketSession.lastOutboundIso = iso
+  mutableSocketSession.lastOutboundPhase = phase
+  if (phase === "disc_final") {
+    mutableSocketSession.discFinalAttempted = true
+    mutableSocketSession.discFinalIso = iso
+  }
   const hex = capHex(data.toString("hex"), MAX_FRAME_HEX_CHARS)
   if (t.outboundFrames.length >= MAX_OUTBOUND_FRAME_LOG) t.outboundFrames.shift()
   t.outboundFrames.push({
-    t: new Date().toISOString(),
+    t: iso,
     phase,
     frameHex: hex,
     byteLength: data.length,
   })
+}
+
+/**
+ * Freeze socket-close evidence onto the protocol trace (call from inbound session `finally`).
+ */
+export function finalizeIngressSocketCloseDiagnostic(params: {
+  discConfigured: boolean
+}): void {
+  const m = mutableSocketSession
+  let closeOrigin: IngressSocketCloseOrigin
+  const notes: string[] = []
+
+  if (m.socketErrorIso) {
+    closeOrigin = "socket_error_before_close"
+    notes.push("socket_error_event_observed")
+  } else if (m.peerClosedBeforeServerTeardown) {
+    if (m.socketCloseHadError) {
+      closeOrigin = "socket_error_before_close"
+      notes.push("peer_close_with_hadError_true")
+    } else {
+      closeOrigin = "socket_closed_by_peer"
+      notes.push("tcp_close_before_server_teardown")
+    }
+  } else if (m.postAarqMaxWaitZeroRx) {
+    closeOrigin = "closed_after_post_aarq_timeout"
+    notes.push("post_aarq_read_hit_max_wait_ms_with_0_rx_bytes")
+    if (m.discFinalAttempted) notes.push("disc_still_sent_in_finally")
+  } else if (m.discFinalAttempted || params.discConfigured) {
+    closeOrigin = "closed_after_disc_final"
+    if (!m.discFinalAttempted && params.discConfigured) {
+      notes.push("disc_configured_but_not_traced_written")
+    }
+    if (!params.discConfigured) {
+      notes.push("disc_disabled_destroy_only")
+    }
+  } else {
+    closeOrigin = "closed_after_disc_final"
+    notes.push("server_destroy_fallback")
+  }
+
+  const pub: IngressSocketCloseDiagnosticPublic = {
+    closeOrigin,
+    lastOutboundFrameIso: m.lastOutboundIso,
+    lastOutboundFramePhase: m.lastOutboundPhase,
+    timeoutExpiryIso: m.timeoutExpiryIso,
+    timeoutExpiryPhase: m.timeoutExpiryPhase,
+    socketCloseIso: m.socketCloseIso,
+    socketCloseHadError: m.socketCloseHadError,
+    discFinalAttempted: m.discFinalAttempted,
+    discFinalIso: m.discFinalIso,
+    postAarqMaxWaitZeroRx: m.postAarqMaxWaitZeroRx,
+    peerClosedBeforeServerTeardown: m.peerClosedBeforeServerTeardown,
+    socketErrorIso: m.socketErrorIso,
+    socketErrorMessage: m.socketErrorMessage,
+    finalizedAtIso: new Date().toISOString(),
+    detailNote: notes.join(";"),
+  }
+  trace().socketCloseDiagnostic = pub
 }
 
 function leadingGarbageHex(accum: Uint8Array): string | null {
