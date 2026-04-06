@@ -75,6 +75,86 @@ export async function postReadIdentityToPythonSidecar(
   return json as RuntimeResponseEnvelope<IdentityPayload>
 }
 
+/** Inbound modem TCP listener status (Python sidecar). */
+export type TcpListenerStatusResponse = Record<string, unknown>
+
+/**
+ * Server-only: GET /v1/runtime/tcp-listener/status
+ */
+export async function getTcpListenerStatusFromSidecar(): Promise<TcpListenerStatusResponse> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {}
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/status`
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as TcpListenerStatusResponse
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as TcpListenerStatusResponse
+}
+
+/**
+ * Server-only: POST /v1/runtime/tcp-listener/read-identity (staged inbound modem socket).
+ */
+export async function postTcpListenerReadIdentityToPythonSidecar(
+  body: PythonReadIdentityRequest
+): Promise<RuntimeResponseEnvelope<IdentityPayload>> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/read-identity`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as RuntimeResponseEnvelope<IdentityPayload>
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  return json as RuntimeResponseEnvelope<IdentityPayload>
+}
+
 /**
  * Server-only: POST /v1/runtime/read-basic-registers on the Python sidecar.
  */

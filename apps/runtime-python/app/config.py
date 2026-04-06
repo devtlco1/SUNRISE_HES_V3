@@ -47,6 +47,18 @@ class Settings(BaseSettings):
         default=15.0,
         description="Default TCP connect timeout (s) when channel.type is tcp/tcp_client (read-identity).",
     )
+    tcp_listener_enabled: bool = Field(
+        default=False,
+        description="When true, start background listener on tcp_listener_host:tcp_listener_port.",
+    )
+    tcp_listener_host: str = Field(default="0.0.0.0", description="Bind address for inbound modem TCP.")
+    tcp_listener_port: int = Field(
+        default=4059,
+        ge=1,
+        le=65535,
+        description="Listen port for inbound modem (distinct from FastAPI SUNRISE_RUNTIME_PORT).",
+    )
+    tcp_listener_backlog: int = Field(default=8, ge=1, le=128, description="listen() backlog.")
 
 
 @lru_cache

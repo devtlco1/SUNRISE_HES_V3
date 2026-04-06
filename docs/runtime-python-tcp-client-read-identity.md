@@ -1,11 +1,12 @@
-# TCP client / modem channel — `read-identity` only (experimental)
+# TCP **client** (outbound dial) — `read-identity` only (secondary for many modem topologies)
 
 ## Baseline
 
 - **Serial** (`MeterClient.run_phase1`) remains the **proven** production-style path (host → RS-485 / local serial).
-- **TCP client** uses MVP-AMI’s **`MeterClient.run_phase1_tcp_socket`**: outbound `socket.create_connection` to `host:port`, then the same **IEC-over-bytes** + **Gurux HDLC association** + **OBIS read** pipeline as the TCP listener POC, but as a **client** to a modem or transparent GPRS tunnel.
+- **Inbound modem topology** (modem programmed with **server** IP/port) should use the **Python TCP listener + staged socket** — see **`docs/runtime-python-tcp-modem-listener.md`**. Outbound dial here is **not** the primary fit when the modem initiates TCP to you.
+- **TCP client** (this doc) uses MVP-AMI’s **`MeterClient.run_phase1_tcp_socket`** after **`socket.create_connection`** to `channel.host:port` — useful for lab/tunnel endpoints where **this host** dials **out**.
 
-This step implements **only** `POST /v1/runtime/read-identity` over TCP. **`read-basic-registers`**, discovery, and jobs beyond identity are still **serial-only** unless extended later.
+This path implements **only** `POST /v1/runtime/read-identity` with `channel.type` `tcp` / `tcp_client`. **`read-basic-registers`**, discovery, and jobs beyond identity are still **serial-only** unless extended later.
 
 ## Request shape
 

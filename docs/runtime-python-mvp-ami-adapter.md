@@ -65,6 +65,10 @@ This documents **`SUNRISE_RUNTIME_ADAPTER=mvp_ami`**: a local checkout of **[MVP
 
 When `channel.type` is `serial` and `devicePath` is set, it overrides **`serial.port_primary`** in the loaded MVP-AMI config for that call.
 
+## Inbound modem TCP listener (`read-identity` only)
+
+When the **modem dials the server**, enable **`SUNRISE_RUNTIME_TCP_LISTENER_*`** and use **`/v1/runtime/tcp-listener/*`** — **`docs/runtime-python-tcp-modem-listener.md`**.
+
 ## TCP client (`read-identity` only)
 
 ```json

@@ -11,6 +11,7 @@ from app.routes.discovery_snapshots_v1 import router as discovery_snapshots_rout
 from app.routes.health import router as health_router
 from app.routes.jobs_v1 import router as jobs_v1_router
 from app.routes.runtime_v1 import router as runtime_v1_router
+from app.routes.tcp_listener_v1 import router as tcp_listener_v1_router
 
 configure_logging()
 log = logging.getLogger(__name__)
@@ -21,8 +22,10 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.jobs.local_read_job_queue import start_read_job_worker, stop_read_job_worker
+    from app.tcp_listener.staged_modem_listener import get_tcp_modem_listener
 
     start_read_job_worker()
+    get_tcp_modem_listener().start()
     log.info(
         "startup",
         extra={
@@ -31,9 +34,11 @@ async def lifespan(app: FastAPI):
             "adapter": settings.adapter,
             "auth_configured": bool(settings.service_token),
             "read_job_worker": True,
+            "tcp_listener_enabled": bool(settings.tcp_listener_enabled),
         },
     )
     yield
+    get_tcp_modem_listener().stop()
     stop_read_job_worker()
 
 
@@ -48,3 +53,4 @@ app.include_router(health_router)
 app.include_router(runtime_v1_router)
 app.include_router(discovery_snapshots_router)
 app.include_router(jobs_v1_router)
+app.include_router(tcp_listener_v1_router)

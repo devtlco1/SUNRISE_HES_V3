@@ -15,6 +15,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8766 --reload
 - **Health:** `GET http://127.0.0.1:8766/health`
 - **Read identity:** `POST http://127.0.0.1:8766/v1/runtime/read-identity`  
   Body: `{"meterId":"hes-mt-demo-1"}` (stub) or real `mvp_ami` config — see below.
+- **Inbound modem TCP (staged socket):** when `SUNRISE_RUNTIME_TCP_LISTENER_ENABLED=true`, see **`../../docs/runtime-python-tcp-modem-listener.md`** — `GET /v1/runtime/tcp-listener/status`, `POST /v1/runtime/tcp-listener/read-identity`.
 - **Read basic registers:** `POST http://127.0.0.1:8766/v1/runtime/read-basic-registers`  
   Same body shape; `mvp_ami` uses `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` (see `docs/runtime-python-mvp-ami-adapter.md`).
 - **Discover association object list:** `POST /v1/runtime/discover-supported-obis` — see **`../../docs/runtime-python-discovery.md`**.

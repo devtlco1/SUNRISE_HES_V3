@@ -199,13 +199,6 @@ def _catalog_integrity_note(
     return f"empty_unexpected_raw_count_{cnt}_normalization_input_{instr.normalizationInputCount}"
 
 
-def _error_detail_transport_mode(internal_mode: str) -> str:
-    """Envelope `transportMode` string for operators (tcp path uses tcp_client, not internal 'tcp')."""
-    if internal_mode == "tcp":
-        return "tcp_client"
-    return internal_mode
-
-
 def _early_transport_failures(
     *,
     meter_id: str,
@@ -213,15 +206,15 @@ def _early_transport_failures(
     started: datetime,
     finished: datetime,
     diags: List[Any],
-    transport_mode: str = "serial",
+    transport_layer: str = "serial",
+    envelope_transport_mode: str = "serial",
 ) -> Optional[RuntimeResponseEnvelope]:
     open_d = find_stage(diags, "open_port")
     assoc_d = find_stage(diags, "association")
     init_d = find_stage(diags, "initial_request")
     diag_dump = diagnostic_dump(diags)
-    tm = _error_detail_transport_mode(transport_mode)
 
-    if transport_mode == "serial":
+    if transport_layer == "serial":
         transport_ok = bool(open_d and open_d.success)
         if not transport_ok:
             return _failure_envelope(
@@ -259,7 +252,7 @@ def _early_transport_failures(
                 detail_code="MVP_AMI_TCP_PHASE1_RUNTIME_ERROR",
                 err_details={
                     "mvpAmiDiagnostics": diag_dump,
-                    "transportMode": "tcp_client",
+                    "transportMode": envelope_transport_mode,
                     "phase1RuntimeTcp": getattr(tcp_rt, "details", {}) or {},
                 },
             )
@@ -281,7 +274,7 @@ def _early_transport_failures(
             detail_code="IEC_HANDSHAKE_FAILED",
             err_details={
                 "mvpAmiDiagnostics": diag_dump,
-                "transportMode": tm,
+                "transportMode": envelope_transport_mode,
             },
         )
 
@@ -302,7 +295,10 @@ def _early_transport_failures(
                 verified=False,
                 outcome="attempted_failed",
                 detail_code="MVP_AMI_CANCELLED",
-                err_details={"mvpAmiDiagnostics": diag_dump, "transportMode": tm},
+                err_details={
+                    "mvpAmiDiagnostics": diag_dump,
+                    "transportMode": envelope_transport_mode,
+                },
             )
         return _failure_envelope(
             meter_id=meter_id,
@@ -318,7 +314,10 @@ def _early_transport_failures(
             verified=False,
             outcome="attempted_failed",
             detail_code="ASSOCIATION_NOT_REACHED",
-            err_details={"mvpAmiDiagnostics": diag_dump, "transportMode": tm},
+            err_details={
+                "mvpAmiDiagnostics": diag_dump,
+                "transportMode": envelope_transport_mode,
+            },
         )
 
     if not assoc_d.success:
@@ -339,7 +338,7 @@ def _early_transport_failures(
             err_details={
                 "mvpAmiDiagnostics": diag_dump,
                 "association": getattr(assoc_d, "details", {}),
-                "transportMode": tm,
+                "transportMode": envelope_transport_mode,
             },
         )
 
@@ -359,14 +358,20 @@ def _read_identity_finish_phase1_result(
     """Common tail for serial `run_phase1` and TCP `run_phase1_tcp_socket` MeterResult."""
     finished = datetime.now(timezone.utc)
     diags = result.diagnostics or []
-    early_mode = "serial" if transport_kind == "serial" else "tcp"
+    transport_layer = "serial" if transport_kind == "serial" else "tcp"
+    envelope_transport_mode = (
+        "serial"
+        if transport_kind == "serial"
+        else ("tcp_inbound" if transport_kind == "tcp_listener" else "tcp_client")
+    )
     early = _early_transport_failures(
         meter_id=request.meterId,
         operation="readIdentity",
         started=started,
         finished=finished,
         diags=diags,
-        transport_mode=early_mode,
+        transport_layer=transport_layer,
+        envelope_transport_mode=envelope_transport_mode,
     )
     if early is not None:
         return early
@@ -386,7 +391,7 @@ def _read_identity_finish_phase1_result(
         "row": row,
         "mvpAmiDiagnostics": diag_dump,
         "readObis": getattr(read_d, "__dict__", {}) if read_d else None,
-        "transportMode": transport_kind,
+        "transportMode": envelope_transport_mode,
     }
     if tcp_endpoint:
         id_err_extras["tcpEndpoint"] = tcp_endpoint
@@ -414,16 +419,23 @@ def _read_identity_finish_phase1_result(
     port_ref = getattr(result, "port_used", None) or getattr(
         getattr(boot.app_cfg, "serial", None), "port_primary", None
     )
-    if transport_kind == "tcp_client" and tcp_endpoint:
+    if transport_kind in ("tcp_client", "tcp_listener") and tcp_endpoint:
         port_ref = tcp_endpoint
 
     if transport_kind == "tcp_client":
         msg = (
             f"Identity OBIS {obis} read via MVP-AMI TCP client path "
             f"(endpoint={tcp_endpoint!r}, verifiedOnWire={verified}). "
-            "Experimental modem/GPRS-style transport — treat as evidence, not guaranteed production parity with serial."
+            "Outbound dial — secondary for modem-programmed server topology; prefer inbound listener when the modem connects to you."
         )
         detail = "MVP_AMI_IDENTITY_OK_TCP_CLIENT"
+    elif transport_kind == "tcp_listener":
+        msg = (
+            f"Identity OBIS {obis} read via MVP-AMI staged inbound TCP listener "
+            f"(modem {tcp_endpoint!r}, verifiedOnWire={verified}). "
+            "Modem-initiated TCP to this server — experimental; serial remains the proven baseline."
+        )
+        detail = "MVP_AMI_IDENTITY_OK_TCP_INBOUND"
     else:
         msg = (
             f"Identity OBIS {obis} read via MVP-AMI serial path "
@@ -656,6 +668,124 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             tcp_endpoint=None,
         )
 
+    def read_identity_on_accepted_tcp_socket(
+        self,
+        request: ReadIdentityRequest,
+        sock: socket.socket,
+        remote_endpoint: str,
+    ) -> RuntimeResponseEnvelope:
+        """
+        Run MVP-AMI `run_phase1_tcp_socket` on an already-accepted inbound modem socket.
+        Caller owns the socket and should close it after this returns.
+        """
+        settings = get_settings()
+        started = datetime.now(timezone.utc)
+
+        boot = mvp_ami_bootstrap(settings, None)
+        if isinstance(boot, MvpAmiBootstrapFailure):
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readIdentity",
+                started=started,
+                finished=finished,
+                message=boot.message,
+                code=boot.code,
+                transport_state="disconnected",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code=boot.code,
+                err_details={**(boot.details or {}), "transportMode": "tcp_inbound"},
+            )
+
+        obis = settings.identity_obis.strip() or "0.0.96.1.1.255"
+        mc_logger = logging.getLogger("sunrise.mvp_ami.meter_client")
+        mc_logger.setLevel(settings.log_level.upper())
+
+        try:
+            client = boot.meter_mod.MeterClient(boot.app_cfg, mc_logger)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("mvp_ami_meter_client_construct_failed_tcp_inbound")
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readIdentity",
+                started=started,
+                finished=finished,
+                message=f"MVP-AMI MeterClient construct failed: {exc}",
+                code="MVP_AMI_RUNTIME_ERROR",
+                transport_state="error",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="MVP_AMI_RUNTIME_ERROR",
+                err_details={"error": str(exc), "transportMode": "tcp_inbound"},
+            )
+
+        run_tcp = getattr(client, "run_phase1_tcp_socket", None)
+        if run_tcp is None:
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readIdentity",
+                started=started,
+                finished=finished,
+                message=(
+                    "MVP-AMI MeterClient has no run_phase1_tcp_socket — "
+                    "update MVP-AMI checkout (inbound TCP path requires it)."
+                ),
+                code="MVP_AMI_TCP_SOCKET_API_MISSING",
+                transport_state="disconnected",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="MVP_AMI_TCP_SOCKET_API_MISSING",
+                err_details={"transportMode": "tcp_inbound", "mvpAmiRoot": boot.root},
+            )
+
+        try:
+            result = run_tcp(sock, obis_list=[obis])
+        except Exception as exc:  # noqa: BLE001
+            log.exception("mvp_ami_run_phase1_tcp_socket_inbound_failed")
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readIdentity",
+                started=started,
+                finished=finished,
+                message=f"MVP-AMI run_phase1_tcp_socket (inbound) raised: {exc}",
+                code="MVP_AMI_TCP_RUNTIME_ERROR",
+                transport_state="error",
+                association_state="failed",
+                transport_attempted=True,
+                association_attempted=True,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="MVP_AMI_TCP_RUNTIME_ERROR",
+                err_details={
+                    "error": str(exc),
+                    "transportMode": "tcp_inbound",
+                    "tcpEndpoint": remote_endpoint,
+                },
+            )
+
+        return _read_identity_finish_phase1_result(
+            request=request,
+            boot=boot,
+            started=started,
+            obis=obis,
+            result=result,
+            transport_kind="tcp_listener",
+            tcp_endpoint=remote_endpoint,
+        )
+
     def read_basic_registers(self, request: ReadBasicRegistersRequest) -> RuntimeResponseEnvelope:
         settings = get_settings()
         started = datetime.now(timezone.utc)
@@ -733,7 +863,8 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             started=started,
             finished=finished,
             diags=diags,
-            transport_mode="serial",
+            transport_layer="serial",
+            envelope_transport_mode="serial",
         )
         if early is not None:
             return early

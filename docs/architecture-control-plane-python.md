@@ -13,7 +13,9 @@
 1. Python **FastAPI** listens on `SUNRISE_RUNTIME_PORT` (default **8766**).
 2. Next.js calls the sidecar **only from the server** via `lib/runtime/python-sidecar/client.ts`.
 3. **Internal** routes (server-only, when `RUNTIME_PYTHON_SIDECAR_URL` is set):
-   - `POST /api/internal/python-runtime/read-identity` → Python `POST /v1/runtime/read-identity` (sync)
+   - `POST /api/internal/python-runtime/read-identity` → Python `POST /v1/runtime/read-identity` (sync)  
+   - `GET /api/internal/python-runtime/tcp-listener/status` → Python `GET /v1/runtime/tcp-listener/status` (inbound modem listener)  
+   - `POST /api/internal/python-runtime/tcp-listener/read-identity` → Python `POST /v1/runtime/tcp-listener/read-identity` (staged socket) — **`docs/runtime-python-tcp-modem-listener.md`**
    - `POST /api/internal/python-runtime/read-basic-registers` → **catalog gate** (latest discovery snapshot vs `SUNRISE_RUNTIME_BASIC_REGISTERS_OBIS` on Next) → Python `POST /v1/runtime/read-basic-registers` (sync); **409** if no/incompatible snapshot (`docs/runtime-python-discovery.md`)
    - `POST /api/internal/python-runtime/discover-supported-obis` → Python `POST /v1/runtime/discover-supported-obis` (association object list — see **`docs/runtime-python-discovery.md`**)
    - `GET /api/internal/python-runtime/discovery-snapshots/[meterId]/latest` → Python `GET /v1/runtime/discovery-snapshots/{meterId}/latest` (persisted JSON snapshot)
