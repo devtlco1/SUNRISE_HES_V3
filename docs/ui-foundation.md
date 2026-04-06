@@ -26,7 +26,7 @@ This document captures Day-1 layout rules so pages stay consistent. Prefer editi
 
 - Always compose list UIs with `TableShell` + `TableToolbar` + shadcn `Table` + `TablePagination`.
 - Empty datasets: use `TableEmpty` (built on `EmptyState`) so empty and filled states share width and tone.
-- **Connectivity** is the visual reference: same borders, header height, cell padding, and toolbar background as other list pages.
+- **Connectivity** established the baseline chrome; **Meters** is the full reference for dense operational columns, filter row + toolbar search, row actions, details sheet, skeleton loading, and pagination options.
 
 ## Badges
 
