@@ -239,7 +239,7 @@ export async function runInboundDlmsOnSocket(
     })
     traceProtocolStep(
       "aarq_iframe_sent",
-      `builder=${aarqBuilder}_meter=${meter.toString("hex")}_client=${client.toString("hex")}_llc_ref_ok=${String(aarqDiag.llcMatchesReference)}_pwd_tx_len=${aarqDiag.transmittedPasswordUtf8ByteLength ?? "n/a"}_pwd_cfg_match_octets=${String(aarqDiag.configuredUtf8BytesMatchTransmittedOctets)}_pwd_note=${aarqDiag.passwordComparisonNote}`
+      `builder=${aarqBuilder}_meter=${meter.toString("hex")}_client=${client.toString("hex")}_llc_ref_ok=${String(aarqDiag.llcMatchesReference)}_gurux_aarq_ref_match=${String(aarqDiag.cosemAarqApduMatchesGuruxReference)}_aarq_gurux_diff=${aarqDiag.aarqGuruxDiffSummary}_pwd_tx_len=${aarqDiag.transmittedPasswordUtf8ByteLength ?? "n/a"}_pwd_cfg_match_octets=${String(aarqDiag.configuredUtf8BytesMatchTransmittedOctets)}_pwd_note=${aarqDiag.passwordComparisonNote}`
     )
     await writeMeter(socket, buildHdlcIFrame(meter, client, HDLC_I_FRAME_FIRST, aarq), "aarq_iframe")
     accum = await extendAccum(socket, accum, profile, "after_aarq")

@@ -1,5 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto"
 
+import {
+  buildGuruxStyleLowLnCosemAarqApdu,
+  GURUX_INITIAL_LN_PROPOSED_CONFORMANCE,
+} from "@/lib/runtime/real/dlms-aarq-lls"
 import { LLC_SEND } from "@/lib/runtime/real/dlms-apdu"
 
 export type AarqBuilderKind = "LOW_LLS_LN" | "LN_MINIMAL_NO_AUTH"
@@ -54,6 +58,18 @@ export type OutboundAarqPayloadDiag = {
    * max-PDU / window may differ from this static LN+LLS template.
    */
   mvpAmiAlignmentNote: string
+  /**
+   * Gurux `_GXAPDU.generateAarq` reference APDU (tag 60…) for LOW + LN with default initiate
+   * (conformance `GURUX_INITIAL_LN_PROPOSED_CONFORMANCE`, max PDU 0xFFFF, DLMS version 6).
+   * Built from the same password string as the outbound payload when builder is LOW_LLS_LN.
+   */
+  guruxReferenceCosemAarqApduHex: string | null
+  /** True when `cosemAarqApduHex` equals `guruxReferenceCosemAarqApduHex`. */
+  cosemAarqApduMatchesGuruxReference: boolean | null
+  /** Operator-readable first difference or `match` / `n_a`. */
+  aarqGuruxDiffSummary: string
+  /** Short note on what UA parsing changes in Gurux (HDLC only for AARQ body). */
+  guruxUaParseEffectNote: string
   /** Reminder that this diagnostic can embed secrets. */
   secretsExposureNote: string
 }
@@ -105,6 +121,19 @@ function extractCallingAuthDiag(apdu: Uint8Array): ExtractedAuth {
     transmittedOctets: null,
     passwordWireAsUtf8: null,
   }
+}
+
+function summarizeBinaryDiff(a: Uint8Array, b: Uint8Array): string {
+  const n = Math.min(a.length, b.length)
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) {
+      return `first_diff_offset_${i}_out_${a[i]!.toString(16).padStart(2, "0")}_ref_${b[i]!.toString(16).padStart(2, "0")}`
+    }
+  }
+  if (a.length !== b.length) {
+    return `prefix_equal_len_out_${a.length}_ref_${b.length}`
+  }
+  return "match"
 }
 
 function comparePasswords(
@@ -212,6 +241,24 @@ export function describeOutboundAarqPayload(
 
   const cmp = comparePasswords(auth, passwordCtx, builder)
 
+  let guruxReferenceCosemAarqApduHex: string | null = null
+  let cosemAarqApduMatchesGuruxReference: boolean | null = null
+  let aarqGuruxDiffSummary = "n_a"
+  let guruxUaParseEffectNote =
+    "Gurux_parseUAResponse_updates_hdlc_maxInfo_window_only;_AARQ_body_from_generateAarq_is_unaffected_by_UA_info_field."
+
+  if (builder === "LOW_LLS_LN") {
+    const pwd =
+      passwordCtx?.configuredPasswordUtf8 ?? auth.passwordWireAsUtf8 ?? ""
+    const ref = buildGuruxStyleLowLnCosemAarqApdu(pwd)
+    guruxReferenceCosemAarqApduHex = Buffer.from(ref).toString("hex")
+    cosemAarqApduMatchesGuruxReference = Buffer.from(rest).equals(Buffer.from(ref))
+    aarqGuruxDiffSummary = cosemAarqApduMatchesGuruxReference
+      ? "match"
+      : summarizeBinaryDiff(rest, ref)
+    guruxUaParseEffectNote = `Same_as_note_above_conformance_ref_0x${GURUX_INITIAL_LN_PROPOSED_CONFORMANCE.toString(16)}_maxpdu_ffff_dlmsver_6`
+  }
+
   return {
     builder,
     llcHex,
@@ -232,7 +279,11 @@ export function describeOutboundAarqPayload(
     configuredStringMatchesWireUtf8Decoding: cmp.configuredStringMatchesWireUtf8Decoding,
     passwordComparisonNote: cmp.passwordComparisonNote,
     mvpAmiAlignmentNote:
-      "MVP-AMI/Gurux LOW: password string → UTF-8 octets in AC calling-authentication-value; parseUAResponse(UA) before aarqRequest() may change other AARQ fields.",
+      "MVP-AMI/Gurux LOW_LN AARQ includes user-information (BE) with xDLMS InitiateRequest (conformance + max PDU + version); password → UTF-8 in AC.",
+    guruxReferenceCosemAarqApduHex,
+    cosemAarqApduMatchesGuruxReference,
+    aarqGuruxDiffSummary,
+    guruxUaParseEffectNote,
     secretsExposureNote:
       "Ingress trace may include plaintext LLS password and AC hex; verify only on controlled hosts. UI-entered passwords elsewhere are not this runtime secret unless they equal RUNTIME_INGRESS_DLMS_PASSWORD.",
   }
