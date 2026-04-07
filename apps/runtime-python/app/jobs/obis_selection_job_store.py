@@ -118,11 +118,19 @@ def create_tcp_inbound_job(request: ReadObisSelectionRequest) -> str:
         if slots[i] is not None:
             r = slots[i]
             assert r is not None
+            if r.status == "unsupported":
+                phase = "unsupported"
+            elif r.status == "error":
+                phase = "error"
+            elif r.status == "not_attempted":
+                phase = "not_attempted"
+            else:
+                phase = "ok"
             row_views.append(
                 ObisSelectionJobRowView(
                     index=i,
                     obis=item.obis,
-                    phase="unsupported" if r.status == "unsupported" else "ok",
+                    phase=phase,
                     row=r.model_dump(mode="json"),
                 )
             )

@@ -3,9 +3,11 @@
  * (e.g. "Read category" limited to rows MVP-AMI v1 will attempt on-wire).
  */
 
+import { isValidCosemObisLogicalName } from "@/lib/obis/obis-logical-name"
 import type { ObisCatalogEntry } from "@/lib/obis/types"
 
 export function obisSelectionRowSupportedV1Catalog(r: ObisCatalogEntry): boolean {
+  if (!isValidCosemObisLogicalName(r.obis)) return false
   if (r.attribute !== 2) return false
   const ot = (r.object_type || "").trim().toLowerCase()
   const cid = r.class_id

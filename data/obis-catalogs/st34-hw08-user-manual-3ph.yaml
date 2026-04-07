@@ -270,21 +270,21 @@ obis_catalog:
         description: "Angle UB_UC"
         unit: "°"
         scaler: -1
-      - obis: "81.7.40.255"
+      - obis: "1.0.81.7.40.255"
         description: "Angle UA_IA"
         unit: "°"
         scaler: -1
-        note: "Literal from manual; looks suspicious / possibly incomplete"
-      - obis: "81.7.51.255"
+        note: "Corrected from manual shorthand 81.7.40.255 to six-group COSEM logical name."
+      - obis: "1.0.81.7.51.255"
         description: "Angle UA_IB"
         unit: "°"
         scaler: -1
-        note: "Literal from manual; looks suspicious / possibly incomplete"
-      - obis: "81.7.62.255"
+        note: "Corrected from manual shorthand 81.7.51.255 to six-group COSEM logical name."
+      - obis: "1.0.81.7.62.255"
         description: "Angle UA_IC"
         unit: "°"
         scaler: -1
-        note: "Literal from manual; looks suspicious / possibly incomplete"
+        note: "Corrected from manual shorthand 81.7.62.255 to six-group COSEM logical name."
       - obis: "0.0.96.9.0.255"
         description: "Meter temperature"
         unit: "℃"

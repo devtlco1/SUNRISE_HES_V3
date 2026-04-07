@@ -15,6 +15,10 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from app.adapters.base import ProtocolRuntimeAdapter
 from app.adapters.mvp_ami_relay_impl import _tcp_assoc
 from app.adapters.mvp_ami_discovery import run_association_view_discovery
+from app.adapters.obis_logical_name import (
+    OBIS_SHAPE_INVALID_MESSAGE,
+    obis_logical_name_structurally_valid,
+)
 from app.adapters.obis_selection_v1 import obis_selection_item_supported_v1
 from app.adapters.mvp_ami_shared import (
     MvpAmiBootstrapFailure,
@@ -407,11 +411,22 @@ def _prepare_obis_selection_slots(
                 packKey=item.packKey,
                 lastReadAt=last_at,
             )
-        else:
-            wire_indices.append(i)
-            if item.obis not in seen:
-                seen.add(item.obis)
-                wire_unique.append(item.obis)
+            continue
+        ln_ok, _ln_tag = obis_logical_name_structurally_valid(item.obis)
+        if not ln_ok:
+            slots[i] = ObisSelectionRowResult(
+                obis=item.obis,
+                value="",
+                status="error",
+                error=OBIS_SHAPE_INVALID_MESSAGE,
+                packKey=item.packKey,
+                lastReadAt=last_at,
+            )
+            continue
+        wire_indices.append(i)
+        if item.obis not in seen:
+            seen.add(item.obis)
+            wire_unique.append(item.obis)
 
     return slots, wire_unique, wire_indices
 
@@ -507,6 +522,28 @@ def _sequential_obis_wire_loop(
                     "totalWire": total_w,
                 }
             )
+        ln_ok, _ = obis_logical_name_structurally_valid(item.obis)
+        if not ln_ok:
+            last_at = _iso_z(datetime.now(timezone.utc))
+            slots[wi] = ObisSelectionRowResult(
+                obis=item.obis,
+                value="",
+                status="error",
+                error=OBIS_SHAPE_INVALID_MESSAGE,
+                packKey=item.packKey,
+                lastReadAt=last_at,
+            )
+            done += 1
+            if progress:
+                progress(
+                    {
+                        "rowDoneIndex": wi,
+                        "row": slots[wi].model_dump(mode="json"),
+                        "completedWire": done,
+                        "totalWire": total_w,
+                    }
+                )
+            continue
         try:
             chunk = client._read_obis_via_gurux(
                 transport,

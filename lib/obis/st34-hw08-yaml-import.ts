@@ -7,6 +7,7 @@ import { readFile } from "fs/promises"
 import path from "path"
 import { parse as parseYaml } from "yaml"
 
+import { INVALID_OBIS_SHAPE_NOTE, isValidCosemObisLogicalName } from "@/lib/obis/obis-logical-name"
 import type { ObisCatalogEntry, ObisPackKey } from "@/lib/obis/types"
 
 export const ST34_HW08_YAML_REL_PATH = path.join(
@@ -120,6 +121,10 @@ function yamlItemToEntries(
         ? `${description} (tariff ${tariffIdx})`
         : description
     const notes = buildNotes(meterModel, source, item.scaler ?? null, item.note, tariffIdx)
+    const shapeOk = isValidCosemObisLogicalName(obis)
+    const notesWithShape = shapeOk
+      ? notes
+      : [notes, INVALID_OBIS_SHAPE_NOTE].filter(Boolean).join(" · ")
     out.push({
       obis,
       description: desc,
@@ -128,9 +133,9 @@ function yamlItemToEntries(
       result_format: "scalar",
       status: "catalog_only",
       pack_key,
-      enabled: true,
+      enabled: shapeOk,
       sort_order: 0,
-      notes,
+      notes: notesWithShape,
     })
     i += 1
   }

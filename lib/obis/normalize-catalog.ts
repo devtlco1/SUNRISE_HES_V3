@@ -1,3 +1,4 @@
+import { INVALID_OBIS_SHAPE_NOTE, isValidCosemObisLogicalName } from "@/lib/obis/obis-logical-name"
 import type { ObisCatalogEntry } from "@/lib/obis/types"
 
 const STATUS = new Set(["active", "catalog_only"])
@@ -27,6 +28,9 @@ export function normalizeObisCatalogEntry(raw: unknown): ObisCatalogEntry | null
   const status = str(r.status, "catalog_only")
   if (!STATUS.has(status)) return null
 
+  const obisShapeOk = isValidCosemObisLogicalName(obis)
+  const priorNotes = r.notes !== undefined ? str(r.notes).trim() : ""
+
   return {
     obis,
     description,
@@ -38,9 +42,11 @@ export function normalizeObisCatalogEntry(raw: unknown): ObisCatalogEntry | null
     result_format: str(r.result_format, "scalar") || "scalar",
     status: status as ObisCatalogEntry["status"],
     pack_key,
-    enabled: r.enabled === false ? false : true,
+    enabled: obisShapeOk ? (r.enabled === false ? false : true) : false,
     sort_order: Math.max(0, Math.floor(num(r.sort_order, 0))),
-    notes: r.notes !== undefined ? str(r.notes) : undefined,
+    notes: obisShapeOk
+      ? priorNotes || undefined
+      : [priorNotes, INVALID_OBIS_SHAPE_NOTE].filter(Boolean).join(" · "),
   }
 }
 
