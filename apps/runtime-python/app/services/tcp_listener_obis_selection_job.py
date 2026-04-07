@@ -247,6 +247,8 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                             "targetMeterSerial": normalize_inbound_target_serial(request.meterId),
                             "listenerListening": st.get("listening"),
                             "unboundInboundCount": st.get("unboundInboundCount"),
+                            "awaitingAutoIdentifyCount": st.get("awaitingAutoIdentifyCount"),
+                            "routableUnboundCount": st.get("routableUnboundCount"),
                             "boundInboundCount": st.get("boundInboundCount"),
                             "lastBindError": st.get("lastBindError"),
                             "jobId": job_id,
@@ -323,6 +325,7 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                             if wait_err and wait_err not in (
                                 "NO_STAGED_SESSION_FOR_SELECTED_METER",
                                 "MULTIPLE_INBOUND_MODEMS_USE_SCANNER_FIRST",
+                                "AWAITING_AUTO_IDENTIFY",
                                 "cancelled",
                             ):
                                 progress(
@@ -380,6 +383,7 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                         if wait_err2 and wait_err2 not in (
                             "NO_STAGED_SESSION_FOR_SELECTED_METER",
                             "MULTIPLE_INBOUND_MODEMS_USE_SCANNER_FIRST",
+                            "AWAITING_AUTO_IDENTIFY",
                             "cancelled",
                         ):
                             progress(

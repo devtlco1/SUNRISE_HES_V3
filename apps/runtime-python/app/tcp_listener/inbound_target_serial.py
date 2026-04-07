@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 INBOUND_SCANNER_METER_ID = "inbound-scanner"
+INBOUND_AUTO_BIND_METER_ID = "inbound-auto-bind"
 
 
 def normalize_inbound_target_serial(meter_id: str) -> str:

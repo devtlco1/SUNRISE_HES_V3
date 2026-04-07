@@ -58,13 +58,16 @@ def acquire_inbound_socket_for_target_meter(
         ep = f"{hold.meta.remote_host}:{hold.meta.remote_port}"
         return AcquiredInboundSocket(hold=hold, endpoint=ep, identity_just_verified=False), ""
 
-    un = ctl.unbound_queue_len()
-    if un == 0:
+    routable = ctl.routable_unbound_count()
+    awaiting = ctl.awaiting_auto_identify_count()
+    if routable == 0:
+        if awaiting > 0:
+            return None, "AWAITING_AUTO_IDENTIFY"
         return None, "NO_STAGED_SESSION_FOR_SELECTED_METER"
-    if un > 1:
+    if routable > 1:
         return None, "MULTIPLE_INBOUND_MODEMS_USE_SCANNER_FIRST"
 
-    hold = ctl.pop_unbound_left()
+    hold = ctl.pop_first_routable_unbound()
     if hold is None:
         return None, "NO_STAGED_SESSION_FOR_SELECTED_METER"
     ep = f"{hold.meta.remote_host}:{hold.meta.remote_port}"
@@ -192,9 +195,11 @@ def error_message_for_acquire_code(code: str, *, target_serial: str) -> str:
     if code == "EMPTY_TARGET_METER_SERIAL":
         return "Selected meter serial is empty — pick a meter."
     if code == "NO_STAGED_SESSION_FOR_SELECTED_METER":
-        return f"No inbound session for selected meter {ts!r} — connect that modem or use Scanner to bind."
+        return f"No inbound session for selected meter {ts!r} — connect that modem or wait for auto-identify."
+    if code == "AWAITING_AUTO_IDENTIFY":
+        return "Auto-identifying inbound modem (0.0.96.1.0.255) — retry in a moment."
     if code == "MULTIPLE_INBOUND_MODEMS_USE_SCANNER_FIRST":
-        return "Several modems are inbound — use Scanner (Identify) to bind each serial before actions."
+        return "Several modems need attention — use Scanner to recover failed sessions or reduce queue."
     if code == "INBOUND_IDENTITY_VERIFY_FAILED":
         return f"Could not read canonical serial on inbound socket for {ts!r}."
     if code == "INBOUND_IDENTITY_VERIFY_EXCEPTION":

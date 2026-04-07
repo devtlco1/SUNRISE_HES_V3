@@ -35,6 +35,9 @@ type ParsedStagedSession = {
   remoteHost: string
   remotePort: number
   acceptedAtUtc: string
+  sessionState?: string
+  operatorLabel?: string
+  identifyError?: string
 }
 
 function parseStagedSessions(status: TcpListenerStatus | null): ParsedStagedSession[] {
@@ -51,12 +54,18 @@ function parseStagedSessions(status: TcpListenerStatus | null): ParsedStagedSess
     if (typeof rp !== "number") continue
     const pending = o.pendingBind === true
     const cs = typeof o.canonicalSerial === "string" ? o.canonicalSerial : undefined
+    const sessionState = typeof o.sessionState === "string" ? o.sessionState : undefined
+    const operatorLabel = typeof o.operatorLabel === "string" ? o.operatorLabel : undefined
+    const identifyError = typeof o.identifyError === "string" ? o.identifyError : undefined
     out.push({
       pendingBind: pending,
       canonicalSerial: cs,
       remoteHost: rh,
       remotePort: rp,
       acceptedAtUtc: at,
+      sessionState,
+      operatorLabel,
+      identifyError,
     })
   }
   return out
@@ -124,10 +133,15 @@ export function ScannerWorkspaceClient() {
     [listenerStatus]
   )
 
-  const pendingUnbound =
-    typeof listenerStatus?.unboundInboundCount === "number"
-      ? listenerStatus.unboundInboundCount
-      : sessionRows.filter((r) => r.pendingBind).length
+  const routableUnbound =
+    typeof listenerStatus?.routableUnboundCount === "number"
+      ? listenerStatus.routableUnboundCount
+      : sessionRows.filter((r) => r.pendingBind && r.sessionState === "identify_failed").length
+
+  const awaitingAuto =
+    typeof listenerStatus?.awaitingAutoIdentifyCount === "number"
+      ? listenerStatus.awaitingAutoIdentifyCount
+      : sessionRows.filter((r) => r.pendingBind && r.sessionState === "awaiting_auto_identify").length
 
   const sessionsKey = useMemo(() => JSON.stringify(sessionRows), [sessionRows])
 
@@ -139,8 +153,12 @@ export function ScannerWorkspaceClient() {
 
   async function onIdentify() {
     setActionError(null)
-    if (pendingUnbound <= 0 || triggerInProgress) {
-      setActionError("No unbound inbound modem — wait for a connection.")
+    if (routableUnbound <= 0 || triggerInProgress) {
+      setActionError(
+        awaitingAuto > 0
+          ? "Auto-identify is running — no manual recovery needed yet."
+          : "No failed session needs Scanner recovery."
+      )
       return
     }
     setBusy(true)
@@ -203,8 +221,8 @@ export function ScannerWorkspaceClient() {
       ? (listenerStatus.lastTcpListenerTrigger as Record<string, unknown>)
       : null
 
-  const canIdentify =
-    pendingUnbound > 0 &&
+  const canManualIdentify =
+    routableUnbound > 0 &&
     !triggerInProgress &&
     !busy &&
     !statusLoading &&
@@ -212,7 +230,10 @@ export function ScannerWorkspaceClient() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Scanner" subtitle="Inbound modem staging and serial onboarding." />
+      <PageHeader
+        title="Scanner"
+        subtitle="Monitor inbound sessions; manual identify only when auto-identify failed."
+      />
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-muted-foreground">Listener</span>
@@ -261,15 +282,20 @@ export function ScannerWorkspaceClient() {
           type="button"
           size="sm"
           variant="secondary"
-          disabled={!canIdentify}
+          disabled={!canManualIdentify}
           onClick={() => void onIdentify()}
         >
-          Identify next unbound
+          Manual identify (recovery)
         </Button>
+        {awaitingAuto > 0 ? (
+          <span className="text-xs text-muted-foreground">
+            Auto-identifying… ({awaitingAuto})
+          </span>
+        ) : null}
         {identifyState === "error" ? (
           <span className="text-xs text-destructive">Identify failed</span>
         ) : identifyState === "ok" ? (
-          <span className="text-xs text-muted-foreground">Bound session updated</span>
+          <span className="text-xs text-muted-foreground">Manual bind OK</span>
         ) : null}
         {lastIdentifyAux ? (
           <span className="font-mono text-[10px] text-muted-foreground">
@@ -319,12 +345,13 @@ export function ScannerWorkspaceClient() {
                     <TableCell className="max-w-[min(10rem,24vw)] align-top font-mono text-[10px] whitespace-normal break-words text-muted-foreground">
                       {row.acceptedAtUtc}
                     </TableCell>
-                    <TableCell>
-                      {row.pendingBind ? (
-                        <StatusBadge variant="warning">unbound</StatusBadge>
-                      ) : (
-                        <StatusBadge variant="success">bound</StatusBadge>
-                      )}
+                    <TableCell className="max-w-[min(11rem,26vw)] align-top text-xs">
+                      <div className="font-medium">{row.operatorLabel ?? "—"}</div>
+                      {row.identifyError ? (
+                        <div className="mt-0.5 font-mono text-[10px] text-destructive break-words line-clamp-2">
+                          {row.identifyError}
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell className="max-w-[min(14rem,32vw)] align-top font-mono text-xs whitespace-normal break-words">
                       {serial ?? "—"}

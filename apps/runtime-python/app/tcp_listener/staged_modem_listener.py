@@ -1,7 +1,8 @@
 """
 Process-local TCP listener: modem dials server → accept → queue unbound sockets.
 
-After Scanner read-identity, a socket is registered under canonical serial (0.0.96.1.0.255).
+Default: background auto read-identity (0.0.96.1.0.255) binds the session under canonical serial.
+Failed auto sessions become identify_failed for Scanner/manual recovery only.
 All inbound actions resolve the socket strictly by selected meter serial — never a generic slot.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -44,15 +46,29 @@ class StagedSocketMeta:
 
 @dataclass
 class StagedSocketHold:
+    hold_id: str
     sock: socket.socket
     meta: StagedSocketMeta
+    """awaiting_auto_identify | identify_failed | auto_bound | manual_bound (latter two when in _bound)."""
+    session_state: str = "awaiting_auto_identify"
+    identify_error: Optional[str] = None
+    binding_source: Optional[str] = None
+
+
+def _notify_staged_inbound_arrival() -> None:
+    try:
+        from app.jobs import obis_selection_job_store as _obis_job_store
+
+        _obis_job_store.notify_staged_inbound_arrival()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @dataclass
 class TcpModemListenerController:
     """
     One listening socket + FIFO unbound inbound connections + bound sessions keyed by canonical serial.
-    New accept appends to unbound queue (bounded). Scanner identify moves unbound → bound[serial].
+    Accept enqueues holds; auto-identify (optional) binds to canonical serial; Scanner recovers identify_failed only.
     """
 
     _stop_event: threading.Event = field(default_factory=threading.Event)
@@ -179,19 +195,28 @@ class TcpModemListenerController:
                 accepted_at_utc=_iso_z(),
                 local_bound=f"{host}:{port}",
             )
-            hold = StagedSocketHold(sock=conn, meta=meta)
+            auto_on = bool(s.tcp_listener_auto_identify_enabled)
+            hold = StagedSocketHold(
+                hold_id=str(uuid.uuid4()),
+                sock=conn,
+                meta=meta,
+                session_state="awaiting_auto_identify" if auto_on else "identify_failed",
+                identify_error=None if auto_on else "auto_identify_disabled",
+            )
             with self._holder_lock:
                 self._unbound.append(hold)
                 while len(self._unbound) > max_unbound:
                     old = self._unbound.popleft()
                     self._close_hold_unlocked(old, reason="unbound_queue_overflow")
             log.info("tcp_modem_staged_connection", extra={"remote": f"{rh}:{rp}"})
-            try:
-                from app.jobs import obis_selection_job_store as _obis_job_store
-
-                _obis_job_store.notify_staged_inbound_arrival()
-            except Exception:  # noqa: BLE001
-                pass
+            _notify_staged_inbound_arrival()
+            if auto_on:
+                threading.Thread(
+                    target=run_auto_identify_for_hold_id,
+                    args=(hold.hold_id,),
+                    daemon=True,
+                    name=f"inbound-auto-{hold.hold_id[:8]}",
+                ).start()
 
         try:
             if self._server_sock is not None:
@@ -208,31 +233,56 @@ class TcpModemListenerController:
             for i, h in enumerate(self._unbound):
                 if not _sock_is_open(h.sock):
                     continue
-                sessions.append(
-                    {
-                        "pendingBind": True,
-                        "queueIndex": i,
-                        "remoteHost": h.meta.remote_host,
-                        "remotePort": h.meta.remote_port,
-                        "acceptedAtUtc": h.meta.accepted_at_utc,
-                        "localBound": h.meta.local_bound,
-                    }
-                )
+                label = {
+                    "awaiting_auto_identify": "Auto-identifying",
+                    "identify_failed": "Manual attention",
+                }.get(h.session_state, h.session_state)
+                row: dict[str, Any] = {
+                    "holdId": h.hold_id,
+                    "pendingBind": True,
+                    "queueIndex": i,
+                    "remoteHost": h.meta.remote_host,
+                    "remotePort": h.meta.remote_port,
+                    "acceptedAtUtc": h.meta.accepted_at_utc,
+                    "localBound": h.meta.local_bound,
+                    "sessionState": h.session_state,
+                    "operatorLabel": label,
+                }
+                if h.identify_error:
+                    row["identifyError"] = h.identify_error
+                sessions.append(row)
             for serial in sorted(self._bound.keys()):
                 h = self._bound[serial]
                 if not _sock_is_open(h.sock):
                     continue
+                src = h.binding_source or "manual"
+                bound_state = "auto_bound" if src == "auto" else "manual_bound"
+                blabel = "Auto-bound" if src == "auto" else "Scanner bind"
                 sessions.append(
                     {
+                        "holdId": h.hold_id,
                         "pendingBind": False,
                         "canonicalSerial": serial,
                         "remoteHost": h.meta.remote_host,
                         "remotePort": h.meta.remote_port,
                         "acceptedAtUtc": h.meta.accepted_at_utc,
                         "localBound": h.meta.local_bound,
+                        "sessionState": bound_state,
+                        "bindingSource": src,
+                        "operatorLabel": blabel,
                     }
                 )
             ucount = sum(1 for h in self._unbound if _sock_is_open(h.sock))
+            awaiting_cnt = sum(
+                1
+                for h in self._unbound
+                if _sock_is_open(h.sock) and h.session_state == "awaiting_auto_identify"
+            )
+            routable_cnt = sum(
+                1
+                for h in self._unbound
+                if _sock_is_open(h.sock) and h.session_state == "identify_failed"
+            )
             bcount = sum(1 for h in self._bound.values() if _sock_is_open(h.sock))
             first_meta: Optional[StagedSocketMeta] = None
             if self._unbound:
@@ -269,6 +319,8 @@ class TcpModemListenerController:
             "lastTcpListenerTrigger": self._last_tcp_listener_trigger,
             "stagedSessions": sessions,
             "unboundInboundCount": ucount,
+            "awaitingAutoIdentifyCount": awaiting_cnt,
+            "routableUnboundCount": routable_cnt,
             "boundInboundCount": bcount,
         }
 
@@ -280,15 +332,83 @@ class TcpModemListenerController:
         with self._holder_lock:
             return sum(1 for h in self._unbound if _sock_is_open(h.sock))
 
-    def pop_unbound_left(self) -> Optional[StagedSocketHold]:
-        """Remove leftmost live unbound hold; caller owns socket."""
+    def routable_unbound_count(self) -> int:
         with self._holder_lock:
-            while self._unbound:
-                hold = self._unbound.popleft()
-                if _sock_is_open(hold.sock):
-                    return hold
-                self._close_hold_unlocked(hold, reason="unbound_socket_dead")
-            return None
+            return sum(
+                1
+                for h in self._unbound
+                if _sock_is_open(h.sock) and h.session_state == "identify_failed"
+            )
+
+    def awaiting_auto_identify_count(self) -> int:
+        with self._holder_lock:
+            return sum(
+                1
+                for h in self._unbound
+                if _sock_is_open(h.sock) and h.session_state == "awaiting_auto_identify"
+            )
+
+    def _remove_unbound_hold_by_id_unlocked(self, hold_id: str) -> Optional[StagedSocketHold]:
+        new_deque: deque[StagedSocketHold] = deque()
+        found: Optional[StagedSocketHold] = None
+        for h in self._unbound:
+            if h.hold_id == hold_id:
+                found = h
+            else:
+                new_deque.append(h)
+        self._unbound = new_deque
+        return found
+
+    def mark_unbound_identify_failed(self, hold_id: str, message: str) -> None:
+        with self._holder_lock:
+            for h in self._unbound:
+                if h.hold_id == hold_id and h.session_state == "awaiting_auto_identify":
+                    h.session_state = "identify_failed"
+                    h.identify_error = (message or "")[:500]
+                    break
+        _notify_staged_inbound_arrival()
+
+    def finalize_auto_bind(self, hold_id: str, canonical_serial: str) -> bool:
+        key = normalize_inbound_target_serial(canonical_serial)
+        if not key:
+            return False
+        with self._holder_lock:
+            hold = self._remove_unbound_hold_by_id_unlocked(hold_id)
+            if hold is None:
+                return False
+            if hold.session_state != "awaiting_auto_identify":
+                self._unbound.append(hold)
+                return False
+            if not _sock_is_open(hold.sock):
+                self._close_hold_unlocked(hold, reason="dead_socket_auto_bind")
+                return False
+            self._register_bound_unlocked(key, hold, binding_source="auto")
+        _notify_staged_inbound_arrival()
+        return True
+
+    def snapshot_unbound_hold_for_auto(self, hold_id: str) -> Optional[StagedSocketHold]:
+        with self._holder_lock:
+            for h in self._unbound:
+                if h.hold_id == hold_id and h.session_state == "awaiting_auto_identify":
+                    return h
+        return None
+
+    def pop_first_routable_unbound(self) -> Optional[StagedSocketHold]:
+        """Remove FIFO identify_failed hold (Scanner recovery / verify path)."""
+        with self._holder_lock:
+            new_d: deque[StagedSocketHold] = deque()
+            taken: Optional[StagedSocketHold] = None
+            for h in self._unbound:
+                if (
+                    taken is None
+                    and h.session_state == "identify_failed"
+                    and _sock_is_open(h.sock)
+                ):
+                    taken = h
+                else:
+                    new_d.append(h)
+            self._unbound = new_d
+            return taken
 
     def pop_bound_session(self, serial: str) -> Optional[StagedSocketHold]:
         """Remove bound session for canonical serial if present and alive."""
@@ -305,7 +425,13 @@ class TcpModemListenerController:
                 return None
             return hold
 
-    def register_bound_session(self, canonical_serial: str, hold: StagedSocketHold) -> None:
+    def register_bound_session(
+        self,
+        canonical_serial: str,
+        hold: StagedSocketHold,
+        *,
+        binding_source: str = "manual",
+    ) -> None:
         """Store an open socket under canonical serial; closes any prior bound entry for that serial."""
         key = normalize_inbound_target_serial(canonical_serial)
         if not key:
@@ -313,13 +439,20 @@ class TcpModemListenerController:
                 self._close_hold_unlocked(hold, reason="empty_canonical_serial_bind")
             return
         with self._holder_lock:
-            old = self._bound.pop(key, None)
-            if old is not None:
-                self._close_hold_unlocked(old, reason="replaced_by_new_bind_same_serial")
-            if not _sock_is_open(hold.sock):
-                self._close_hold_unlocked(hold, reason="register_dead_socket")
-                return
-            self._bound[key] = hold
+            self._register_bound_unlocked(key, hold, binding_source=binding_source)
+
+    def _register_bound_unlocked(
+        self, key: str, hold: StagedSocketHold, *, binding_source: str
+    ) -> None:
+        hold.binding_source = binding_source
+        hold.session_state = "auto_bound" if binding_source == "auto" else "manual_bound"
+        old = self._bound.pop(key, None)
+        if old is not None:
+            self._close_hold_unlocked(old, reason="replaced_by_new_bind_same_serial")
+        if not _sock_is_open(hold.sock):
+            self._close_hold_unlocked(hold, reason="register_dead_socket")
+            return
+        self._bound[key] = hold
 
     def close_hold(self, hold: StagedSocketHold, *, reason: str) -> None:
         with self._holder_lock:
@@ -351,6 +484,54 @@ def get_tcp_modem_listener() -> TcpModemListenerController:
         if _modem_listener_singleton is None:
             _modem_listener_singleton = TcpModemListenerController()
         return _modem_listener_singleton
+
+
+def run_auto_identify_for_hold_id(hold_id: str) -> None:
+    """Background: read 0.0.96.1.0.255 on inbound socket and auto-bind (MVP-AMI only)."""
+    log_a = logging.getLogger(__name__)
+    ctl = get_tcp_modem_listener()
+    hold = ctl.snapshot_unbound_hold_for_auto(hold_id)
+    if hold is None:
+        return
+    settings = get_settings()
+    if not settings.tcp_listener_enabled or not settings.tcp_listener_auto_identify_enabled:
+        ctl.mark_unbound_identify_failed(hold_id, "auto_identify_disabled")
+        return
+
+    from app.adapters.factory import get_runtime_adapter
+    from app.adapters.mvp_ami_adapter import MvpAmiRuntimeAdapter
+    from app.schemas.requests import ReadIdentityRequest
+    from app.tcp_listener.inbound_target_serial import INBOUND_AUTO_BIND_METER_ID, normalize_inbound_target_serial
+
+    adapter = get_runtime_adapter()
+    if not isinstance(adapter, MvpAmiRuntimeAdapter):
+        ctl.mark_unbound_identify_failed(hold_id, "auto_identify_requires_mvp_ami")
+        return
+
+    endpoint = f"{hold.meta.remote_host}:{hold.meta.remote_port}"
+    req = ReadIdentityRequest(meterId=INBOUND_AUTO_BIND_METER_ID)
+    try:
+        env = adapter.read_identity_on_accepted_tcp_socket(req, hold.sock, endpoint)
+    except Exception as exc:  # noqa: BLE001
+        log_a.exception("inbound_auto_identify_exception", extra={"hold_id": hold_id})
+        ctl.mark_unbound_identify_failed(hold_id, str(exc)[:200])
+        return
+
+    if not env.ok or env.payload is None:
+        msg = (env.error.message if env.error else env.message) or "identity_failed"
+        ctl.mark_unbound_identify_failed(hold_id, msg[:500])
+        return
+
+    canonical = normalize_inbound_target_serial(env.payload.serialNumber)
+    if not canonical:
+        ctl.mark_unbound_identify_failed(hold_id, "empty_canonical_serial_0.0.96.1.0.255")
+        return
+
+    if ctl.finalize_auto_bind(hold_id, canonical):
+        log_a.info(
+            "inbound_auto_bind_ok",
+            extra={"canonical_serial": canonical, "remote": endpoint, "hold_id": hold_id},
+        )
 
 
 def build_last_tcp_listener_trigger_record(

@@ -830,7 +830,8 @@ export function ReadingsWorkspaceClient() {
           !inboundRouteOk &&
           stagedPresent ? (
             <p className="text-xs text-amber-600 dark:text-amber-500">
-              No inbound session for this serial — bind it in Scanner, or fix multiple queued modems.
+              No routed inbound session for this serial — wait for auto-identify, connect the modem, or use
+              Scanner if auto-identify failed.
             </p>
           ) : null}
 

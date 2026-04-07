@@ -82,21 +82,29 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
                     return envelope
 
                 if is_scanner_bind_meter_id(request.meterId):
-                    hold = ctl.pop_unbound_left()
+                    hold = ctl.pop_first_routable_unbound()
                     if hold is None:
-                        teardown = "no_unbound_socket"
+                        teardown = "no_routable_unbound_socket"
                         finished = datetime.now(timezone.utc)
                         st = ctl.get_status_dict()
+                        awaiting = int(st.get("awaitingAutoIdentifyCount") or 0)
+                        msg = (
+                            "No session needs manual bind — auto-identify is running; retry shortly."
+                            if awaiting > 0
+                            else "No inbound modem needs Scanner recovery (auto-identify handles new connections)."
+                        )
                         envelope = _fail(
                             request,
                             started,
                             finished,
-                            "No unbound inbound modem — wait for a connection, then Identify.",
-                            "NO_UNBOUND_INBOUND_SOCKET",
+                            msg,
+                            "NO_ROUTABLE_UNBOUND_INBOUND_SOCKET",
                             {
                                 "transportMode": "tcp_inbound",
                                 "listenerListening": st.get("listening"),
                                 "unboundInboundCount": st.get("unboundInboundCount"),
+                                "awaitingAutoIdentifyCount": st.get("awaitingAutoIdentifyCount"),
+                                "routableUnboundCount": st.get("routableUnboundCount"),
                                 "lastBindError": st.get("lastBindError"),
                             },
                         )
@@ -117,7 +125,9 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
                             and normalize_inbound_target_serial(envelope.payload.serialNumber)
                         ):
                             ctl.register_bound_session(
-                                envelope.payload.serialNumber, hold
+                                envelope.payload.serialNumber,
+                                hold,
+                                binding_source="manual",
                             )
                         else:
                             teardown = "server_closed_after_failed_scanner_identity"
@@ -145,6 +155,8 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
                                 "targetMeterSerial": ts,
                                 "listenerListening": st.get("listening"),
                                 "unboundInboundCount": st.get("unboundInboundCount"),
+                                "awaitingAutoIdentifyCount": st.get("awaitingAutoIdentifyCount"),
+                                "routableUnboundCount": st.get("routableUnboundCount"),
                                 "boundInboundCount": st.get("boundInboundCount"),
                                 "lastBindError": st.get("lastBindError"),
                             },
@@ -160,7 +172,9 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
                                 envelope.payload.serialNumber  # type: ignore[union-attr]
                             )
                             if canon == ts:
-                                ctl.register_bound_session(canon, acq.hold)
+                                ctl.register_bound_session(
+                                    canon, acq.hold, binding_source="manual"
+                                )
                             else:
                                 ctl.close_hold(acq.hold, reason="cached_identity_serial_mismatch")
                             return envelope
@@ -178,7 +192,9 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
                             and normalize_inbound_target_serial(envelope.payload.serialNumber)
                             == ts
                         ):
-                            ctl.register_bound_session(ts, acq.hold)
+                            ctl.register_bound_session(
+                                ts, acq.hold, binding_source="manual"
+                            )
                         elif envelope.ok and envelope.payload is not None:
                             ctl.close_hold(acq.hold, reason="identity_serial_mismatch_vs_target")
                             envelope = _fail(

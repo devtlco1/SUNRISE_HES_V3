@@ -71,6 +71,10 @@ class Settings(BaseSettings):
         le=64,
         description="Max queued unbound inbound TCP sockets; oldest unbound closed on overflow.",
     )
+    tcp_listener_auto_identify_enabled: bool = Field(
+        default=True,
+        description="When true, after each inbound accept run background read-identity (0.0.96.1.0.255) and auto-bind.",
+    )
     inbound_obis_wire_chunk_size: int = Field(
         default=8,
         ge=1,

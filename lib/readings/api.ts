@@ -103,7 +103,7 @@ export function tcpListenerBoundCanonicalSerials(status: TcpListenerStatus | nul
   return out
 }
 
-/** True when the selected meter may use inbound TCP: bound session for that serial, or exactly one unbound line (server verifies 0.0.96.1.0.255). */
+/** True when the selected meter may use inbound TCP: bound for that serial, or one routable failed session (server verifies 0.0.96.1.0.255). Not while auto-identify is the only pending work. */
 export function tcpListenerStrictRouteAvailableForSerial(
   status: TcpListenerStatus | null,
   serial: string
@@ -112,11 +112,15 @@ export function tcpListenerStrictRouteAvailableForSerial(
   if (!mid) return false
   const bound = tcpListenerBoundCanonicalSerials(status)
   if (bound.has(mid)) return true
-  const ub =
-    typeof status?.unboundInboundCount === "number"
-      ? status.unboundInboundCount
+  const awaiting =
+    typeof status?.awaitingAutoIdentifyCount === "number"
+      ? status.awaitingAutoIdentifyCount
       : 0
-  return ub === 1 && bound.size === 0
+  const routable =
+    typeof status?.routableUnboundCount === "number"
+      ? status.routableUnboundCount
+      : 0
+  return routable === 1 && awaiting === 0 && bound.size === 0
 }
 
 export async function fetchTcpListenerStatus(
