@@ -672,9 +672,21 @@ export function ReadingsWorkspaceClient() {
           const d = lastRelayPayload.relayDiagnostics as Record<string, unknown>
           const rule = typeof d.interpretationRule === "string" ? d.interpretationRule : ""
           const prof = lastRelayPayload.relayProfileId
-          const bits = [prof ? `profile=${prof}` : "", rule ? `rule=${rule}` : ""].filter(
-            Boolean
-          )
+          const cmdProf = lastRelayPayload.relayCommandProfileId
+          const fm =
+            typeof d.relayReadbackAnalysis === "object" &&
+            d.relayReadbackAnalysis !== null &&
+            "failureMode" in d.relayReadbackAnalysis
+              ? String(
+                  (d.relayReadbackAnalysis as Record<string, unknown>).failureMode ?? ""
+                )
+              : ""
+          const bits = [
+            prof ? `stateProfile=${prof}` : "",
+            cmdProf ? `cmdProfile=${cmdProf}` : "",
+            rule ? `rule=${rule}` : "",
+            fm ? `readback=${fm}` : "",
+          ].filter(Boolean)
           return bits.length ? ` ${bits.join(" ")}` : ""
         })()
       : ""

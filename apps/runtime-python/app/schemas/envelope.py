@@ -136,6 +136,10 @@ class RelayControlPayload(BaseModel):
         default=None,
         description="Semantic profile used to interpret outputState/controlState (per-meter via env overrides).",
     )
+    relayCommandProfileId: Optional[str] = Field(
+        default=None,
+        description="Profile id for which COSEM method indices were used for disconnect/reconnect.",
+    )
     relayDiagnostics: Optional[dict[str, Any]] = Field(
         default=None,
         description="Structured relay read/verify evidence (bounded); compare across meters.",

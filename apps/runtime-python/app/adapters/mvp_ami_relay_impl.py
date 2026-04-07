@@ -16,6 +16,11 @@ from app.adapters.mvp_ami_shared import (
     channel_spec_is_tcp,
     mvp_ami_bootstrap,
 )
+from app.adapters.relay_command_profile import (
+    build_relay_readback_analysis,
+    method_index_for_operation,
+    resolve_relay_command_spec,
+)
 from app.adapters.relay_semantic_profile import (
     RELAY_PROFILE_STANDARD,
     normalize_relay_disconnect_control_row,
@@ -458,32 +463,62 @@ def _disconnect_control_method_packets(gx: Any, dc: Any, method_index: int) -> A
     raise ValueError(f"disconnect_control supports methods 1..2, got {method_index}")
 
 
+def _gx_reply_data_hex_preview(reply: Any, limit: int = 128) -> str:
+    raw = getattr(reply, "data", None)
+    if raw is None:
+        return ""
+    try:
+        b = bytes(raw) if isinstance(raw, (bytes, bytearray, memoryview)) else bytes(raw)
+    except Exception:  # noqa: BLE001
+        return ""
+    return b[:limit].hex()
+
+
 def _gurux_invoke_disconnect_control_method(
     mc: Any,
     transport: Any,
     gx: Any,
     dc: Any,
     method_index: int,
-) -> Tuple[bool, Optional[str]]:
+) -> Tuple[bool, Optional[str], dict[str, Any]]:
     from gurux_dlms.GXByteBuffer import GXByteBuffer
     from gurux_dlms.GXReplyData import GXReplyData
+
+    method_names = {1: "remoteDisconnect", 2: "remoteReconnect"}
+    cmd_audit: dict[str, Any] = {
+        "methodIndex": method_index,
+        "methodName": method_names.get(method_index, f"method_{method_index}"),
+        "parameterNote": (
+            "Gurux GXDLMSDisconnectControl.remoteDisconnect/reconnect builds ACTION PDUs; "
+            "parameters follow Gurux (typically INT8 data=0)."
+        ),
+        "packetRoundCount": 0,
+        "rounds": [],
+    }
 
     try:
         packets = _disconnect_control_method_packets(gx, dc, method_index)
     except Exception as exc:  # noqa: BLE001
         log.warning("relay_disconnect_control_method_packets_failed", extra={"error": str(exc)})
-        return False, f"setup:{exc}"
+        cmd_audit["setupError"] = str(exc)
+        return False, f"setup:{exc}", cmd_audit
 
     if packets is None:
-        return False, "method_no_packets"
+        cmd_audit["setupError"] = "method_no_packets"
+        return False, "method_no_packets", cmd_audit
 
     read_buff = GXByteBuffer()
     reply = GXReplyData()
-    to_send = list(packets) if not isinstance(packets, (list, tuple)) else packets
-    for pkt in to_send:
+    to_send = list(packets) if not isinstance(packets, (list, tuple)) else list(packets)
+    cmd_audit["packetRoundCount"] = len(to_send)
+    for i, pkt in enumerate(to_send):
         read_buff.clear()
         reply.clear()
-        transport.write(bytes(pkt))
+        try:
+            pdu = bytes(pkt)
+        except Exception:  # noqa: BLE001
+            pdu = b""
+        transport.write(pdu)
         transport.flush()
         deadline = time.monotonic() + max(
             15.0,
@@ -491,7 +526,16 @@ def _gurux_invoke_disconnect_control_method(
         )
         while not reply.isComplete():
             if time.monotonic() > deadline:
-                return False, "method_deadline"
+                cmd_audit["rounds"].append(
+                    {
+                        "roundIndex": i,
+                        "requestPduHexPreview": pdu.hex()[:256],
+                        "outcome": "deadline",
+                        "replyComplete": False,
+                    }
+                )
+                cmd_audit["dlmsLayerOk"] = False
+                return False, "method_deadline", cmd_audit
             chunk = transport.read(4096)
             if chunk:
                 read_buff.set(chunk)
@@ -502,13 +546,36 @@ def _gurux_invoke_disconnect_control_method(
             errn = int(reply.error) if reply.error is not None else 0
         except Exception:  # noqa: BLE001
             errn = 0
+        err_desc: Optional[str] = None
         if errn != 0:
             try:
                 err_desc = str(reply.getError())
             except Exception:  # noqa: BLE001
                 err_desc = str(errn)
-            return False, f"dlms_error_{errn}:{err_desc}"
-    return True, None
+        cmd_audit["rounds"].append(
+            {
+                "roundIndex": i,
+                "requestPduHexPreview": pdu.hex()[:256],
+                "replyComplete": bool(reply.isComplete()),
+                "replyErrorCode": errn,
+                "replyErrorDescription": err_desc,
+                "replyDataHexPreview": _gx_reply_data_hex_preview(reply, 128),
+            }
+        )
+        if errn != 0:
+            cmd_audit["dlmsLayerOk"] = False
+            return False, f"dlms_error_{errn}:{err_desc}", cmd_audit
+    cmd_audit["dlmsLayerOk"] = True
+    log.info(
+        "relay_method_invoke_audit",
+        extra={
+            "method_index": cmd_audit.get("methodIndex"),
+            "method_name": cmd_audit.get("methodName"),
+            "packet_round_count": cmd_audit.get("packetRoundCount"),
+            "dlms_layer_ok": True,
+        },
+    )
+    return True, None, cmd_audit
 
 
 def _tcp_assoc(mc: Any, sock: socket.socket) -> Tuple[Any, Any, Optional[str]]:
@@ -840,7 +907,6 @@ def relay_read_status_inbound(
 def _relay_method_direct(
     request: ReadIdentityRequest,
     operation: RuntimeOperation,
-    method_index: int,
     expected_state: str,
 ) -> RuntimeResponseEnvelope:
     settings = get_settings()
@@ -888,6 +954,9 @@ def _relay_method_direct(
             code="MVP_AMI_RUNTIME_ERROR",
             details={"error": str(exc)},
         )
+
+    cmd_spec = resolve_relay_command_spec(request.meterId, settings)
+    method_index = method_index_for_operation(cmd_spec, operation)
 
     transport: Any = None
     gx: Any = None
@@ -945,9 +1014,10 @@ def _relay_method_direct(
                     transport_attempted=True,
                     association_attempted=True,
                 )
-            ok_m, em = _gurux_invoke_disconnect_control_method(
+            ok_m, em, cmd_audit = _gurux_invoke_disconnect_control_method(
                 client, transport, gx, dc_obj, method_index
             )
+            cmd_audit["relayCommandProfileId"] = cmd_spec.command_profile_id
             if gx is not None:
                 try:
                     client._try_gurux_disconnect(transport, gx)
@@ -963,7 +1033,13 @@ def _relay_method_direct(
                     finished=finished,
                     message=f"Relay COSEM method failed: {detail_txt}",
                     code=err_code,
-                    details={"method": method_index, "detail": em, "tcpEndpoint": endpoint},
+                    details={
+                        "method": method_index,
+                        "detail": em,
+                        "tcpEndpoint": endpoint,
+                        "relayCommandAudit": cmd_audit,
+                        "relayCommandProfileId": cmd_spec.command_profile_id,
+                    },
                     transport_attempted=True,
                     association_attempted=True,
                     association_succeeded=True,
@@ -985,9 +1061,10 @@ def _relay_method_direct(
                     transport_attempted=True,
                     association_attempted=True,
                 )
-            ok_m, em = _gurux_invoke_disconnect_control_method(
+            ok_m, em, cmd_audit = _gurux_invoke_disconnect_control_method(
                 client, ser, gx, dc_obj, method_index
             )
+            cmd_audit["relayCommandProfileId"] = cmd_spec.command_profile_id
             if gx is not None:
                 try:
                     client._try_gurux_disconnect(ser, gx)
@@ -1007,7 +1084,12 @@ def _relay_method_direct(
                     finished=finished,
                     message=f"Relay COSEM method failed: {detail_txt}",
                     code=err_code,
-                    details={"method": method_index, "detail": em},
+                    details={
+                        "method": method_index,
+                        "detail": em,
+                        "relayCommandAudit": cmd_audit,
+                        "relayCommandProfileId": cmd_spec.command_profile_id,
+                    },
                     transport_attempted=True,
                     association_attempted=True,
                     association_succeeded=True,
@@ -1019,8 +1101,15 @@ def _relay_method_direct(
             relayState=expected_state,  # type: ignore[arg-type]
             logicalName=ln,
             methodExecuted=method_index,
+            relayCommandProfileId=cmd_spec.command_profile_id,
+            relayDiagnostics={
+                "relayCommandAudit": cmd_audit,
+                "relayReadbackAnalysis": {
+                    "note": "direct_transport_posture_assumed_without_disconnect_control_read",
+                },
+            },
         )
-        label = "disconnect" if method_index == 1 else "reconnect"
+        label = "disconnect" if operation == "relayDisconnect" else "reconnect"
         return _relay_ok(
             meter_id=request.meterId,
             operation=operation,
@@ -1046,11 +1135,12 @@ def _relay_method_inbound(
     sock: socket.socket,
     remote_endpoint: str,
     operation: RuntimeOperation,
-    method_index: int,
     expected_state: str,
 ) -> RuntimeResponseEnvelope:
     settings = get_settings()
     profile_id = resolve_relay_profile_id(request.meterId, settings)
+    cmd_spec = resolve_relay_command_spec(request.meterId, settings)
+    method_index = method_index_for_operation(cmd_spec, operation)
     started = datetime.now(timezone.utc)
     boot = mvp_ami_bootstrap(settings, None)
     if isinstance(boot, MvpAmiBootstrapFailure):
@@ -1111,13 +1201,32 @@ def _relay_method_inbound(
                 "tcpEndpoint": remote_endpoint,
                 "transportMode": "tcp_inbound",
                 "relayProfileId": profile_id,
+                "relayCommandProfileId": cmd_spec.command_profile_id,
             },
             transport_attempted=True,
             association_attempted=True,
         )
-    ok_m, em = _gurux_invoke_disconnect_control_method(
+    pre_normalized: Optional[str] = None
+    baseline_meta: Optional[dict[str, Any]] = None
+    if settings.relay_command_baseline_read_enabled and gx is not None:
+        pre_row_b = _read_disconnect_control_row(client, transport, gx, ln)
+        pn, _pr, pdiag = normalize_relay_disconnect_control_row(
+            pre_row_b, profile_id=profile_id, meter_serial=request.meterId
+        )
+        pre_normalized = pn
+        baseline_meta = {
+            "preCommandOutputStateBool": pdiag.get("outputStateBool"),
+            "preCommandControlStateInt": pdiag.get("controlStateInt"),
+            "preCommandNormalizedState": pn,
+            "preCommandInterpretationRule": pdiag.get("interpretationRule"),
+            "preCommandReadError": pre_row_b.get("error"),
+        }
+
+    ok_m, em, cmd_audit = _gurux_invoke_disconnect_control_method(
         client, transport, gx, dc_obj, method_index
     )
+    cmd_audit["relayCommandProfileId"] = cmd_spec.command_profile_id
+    cmd_audit["relayStateProfileId"] = profile_id
     post_row: dict[str, Any] = {}
     st_post = "unknown"
     raw_post = ""
@@ -1160,6 +1269,8 @@ def _relay_method_inbound(
                 "tcpEndpoint": remote_endpoint,
                 "transportMode": "tcp_inbound",
                 "relayProfileId": profile_id,
+                "relayCommandProfileId": cmd_spec.command_profile_id,
+                "relayCommandAudit": cmd_audit,
             },
             transport_attempted=True,
             association_attempted=True,
@@ -1167,7 +1278,7 @@ def _relay_method_inbound(
             verified=False,
         )
 
-    label = "disconnect" if method_index == 1 else "reconnect"
+    label = "disconnect" if operation == "relayDisconnect" else "reconnect"
     if post_read_err:
         verified = False
         relay_ui_state = "unknown"
@@ -1213,6 +1324,20 @@ def _relay_method_inbound(
     full_diag["tcpEndpoint"] = remote_endpoint
     full_diag["transportMode"] = "tcp_inbound"
     full_diag["relayMethodLabel"] = label
+    full_diag["relayCommandAudit"] = cmd_audit
+    full_diag["relayCommandProfileId"] = cmd_spec.command_profile_id
+    full_diag["relayStateProfileId"] = profile_id
+    if baseline_meta is not None:
+        full_diag["relayCommandBaseline"] = baseline_meta
+    full_diag["relayReadbackAnalysis"] = build_relay_readback_analysis(
+        expected_state=expected_state,
+        pre_normalized=pre_normalized,
+        post_normalized=st_post,
+        method_dlms_layer_ok=bool(cmd_audit.get("dlmsLayerOk")),
+        post_read_error=post_read_err,
+    )
+    _rba = full_diag.get("relayReadbackAnalysis")
+    _readback_fm = _rba.get("failureMode") if isinstance(_rba, dict) else None
 
     log.info(
         "relay_method_inbound_post_verify",
@@ -1221,6 +1346,7 @@ def _relay_method_inbound(
             "operation": operation,
             "method_index": method_index,
             "relay_profile_id": profile_id,
+            "relay_command_profile_id": cmd_spec.command_profile_id,
             "expected_state": expected_state,
             "post_relay_state": st_post,
             "interpretation_rule": diag.get("interpretationRule"),
@@ -1231,6 +1357,8 @@ def _relay_method_inbound(
             "verified_on_wire": verified,
             "detail_code": detail_code,
             "verification_disagrees": full_diag.get("verificationDisagreesWithExpected"),
+            "readback_failure_mode": _readback_fm,
+            "dlms_layer_ok": cmd_audit.get("dlmsLayerOk"),
             "tcp_endpoint": remote_endpoint,
         },
     )
@@ -1241,6 +1369,7 @@ def _relay_method_inbound(
         methodExecuted=method_index,
         rawDisplay=raw_post or None,
         relayProfileId=profile_id,
+        relayCommandProfileId=cmd_spec.command_profile_id,
         relayDiagnostics=full_diag,
     )
     return _relay_ok(
@@ -1258,11 +1387,11 @@ def _relay_method_inbound(
 
 
 def relay_disconnect(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
-    return _relay_method_direct(request, "relayDisconnect", 1, "off")
+    return _relay_method_direct(request, "relayDisconnect", "off")
 
 
 def relay_reconnect(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
-    return _relay_method_direct(request, "relayReconnect", 2, "on")
+    return _relay_method_direct(request, "relayReconnect", "on")
 
 
 def relay_disconnect_inbound(
@@ -1270,7 +1399,7 @@ def relay_disconnect_inbound(
     sock: socket.socket,
     remote_endpoint: str,
 ) -> RuntimeResponseEnvelope:
-    return _relay_method_inbound(request, sock, remote_endpoint, "relayDisconnect", 1, "off")
+    return _relay_method_inbound(request, sock, remote_endpoint, "relayDisconnect", "off")
 
 
 def relay_reconnect_inbound(
@@ -1278,4 +1407,4 @@ def relay_reconnect_inbound(
     sock: socket.socket,
     remote_endpoint: str,
 ) -> RuntimeResponseEnvelope:
-    return _relay_method_inbound(request, sock, remote_endpoint, "relayReconnect", 2, "on")
+    return _relay_method_inbound(request, sock, remote_endpoint, "relayReconnect", "on")

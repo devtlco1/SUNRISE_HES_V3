@@ -56,6 +56,24 @@ class Settings(BaseSettings):
             '{"202402240289":"rcs_output_false_cs2_as_on"}.'
         ),
     )
+    relay_command_profile_default: str = Field(
+        default="standard",
+        description="Default relay *command* profile id (method indices); see relay_command_profile_overrides_json.",
+    )
+    relay_command_profile_overrides_json: str = Field(
+        default="{}",
+        description=(
+            'JSON: {"<serial>":{"commandProfileId":"standard","disconnectMethodIndex":1,'
+            '"reconnectMethodIndex":2}} — per-meter COSEM method indices for class 70 OFF/ON.'
+        ),
+    )
+    relay_command_baseline_read_enabled: bool = Field(
+        default=False,
+        description=(
+            "If true, read disconnect-control attributes immediately before relay OFF/ON (extra DLMS "
+            "round-trips) to detect no-op commands vs baseline."
+        ),
+    )
     """Association LN logical name whose attribute 2 (object list) is read for discovery."""
     discovery_association_ln: str = "0.0.40.0.0.255"
     """Directory for JSON discovery snapshots (per-meter subfolders). Default under sidecar `data/`."""

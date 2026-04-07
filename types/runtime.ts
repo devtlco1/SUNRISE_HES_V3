@@ -352,6 +352,8 @@ export interface RelayControlPayload {
   methodExecuted?: number
   /** Semantic profile id from runtime (per-meter overrides via sidecar env). */
   relayProfileId?: string
+  /** Which relay command profile selected method indices for this action. */
+  relayCommandProfileId?: string
   /** Structured evidence for outputState/controlState interpretation (bounded). */
   relayDiagnostics?: Record<string, unknown>
 }

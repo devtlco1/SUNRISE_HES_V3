@@ -1,10 +1,13 @@
 """
-Per-meter relay semantics for class 70 disconnect control (outputState / controlState).
+Per-meter relay *state read* semantics for class 70 (outputState / controlState normalization).
+
+This is separate from relay *command* profiles (which COSEM method index is sent for OFF/ON);
+see app.adapters.relay_command_profile.
 
 Different devices report different combinations after remote disconnect/reconnect (e.g. Gurux
-ControlState READY_FOR_RECONNECTION=2 with outputState=false). The default profile matches
-meters that align outputState with energized state; optional profiles apply explicit overrides
-configured by canonical serial — never silent one-off hacks in the hot path.
+ControlState READY_FOR_RECONNECTION=2 with outputState=false). Optional state profiles apply
+per canonical serial. If live evidence shows DLMS method succeeds but the load does not switch,
+investigate command profiles and raw method replies — not only state tuple mapping.
 """
 
 from __future__ import annotations
