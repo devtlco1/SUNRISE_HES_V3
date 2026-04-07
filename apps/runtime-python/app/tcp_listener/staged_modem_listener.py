@@ -1,7 +1,8 @@
 """
-Process-local TCP listener: modem dials server → accept → stage one socket → operator triggers read-identity.
+Process-local TCP listener: modem dials server → accept → queue unbound sockets.
 
-Does not run MVP-AMI on accept; only on explicit POST /v1/runtime/tcp-listener/read-identity.
+After Scanner read-identity, a socket is registered under canonical serial (0.0.96.1.0.255).
+All inbound actions resolve the socket strictly by selected meter serial — never a generic slot.
 """
 
 from __future__ import annotations
@@ -9,11 +10,13 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 from app.config import get_settings
+from app.tcp_listener.inbound_target_serial import normalize_inbound_target_serial
 
 log = logging.getLogger(__name__)
 
@@ -40,10 +43,16 @@ class StagedSocketMeta:
 
 
 @dataclass
+class StagedSocketHold:
+    sock: socket.socket
+    meta: StagedSocketMeta
+
+
+@dataclass
 class TcpModemListenerController:
     """
-    One listening socket + at most one staged accepted connection.
-    Replacement: new inbound connection closes the previous staged socket (if any).
+    One listening socket + FIFO unbound inbound connections + bound sessions keyed by canonical serial.
+    New accept appends to unbound queue (bounded). Scanner identify moves unbound → bound[serial].
     """
 
     _stop_event: threading.Event = field(default_factory=threading.Event)
@@ -53,18 +62,14 @@ class TcpModemListenerController:
     _session_lock: threading.Lock = field(default_factory=threading.Lock)
     _inbound_operator_lock: threading.Lock = field(default_factory=threading.Lock)
     _inbound_operator_busy: bool = False
-    _staged_sock: Optional[socket.socket] = None
-    _staged_meta: Optional[StagedSocketMeta] = None
+    _unbound: deque[StagedSocketHold] = field(default_factory=deque)
+    _bound: dict[str, StagedSocketHold] = field(default_factory=dict)
     _last_replacement_reason: Optional[str] = None
     _last_bind_error: Optional[str] = None
     _session_in_progress: bool = False
     _last_tcp_listener_trigger: Optional[dict[str, Any]] = None
 
     def begin_inbound_operator_action(self) -> bool:
-        """
-        Single-flight guard for staged inbound work (read/relay/job).
-        Call from route or worker entry; pair with end_inbound_operator_action() in a finally block.
-        """
         with self._inbound_operator_lock:
             if self._inbound_operator_busy:
                 return False
@@ -102,27 +107,39 @@ class TcpModemListenerController:
                 self._server_sock = None
         finally:
             with self._holder_lock:
-                self._close_staged_unlocked(reason="listener_shutdown")
+                self._close_all_holds_unlocked(reason="listener_shutdown")
             if self._thread is not None:
                 self._thread.join(timeout=3.0)
                 self._thread = None
         log.info("tcp_modem_listener_stopped")
 
-    def _close_staged_unlocked(self, *, reason: str) -> None:
-        if self._staged_sock is not None:
-            try:
-                self._staged_sock.close()
-            except Exception:  # noqa: BLE001
-                pass
-            self._last_replacement_reason = reason
-        self._staged_sock = None
-        self._staged_meta = None
+    def _close_hold_unlocked(self, hold: StagedSocketHold, *, reason: str) -> None:
+        try:
+            hold.sock.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self._last_replacement_reason = reason
+
+    def _close_all_holds_unlocked(self, *, reason: str) -> None:
+        while self._unbound:
+            self._close_hold_unlocked(self._unbound.popleft(), reason=reason)
+        for _k, hold in list(self._bound.items()):
+            self._close_hold_unlocked(hold, reason=reason)
+        self._bound.clear()
+
+    def _prune_dead_bound_unlocked(self) -> None:
+        dead = [k for k, h in self._bound.items() if not _sock_is_open(h.sock)]
+        for k in dead:
+            hold = self._bound.pop(k, None)
+            if hold is not None:
+                self._close_hold_unlocked(hold, reason="bound_socket_dead")
 
     def _run_accept_loop(self) -> None:
         s = get_settings()
         host = (s.tcp_listener_host or "0.0.0.0").strip()
         port = int(s.tcp_listener_port)
         backlog = max(1, int(s.tcp_listener_backlog))
+        max_unbound = max(1, int(s.tcp_listener_unbound_queue_max))
         srv: Optional[socket.socket] = None
         try:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -162,11 +179,12 @@ class TcpModemListenerController:
                 accepted_at_utc=_iso_z(),
                 local_bound=f"{host}:{port}",
             )
+            hold = StagedSocketHold(sock=conn, meta=meta)
             with self._holder_lock:
-                if self._staged_sock is not None and _sock_is_open(self._staged_sock):
-                    self._close_staged_unlocked(reason="replaced_by_new_inbound_connection")
-                self._staged_sock = conn
-                self._staged_meta = meta
+                self._unbound.append(hold)
+                while len(self._unbound) > max_unbound:
+                    old = self._unbound.popleft()
+                    self._close_hold_unlocked(old, reason="unbound_queue_overflow")
             log.info("tcp_modem_staged_connection", extra={"remote": f"{rh}:{rp}"})
             try:
                 from app.jobs import obis_selection_job_store as _obis_job_store
@@ -185,8 +203,49 @@ class TcpModemListenerController:
     def get_status_dict(self) -> dict[str, Any]:
         s = get_settings()
         with self._holder_lock:
-            staged_open = _sock_is_open(self._staged_sock)
-            meta = self._staged_meta
+            self._prune_dead_bound_unlocked()
+            sessions: list[dict[str, Any]] = []
+            for i, h in enumerate(self._unbound):
+                if not _sock_is_open(h.sock):
+                    continue
+                sessions.append(
+                    {
+                        "pendingBind": True,
+                        "queueIndex": i,
+                        "remoteHost": h.meta.remote_host,
+                        "remotePort": h.meta.remote_port,
+                        "acceptedAtUtc": h.meta.accepted_at_utc,
+                        "localBound": h.meta.local_bound,
+                    }
+                )
+            for serial in sorted(self._bound.keys()):
+                h = self._bound[serial]
+                if not _sock_is_open(h.sock):
+                    continue
+                sessions.append(
+                    {
+                        "pendingBind": False,
+                        "canonicalSerial": serial,
+                        "remoteHost": h.meta.remote_host,
+                        "remotePort": h.meta.remote_port,
+                        "acceptedAtUtc": h.meta.accepted_at_utc,
+                        "localBound": h.meta.local_bound,
+                    }
+                )
+            ucount = sum(1 for h in self._unbound if _sock_is_open(h.sock))
+            bcount = sum(1 for h in self._bound.values() if _sock_is_open(h.sock))
+            first_meta: Optional[StagedSocketMeta] = None
+            if self._unbound:
+                for h in self._unbound:
+                    if _sock_is_open(h.sock):
+                        first_meta = h.meta
+                        break
+            if first_meta is None and self._bound:
+                for serial in sorted(self._bound.keys()):
+                    h = self._bound[serial]
+                    if _sock_is_open(h.sock):
+                        first_meta = h.meta
+                        break
             rep = self._last_replacement_reason
         thr_alive = self._thread is not None and self._thread.is_alive()
         listening = self._server_sock is not None and _sock_is_open(self._server_sock)
@@ -199,39 +258,72 @@ class TcpModemListenerController:
             "threadAlive": thr_alive,
             "listening": listening,
             "lastBindError": self._last_bind_error,
-            "stagedPresent": staged_open and meta is not None,
-            "stagedRemoteHost": meta.remote_host if meta else None,
-            "stagedRemotePort": meta.remote_port if meta else None,
-            "stagedAcceptedAtUtc": meta.accepted_at_utc if meta else None,
-            "stagedSocketOpen": staged_open,
-            "stagedLocalBound": meta.local_bound if meta else None,
+            "stagedPresent": (ucount + bcount) > 0,
+            "stagedRemoteHost": first_meta.remote_host if first_meta else None,
+            "stagedRemotePort": first_meta.remote_port if first_meta else None,
+            "stagedAcceptedAtUtc": first_meta.accepted_at_utc if first_meta else None,
+            "stagedSocketOpen": (ucount + bcount) > 0,
+            "stagedLocalBound": first_meta.local_bound if first_meta else None,
             "lastStagedReplacementReason": rep,
-            "sessionTriggerInProgress": bool(
-                self._session_in_progress or self._inbound_operator_busy
-            ),
+            "sessionTriggerInProgress": bool(self._session_in_progress or self._inbound_operator_busy),
             "lastTcpListenerTrigger": self._last_tcp_listener_trigger,
+            "stagedSessions": sessions,
+            "unboundInboundCount": ucount,
+            "boundInboundCount": bcount,
         }
 
     def record_tcp_listener_trigger(self, record: dict[str, Any]) -> None:
-        """Last explicit trigger (read-identity / read-basic-registers) for operators."""
         with self._holder_lock:
             self._last_tcp_listener_trigger = record
 
-    def take_staged_socket_for_session(self) -> Tuple[Optional[socket.socket], Optional[str], Optional[StagedSocketMeta]]:
-        """
-        Remove staged socket from the slot (caller owns FD; must close after use).
-        Returns (sock, remote_endpoint, meta_copy).
-        """
+    def unbound_queue_len(self) -> int:
         with self._holder_lock:
-            if not _sock_is_open(self._staged_sock):
-                self._close_staged_unlocked(reason="staged_socket_dead_or_missing")
-                return None, None, None
-            sock = self._staged_sock
-            meta = self._staged_meta
-            self._staged_sock = None
-            self._staged_meta = None
-            endpoint = f"{meta.remote_host}:{meta.remote_port}" if meta else "unknown"
-            return sock, endpoint, meta
+            return sum(1 for h in self._unbound if _sock_is_open(h.sock))
+
+    def pop_unbound_left(self) -> Optional[StagedSocketHold]:
+        """Remove leftmost live unbound hold; caller owns socket."""
+        with self._holder_lock:
+            while self._unbound:
+                hold = self._unbound.popleft()
+                if _sock_is_open(hold.sock):
+                    return hold
+                self._close_hold_unlocked(hold, reason="unbound_socket_dead")
+            return None
+
+    def pop_bound_session(self, serial: str) -> Optional[StagedSocketHold]:
+        """Remove bound session for canonical serial if present and alive."""
+        key = normalize_inbound_target_serial(serial)
+        if not key:
+            return None
+        with self._holder_lock:
+            self._prune_dead_bound_unlocked()
+            hold = self._bound.pop(key, None)
+            if hold is None:
+                return None
+            if not _sock_is_open(hold.sock):
+                self._close_hold_unlocked(hold, reason="bound_socket_dead_on_pop")
+                return None
+            return hold
+
+    def register_bound_session(self, canonical_serial: str, hold: StagedSocketHold) -> None:
+        """Store an open socket under canonical serial; closes any prior bound entry for that serial."""
+        key = normalize_inbound_target_serial(canonical_serial)
+        if not key:
+            with self._holder_lock:
+                self._close_hold_unlocked(hold, reason="empty_canonical_serial_bind")
+            return
+        with self._holder_lock:
+            old = self._bound.pop(key, None)
+            if old is not None:
+                self._close_hold_unlocked(old, reason="replaced_by_new_bind_same_serial")
+            if not _sock_is_open(hold.sock):
+                self._close_hold_unlocked(hold, reason="register_dead_socket")
+                return
+            self._bound[key] = hold
+
+    def close_hold(self, hold: StagedSocketHold, *, reason: str) -> None:
+        with self._holder_lock:
+            self._close_hold_unlocked(hold, reason=reason)
 
     def session_context(self):
         """Serialize trigger handlers; mark session_in_progress for status."""

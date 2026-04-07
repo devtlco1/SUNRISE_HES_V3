@@ -65,6 +65,12 @@ class Settings(BaseSettings):
         description="Listen port for inbound modem (distinct from FastAPI SUNRISE_RUNTIME_PORT).",
     )
     tcp_listener_backlog: int = Field(default=8, ge=1, le=128, description="listen() backlog.")
+    tcp_listener_unbound_queue_max: int = Field(
+        default=16,
+        ge=1,
+        le=64,
+        description="Max queued unbound inbound TCP sockets; oldest unbound closed on overflow.",
+    )
     inbound_obis_wire_chunk_size: int = Field(
         default=8,
         ge=1,

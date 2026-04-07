@@ -29,6 +29,7 @@ import {
   postRelayReadStatusReadings,
   postRelayReconnectReadings,
   READINGS_FETCH_NETWORK_ERROR,
+  tcpListenerStrictRouteAvailableForSerial,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
 import {
@@ -322,11 +323,17 @@ export function ReadingsWorkspaceClient() {
     ? boolish(listenerStatus.listenerEnabled)
     : false
 
+  const inboundRouteOk = tcpListenerStrictRouteAvailableForSerial(
+    listenerStatus,
+    meterId
+  )
+
   const sessionLocked = busy || relayBusy
 
   const canInboundRead =
     transport === "inbound" &&
     stagedPresent &&
+    inboundRouteOk &&
     !triggerInProgress &&
     !sessionLocked &&
     !statusLoading
@@ -335,6 +342,7 @@ export function ReadingsWorkspaceClient() {
   const canRelayInbound =
     transport === "inbound" &&
     stagedPresent &&
+    inboundRouteOk &&
     !triggerInProgress &&
     !sessionLocked &&
     !statusLoading &&
@@ -816,6 +824,15 @@ export function ReadingsWorkspaceClient() {
               </>
             ) : null}
           </div>
+
+          {transport === "inbound" &&
+          meterId.trim() &&
+          !inboundRouteOk &&
+          stagedPresent ? (
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              No inbound session for this serial — bind it in Scanner, or fix multiple queued modems.
+            </p>
+          ) : null}
 
           {triggerRecord ? (
             <p className="text-xs text-muted-foreground">

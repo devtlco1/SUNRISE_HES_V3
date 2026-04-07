@@ -88,6 +88,37 @@ function tcpListenerSessionBusyMessage(parsed: unknown): string {
   return "Inbound modem busy — finish the current action first."
 }
 
+/** Bound inbound sessions: canonical serial from 0.0.96.1.0.255 (Scanner register_bound). */
+export function tcpListenerBoundCanonicalSerials(status: TcpListenerStatus | null): Set<string> {
+  const out = new Set<string>()
+  const raw = status?.stagedSessions
+  if (!Array.isArray(raw)) return out
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue
+    const row = item as Record<string, unknown>
+    if (row.pendingBind === true) continue
+    const cs = row.canonicalSerial
+    if (typeof cs === "string" && cs.trim()) out.add(cs.trim())
+  }
+  return out
+}
+
+/** True when the selected meter may use inbound TCP: bound session for that serial, or exactly one unbound line (server verifies 0.0.96.1.0.255). */
+export function tcpListenerStrictRouteAvailableForSerial(
+  status: TcpListenerStatus | null,
+  serial: string
+): boolean {
+  const mid = serial.trim()
+  if (!mid) return false
+  const bound = tcpListenerBoundCanonicalSerials(status)
+  if (bound.has(mid)) return true
+  const ub =
+    typeof status?.unboundInboundCount === "number"
+      ? status.unboundInboundCount
+      : 0
+  return ub === 1 && bound.size === 0
+}
+
 export async function fetchTcpListenerStatus(
   signal?: AbortSignal
 ): Promise<ReadingsApiResult<TcpListenerStatus>> {

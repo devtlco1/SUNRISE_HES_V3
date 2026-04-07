@@ -15,6 +15,14 @@ from app.schemas.envelope import (
     RuntimeResponseEnvelope,
 )
 from app.schemas.requests import ReadIdentityRequest
+from app.services.tcp_listener_socket_acquire import (
+    acquire_inbound_socket_for_target_meter,
+    error_message_for_acquire_code,
+)
+from app.tcp_listener.inbound_target_serial import (
+    is_scanner_bind_meter_id,
+    normalize_inbound_target_serial,
+)
 from app.tcp_listener.staged_modem_listener import (
     build_last_tcp_listener_trigger_record,
     get_tcp_modem_listener,
@@ -73,40 +81,128 @@ def execute_tcp_listener_read_identity(request: ReadIdentityRequest) -> RuntimeR
                     )
                     return envelope
 
-                sock, endpoint, _meta = ctl.take_staged_socket_for_session()
-                if sock is None:
-                    teardown = "no_staged_socket"
-                    finished = datetime.now(timezone.utc)
-                    st = ctl.get_status_dict()
-                    envelope = _fail(
-                        request,
-                        started,
-                        finished,
-                        "No staged inbound TCP socket — wait for modem to connect, then retry.",
-                        "NO_STAGED_TCP_SOCKET",
-                        {
-                            "transportMode": "tcp_inbound",
-                            "listenerListening": st.get("listening"),
-                            "stagedPresent": st.get("stagedPresent"),
-                            "lastBindError": st.get("lastBindError"),
-                        },
-                    )
-                    return envelope
-
-                remote = endpoint
-                teardown = "server_closed_after_trigger"
-                try:
-                    log.info(
-                        "tcp_listener_read_identity_start",
-                        extra={"meter_id": request.meterId, "remote": endpoint},
-                    )
-                    envelope = adapter.read_identity_on_accepted_tcp_socket(request, sock, endpoint)
-                    return envelope
-                finally:
+                if is_scanner_bind_meter_id(request.meterId):
+                    hold = ctl.pop_unbound_left()
+                    if hold is None:
+                        teardown = "no_unbound_socket"
+                        finished = datetime.now(timezone.utc)
+                        st = ctl.get_status_dict()
+                        envelope = _fail(
+                            request,
+                            started,
+                            finished,
+                            "No unbound inbound modem — wait for a connection, then Identify.",
+                            "NO_UNBOUND_INBOUND_SOCKET",
+                            {
+                                "transportMode": "tcp_inbound",
+                                "listenerListening": st.get("listening"),
+                                "unboundInboundCount": st.get("unboundInboundCount"),
+                                "lastBindError": st.get("lastBindError"),
+                            },
+                        )
+                        return envelope
+                    remote = f"{hold.meta.remote_host}:{hold.meta.remote_port}"
+                    teardown = "socket_kept_bound_after_scanner_identity"
                     try:
-                        sock.close()
-                    except Exception:  # noqa: BLE001
-                        pass
+                        log.info(
+                            "tcp_listener_read_identity_scanner_bind",
+                            extra={"remote": remote},
+                        )
+                        envelope = adapter.read_identity_on_accepted_tcp_socket(
+                            request, hold.sock, remote
+                        )
+                        if (
+                            envelope.ok
+                            and envelope.payload is not None
+                            and normalize_inbound_target_serial(envelope.payload.serialNumber)
+                        ):
+                            ctl.register_bound_session(
+                                envelope.payload.serialNumber, hold
+                            )
+                        else:
+                            teardown = "server_closed_after_failed_scanner_identity"
+                            ctl.close_hold(hold, reason="scanner_identity_failed")
+                        return envelope
+                    except Exception:
+                        teardown = "server_closed_after_scanner_identity_exception"
+                        ctl.close_hold(hold, reason="scanner_identity_exception")
+                        raise
+                else:
+                    ts = normalize_inbound_target_serial(request.meterId)
+                    acq, code = acquire_inbound_socket_for_target_meter(ctl, adapter, ts)
+                    if acq is None:
+                        teardown = "acquire_failed"
+                        finished = datetime.now(timezone.utc)
+                        st = ctl.get_status_dict()
+                        envelope = _fail(
+                            request,
+                            started,
+                            finished,
+                            error_message_for_acquire_code(code, target_serial=ts),
+                            code,
+                            {
+                                "transportMode": "tcp_inbound",
+                                "targetMeterSerial": ts,
+                                "listenerListening": st.get("listening"),
+                                "unboundInboundCount": st.get("unboundInboundCount"),
+                                "boundInboundCount": st.get("boundInboundCount"),
+                                "lastBindError": st.get("lastBindError"),
+                            },
+                        )
+                        return envelope
+
+                    remote = acq.endpoint
+                    teardown = "socket_kept_bound_after_identity"
+                    try:
+                        if acq.cached_identity_envelope is not None:
+                            envelope = acq.cached_identity_envelope
+                            canon = normalize_inbound_target_serial(
+                                envelope.payload.serialNumber  # type: ignore[union-attr]
+                            )
+                            if canon == ts:
+                                ctl.register_bound_session(canon, acq.hold)
+                            else:
+                                ctl.close_hold(acq.hold, reason="cached_identity_serial_mismatch")
+                            return envelope
+
+                        log.info(
+                            "tcp_listener_read_identity_start",
+                            extra={"meter_id": request.meterId, "remote": remote},
+                        )
+                        envelope = adapter.read_identity_on_accepted_tcp_socket(
+                            request, acq.hold.sock, remote
+                        )
+                        if (
+                            envelope.ok
+                            and envelope.payload is not None
+                            and normalize_inbound_target_serial(envelope.payload.serialNumber)
+                            == ts
+                        ):
+                            ctl.register_bound_session(ts, acq.hold)
+                        elif envelope.ok and envelope.payload is not None:
+                            ctl.close_hold(acq.hold, reason="identity_serial_mismatch_vs_target")
+                            envelope = _fail(
+                                request,
+                                started,
+                                datetime.now(timezone.utc),
+                                error_message_for_acquire_code(
+                                    "INBOUND_IDENTITY_SERIAL_MISMATCH", target_serial=ts
+                                ),
+                                "INBOUND_IDENTITY_SERIAL_MISMATCH",
+                                {
+                                    "transportMode": "tcp_inbound",
+                                    "targetMeterSerial": ts,
+                                    "wireCanonicalSerial": normalize_inbound_target_serial(
+                                        envelope.payload.serialNumber
+                                    ),
+                                },
+                            )
+                        else:
+                            ctl.close_hold(acq.hold, reason="read_identity_failed")
+                        return envelope
+                    except Exception:
+                        ctl.close_hold(acq.hold, reason="read_identity_exception")
+                        raise
             finally:
                 if envelope is not None:
                     ctl.record_tcp_listener_trigger(

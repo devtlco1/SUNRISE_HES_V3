@@ -1,7 +1,7 @@
 "use client"
 
 import { RefreshCwIcon } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { PageHeader } from "@/components/shared/page-header"
 import { StatusBadge } from "@/components/shared/status-badge"
@@ -22,10 +22,44 @@ import {
 } from "@/lib/readings/api"
 import { serialAlreadyRegistered } from "@/lib/meters/create-from-serial"
 import type { MeterListRow } from "@/types/meter"
+
 const POLL_MS = 4000
 
 function boolish(v: unknown): boolean {
   return v === true || v === "true" || v === 1
+}
+
+type ParsedStagedSession = {
+  pendingBind: boolean
+  canonicalSerial?: string
+  remoteHost: string
+  remotePort: number
+  acceptedAtUtc: string
+}
+
+function parseStagedSessions(status: TcpListenerStatus | null): ParsedStagedSession[] {
+  const raw = status?.stagedSessions
+  if (!Array.isArray(raw)) return []
+  const out: ParsedStagedSession[] = []
+  for (const x of raw) {
+    if (!x || typeof x !== "object") continue
+    const o = x as Record<string, unknown>
+    const rh = o.remoteHost
+    const rp = o.remotePort
+    const at = o.acceptedAtUtc
+    if (typeof rh !== "string" || typeof at !== "string") continue
+    if (typeof rp !== "number") continue
+    const pending = o.pendingBind === true
+    const cs = typeof o.canonicalSerial === "string" ? o.canonicalSerial : undefined
+    out.push({
+      pendingBind: pending,
+      canonicalSerial: cs,
+      remoteHost: rh,
+      remotePort: rp,
+      acceptedAtUtc: at,
+    })
+  }
+  return out
 }
 
 export function ScannerWorkspaceClient() {
@@ -35,10 +69,8 @@ export function ScannerWorkspaceClient() {
   const [meters, setMeters] = useState<MeterListRow[]>([])
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [identifiedSerial, setIdentifiedSerial] = useState<string | null>(null)
-  const [identifiedAux, setIdentifiedAux] = useState<string | null>(null)
   const [identifyState, setIdentifyState] = useState<"idle" | "ok" | "error">("idle")
-  const lastEndpointRef = useRef<string | null>(null)
+  const [lastIdentifyAux, setLastIdentifyAux] = useState<string | null>(null)
 
   const loadStatus = useCallback(async (signal?: AbortSignal) => {
     setStatusError(null)
@@ -78,51 +110,37 @@ export function ScannerWorkspaceClient() {
     const id = window.setInterval(() => {
       loadStatus().catch(() => {})
     }, POLL_MS)
-    return () => clearInterval(id)
+    return () => window.clearInterval(id)
   }, [loadStatus])
 
-  const stagedPresent = listenerStatus ? boolish(listenerStatus.stagedPresent) : false
   const triggerInProgress = listenerStatus
     ? boolish(listenerStatus.sessionTriggerInProgress)
     : false
   const listening = listenerStatus ? boolish(listenerStatus.listening) : false
   const listenerEnabled = listenerStatus ? boolish(listenerStatus.listenerEnabled) : false
 
-  const remoteEp = useMemo(() => {
-    if (!listenerStatus || !stagedPresent) return null
-    const h = listenerStatus.stagedRemoteHost
-    const p = listenerStatus.stagedRemotePort
-    if (typeof h === "string" && h && p != null) return `${h}:${p}`
-    return null
-  }, [listenerStatus, stagedPresent])
+  const sessionRows = useMemo(
+    () => parseStagedSessions(listenerStatus),
+    [listenerStatus]
+  )
 
-  const stagedSince =
-    listenerStatus && typeof listenerStatus.stagedAcceptedAtUtc === "string"
-      ? listenerStatus.stagedAcceptedAtUtc
-      : null
+  const pendingUnbound =
+    typeof listenerStatus?.unboundInboundCount === "number"
+      ? listenerStatus.unboundInboundCount
+      : sessionRows.filter((r) => r.pendingBind).length
 
-  const stageKey =
-    stagedPresent && remoteEp && stagedSince ? `${remoteEp}|${stagedSince}` : null
+  const sessionsKey = useMemo(() => JSON.stringify(sessionRows), [sessionRows])
 
   useEffect(() => {
-    if (!stageKey) return
-    if (stageKey !== lastEndpointRef.current) {
-      lastEndpointRef.current = stageKey
-      setIdentifiedSerial(null)
-      setIdentifiedAux(null)
-      setIdentifyState("idle")
-      setActionError(null)
-    }
-  }, [stageKey])
-
-  const isRegistered = identifiedSerial
-    ? serialAlreadyRegistered(identifiedSerial, meters)
-    : false
+    setIdentifyState("idle")
+    setLastIdentifyAux(null)
+    setActionError(null)
+  }, [sessionsKey])
 
   async function onIdentify() {
     setActionError(null)
-    if (!stagedPresent || triggerInProgress) {
-      setActionError("No staged socket.")
+    if (pendingUnbound <= 0 || triggerInProgress) {
+      setActionError("No unbound inbound modem — wait for a connection.")
       return
     }
     setBusy(true)
@@ -135,16 +153,16 @@ export function ScannerWorkspaceClient() {
         return
       }
       const p = r.data.payload
-      const canonical = (p?.serialNumber ?? "").trim()
       const aux = (p?.logicalDeviceName ?? "").trim()
-      setIdentifiedAux(aux || null)
+      setLastIdentifyAux(aux || null)
+      const canonical = (p?.serialNumber ?? "").trim()
       if (!canonical) {
-        setIdentifiedSerial(null)
         setIdentifyState("error")
-        setActionError("Canonical serial (0.0.96.1.0.255) not read — auxiliary fields cannot substitute.")
+        setActionError(
+          "Canonical serial (0.0.96.1.0.255) not read — auxiliary fields cannot substitute."
+        )
         return
       }
-      setIdentifiedSerial(canonical)
       setIdentifyState("ok")
       await reloadMeters()
     } finally {
@@ -153,15 +171,16 @@ export function ScannerWorkspaceClient() {
     }
   }
 
-  async function onAdd() {
-    if (!identifiedSerial) return
+  async function onAddSerial(serial: string) {
+    const s = serial.trim()
+    if (!s) return
     setActionError(null)
     setBusy(true)
     try {
       const res = await fetch("/api/meters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serialNumber: identifiedSerial }),
+        body: JSON.stringify({ serialNumber: s }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -185,7 +204,11 @@ export function ScannerWorkspaceClient() {
       : null
 
   const canIdentify =
-    stagedPresent && !triggerInProgress && !busy && !statusLoading && listenerEnabled
+    pendingUnbound > 0 &&
+    !triggerInProgress &&
+    !busy &&
+    !statusLoading &&
+    listenerEnabled
 
   return (
     <div className="space-y-4">
@@ -233,6 +256,28 @@ export function ScannerWorkspaceClient() {
         </p>
       ) : null}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={!canIdentify}
+          onClick={() => void onIdentify()}
+        >
+          Identify next unbound
+        </Button>
+        {identifyState === "error" ? (
+          <span className="text-xs text-destructive">Identify failed</span>
+        ) : identifyState === "ok" ? (
+          <span className="text-xs text-muted-foreground">Bound session updated</span>
+        ) : null}
+        {lastIdentifyAux ? (
+          <span className="font-mono text-[10px] text-muted-foreground">
+            Aux 0.0.96.1.1.255: {lastIdentifyAux}
+          </span>
+        ) : null}
+      </div>
+
       {actionError ? <p className="text-xs text-destructive">{actionError}</p> : null}
 
       <div className="overflow-auto rounded-lg border border-border bg-card">
@@ -240,73 +285,73 @@ export function ScannerWorkspaceClient() {
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead>Remote</TableHead>
-              <TableHead>Staged since</TableHead>
-              <TableHead>Socket</TableHead>
+              <TableHead>Since</TableHead>
+              <TableHead>Session</TableHead>
               <TableHead>Serial (0.0.96.1.0.255)</TableHead>
-              <TableHead className="text-muted-foreground">Aux (0.0.96.1.1.255)</TableHead>
-              <TableHead>Identify</TableHead>
               <TableHead>Registry</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-right">Add</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            <TableRow>
-              <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-xs whitespace-normal break-all">
-                {remoteEp ?? "—"}
-              </TableCell>
-              <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-[10px] whitespace-normal break-words text-muted-foreground">
-                {stagedSince ?? "—"}
-              </TableCell>
-              <TableCell>
-                <StatusBadge variant={stagedPresent ? "success" : "neutral"}>
-                  {stagedPresent ? "open" : "none"}
-                </StatusBadge>
-              </TableCell>
-              <TableCell className="max-w-[min(14rem,32vw)] align-top font-mono text-xs whitespace-normal break-words">
-                {identifiedSerial ??
-                  (identifyState === "error" ? (
-                    <span className="text-muted-foreground">Unavailable</span>
-                  ) : (
-                    "—"
-                  ))}
-                {identifyState === "error" ? (
-                  <span className="ml-1 text-destructive">failed</span>
-                ) : null}
-              </TableCell>
-              <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-[11px] whitespace-normal break-words text-muted-foreground">
-                {identifiedAux ?? "—"}
-              </TableCell>
-              <TableCell>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  disabled={!canIdentify}
-                  onClick={() => void onIdentify()}
+            {sessionRows.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={6}
+                  className="text-xs text-muted-foreground"
                 >
-                  Identify
-                </Button>
-              </TableCell>
-              <TableCell>
-                {identifiedSerial ? (
-                  <StatusBadge variant={isRegistered ? "success" : "warning"}>
-                    {isRegistered ? "Registered" : "Not registered"}
-                  </StatusBadge>
-                ) : (
-                  "—"
-                )}
-              </TableCell>
-              <TableCell className="text-right">
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={!identifiedSerial || !!isRegistered || busy}
-                  onClick={() => void onAdd()}
-                >
-                  Add
-                </Button>
-              </TableCell>
-            </TableRow>
+                  No inbound connections.
+                </TableCell>
+              </TableRow>
+            ) : (
+              sessionRows.map((row, i) => {
+                const ep = `${row.remoteHost}:${row.remotePort}`
+                const serial = row.pendingBind
+                  ? null
+                  : (row.canonicalSerial ?? "").trim() || null
+                const reg = serial
+                  ? serialAlreadyRegistered(serial, meters)
+                  : null
+                return (
+                  <TableRow key={`${ep}|${row.acceptedAtUtc}|${i}`}>
+                    <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-xs whitespace-normal break-all">
+                      {ep}
+                    </TableCell>
+                    <TableCell className="max-w-[min(10rem,24vw)] align-top font-mono text-[10px] whitespace-normal break-words text-muted-foreground">
+                      {row.acceptedAtUtc}
+                    </TableCell>
+                    <TableCell>
+                      {row.pendingBind ? (
+                        <StatusBadge variant="warning">unbound</StatusBadge>
+                      ) : (
+                        <StatusBadge variant="success">bound</StatusBadge>
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-[min(14rem,32vw)] align-top font-mono text-xs whitespace-normal break-words">
+                      {serial ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      {!serial ? (
+                        "—"
+                      ) : reg ? (
+                        <StatusBadge variant="success">Registered</StatusBadge>
+                      ) : (
+                        <StatusBadge variant="warning">Not registered</StatusBadge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!serial || !!reg || busy}
+                        onClick={() => void onAddSerial(serial!)}
+                      >
+                        Add
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            )}
           </TableBody>
         </Table>
       </div>

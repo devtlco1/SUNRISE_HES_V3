@@ -28,6 +28,11 @@ from app.schemas.envelope import (
     RuntimeResponseEnvelope,
 )
 from app.schemas.requests import ReadObisSelectionRequest
+from app.services.tcp_listener_socket_acquire import (
+    acquire_inbound_socket_for_target_meter,
+    error_message_for_acquire_code,
+)
+from app.tcp_listener.inbound_target_serial import normalize_inbound_target_serial
 from app.tcp_listener.staged_modem_listener import (
     build_last_tcp_listener_trigger_record,
     get_tcp_modem_listener,
@@ -89,28 +94,44 @@ def _next_segment_indices(
     return out
 
 
-def _wait_for_next_staged_socket(
+def _wait_for_next_socket_for_meter_job(
     ctl: Any,
+    adapter: MvpAmiRuntimeAdapter,
+    meter_serial: str,
     job_id: str,
     timeout_sec: float,
-) -> Tuple[Optional[Any], Optional[str]]:
+) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
+    """
+    Wait until an inbound socket can be acquired strictly for `meter_serial`.
+    Returns (sock, endpoint, None) on success, or (None, None, error_code) on fatal/timeout/cancel.
+    """
     deadline = time.monotonic() + timeout_sec
     last_touch = 0.0
-    while time.monotonic() < deadline:
+    fatal_codes = {
+        "EMPTY_TARGET_METER_SERIAL",
+        "INBOUND_IDENTITY_SERIAL_MISMATCH",
+        "INBOUND_IDENTITY_VERIFY_FAILED",
+        "INBOUND_IDENTITY_VERIFY_EXCEPTION",
+    }
+    ms = normalize_inbound_target_serial(meter_serial)
+    while True:
         if job_store.cancel_requested(job_id):
-            return None, None
-        sock, ep, _meta = ctl.take_staged_socket_for_session()
-        if sock is not None:
-            return sock, ep
+            return None, None, "cancelled"
+        acq, code = acquire_inbound_socket_for_target_meter(ctl, adapter, ms)
+        if acq is not None:
+            return acq.hold.sock, acq.endpoint, None
+        if code in fatal_codes:
+            return None, None, code
         now = time.monotonic()
+        if now >= deadline:
+            return None, None, code or "NO_STAGED_SESSION_FOR_SELECTED_METER"
         if now - last_touch >= 25.0:
             job_store.touch_job_updated(job_id)
             last_touch = now
         rem = deadline - now
         if rem <= 0:
-            break
+            return None, None, code or "NO_STAGED_SESSION_FOR_SELECTED_METER"
         job_store.wait_restage_signal(min(1.0, rem))
-    return None, None
 
 
 def _bootstrap_for_finalize(settings: Any) -> Any:
@@ -210,19 +231,23 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                     job_store.complete_job(job_id, envelope.model_dump(mode="json"))
                     return
 
-                sock, endpoint, _meta = ctl.take_staged_socket_for_session()
-                if sock is None:
-                    teardown = "no_staged_socket"
+                acq0, code0 = acquire_inbound_socket_for_target_meter(
+                    ctl, adapter, request.meterId
+                )
+                if acq0 is None:
+                    teardown = "acquire_failed"
                     st = ctl.get_status_dict()
                     envelope = _fail_envelope_early(
                         request,
                         started,
-                        "No staged inbound TCP socket — wait for modem to connect, then retry.",
-                        "NO_STAGED_TCP_SOCKET",
+                        error_message_for_acquire_code(code0, target_serial=request.meterId),
+                        code0,
                         {
                             "transportMode": "tcp_inbound",
+                            "targetMeterSerial": normalize_inbound_target_serial(request.meterId),
                             "listenerListening": st.get("listening"),
-                            "stagedPresent": st.get("stagedPresent"),
+                            "unboundInboundCount": st.get("unboundInboundCount"),
+                            "boundInboundCount": st.get("boundInboundCount"),
                             "lastBindError": st.get("lastBindError"),
                             "jobId": job_id,
                         },
@@ -234,6 +259,8 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                     )
                     return
 
+                sock = acq0.hold.sock
+                endpoint = acq0.endpoint
                 remote = endpoint
                 last_remote = endpoint
                 teardown = "server_closed_after_trigger"
@@ -286,10 +313,26 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                             "Association failed; waiting for modem reconnect to retry this segment.",
                             segments_done,
                         )
-                        sock, remote = _wait_for_next_staged_socket(ctl, job_id, restage_timeout)
+                        sock, remote, wait_err = _wait_for_next_socket_for_meter_job(
+                            ctl, adapter, request.meterId, job_id, restage_timeout
+                        )
                         job_store.mark_running_after_restage(job_id)
                         if sock is None:
                             if job_store.cancel_requested(job_id):
+                                break
+                            if wait_err and wait_err not in (
+                                "NO_STAGED_SESSION_FOR_SELECTED_METER",
+                                "MULTIPLE_INBOUND_MODEMS_USE_SCANNER_FIRST",
+                                "cancelled",
+                            ):
+                                progress(
+                                    {
+                                        "fatal": True,
+                                        "fatalMessage": error_message_for_acquire_code(
+                                            wait_err, target_serial=request.meterId
+                                        ),
+                                    }
+                                )
                                 break
                             first_open: Optional[int] = None
                             for wi in wire_indices:
@@ -327,10 +370,26 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                         f"Waiting for next modem reconnect ({segments_done}/{est_segments} segments done; {left} wire rows left).",
                         segments_done,
                     )
-                    sock, remote = _wait_for_next_staged_socket(ctl, job_id, restage_timeout)
+                    sock, remote, wait_err2 = _wait_for_next_socket_for_meter_job(
+                        ctl, adapter, request.meterId, job_id, restage_timeout
+                    )
                     job_store.mark_running_after_restage(job_id)
                     if sock is None:
                         if job_store.cancel_requested(job_id):
+                            break
+                        if wait_err2 and wait_err2 not in (
+                            "NO_STAGED_SESSION_FOR_SELECTED_METER",
+                            "MULTIPLE_INBOUND_MODEMS_USE_SCANNER_FIRST",
+                            "cancelled",
+                        ):
+                            progress(
+                                {
+                                    "fatal": True,
+                                    "fatalMessage": error_message_for_acquire_code(
+                                        wait_err2, target_serial=request.meterId
+                                    ),
+                                }
+                            )
                             break
                         first_open2: Optional[int] = None
                         for wi in wire_indices:

@@ -15,6 +15,10 @@ from app.schemas.envelope import (
     RuntimeResponseEnvelope,
 )
 from app.schemas.requests import ReadBasicRegistersRequest
+from app.services.tcp_listener_socket_acquire import (
+    acquire_inbound_socket_for_target_meter,
+    error_message_for_acquire_code,
+)
 from app.tcp_listener.staged_modem_listener import (
     build_last_tcp_listener_trigger_record,
     get_tcp_modem_listener,
@@ -44,7 +48,7 @@ def execute_tcp_listener_read_basic_registers(
             datetime.now(timezone.utc),
             "Inbound modem action already in progress — wait for it to finish.",
             "SESSION_BUSY",
-            {"transportMode": "tcp_inbound"},
+            {"transportMode": "tcp_inbound", "targetMeterSerial": request.meterId.strip()},
         )
 
     try:
@@ -75,40 +79,44 @@ def execute_tcp_listener_read_basic_registers(
                     )
                     return envelope
 
-                sock, endpoint, _meta = ctl.take_staged_socket_for_session()
-                if sock is None:
-                    teardown = "no_staged_socket"
+                acq, code = acquire_inbound_socket_for_target_meter(
+                    ctl, adapter, request.meterId
+                )
+                if acq is None:
+                    teardown = "acquire_failed"
                     finished = datetime.now(timezone.utc)
                     st = ctl.get_status_dict()
                     envelope = _fail(
                         request,
                         started,
                         finished,
-                        "No staged inbound TCP socket — wait for modem to connect, then retry.",
-                        "NO_STAGED_TCP_SOCKET",
+                        error_message_for_acquire_code(code, target_serial=request.meterId),
+                        code,
                         {
                             "transportMode": "tcp_inbound",
+                            "targetMeterSerial": request.meterId.strip(),
                             "listenerListening": st.get("listening"),
-                            "stagedPresent": st.get("stagedPresent"),
+                            "unboundInboundCount": st.get("unboundInboundCount"),
+                            "boundInboundCount": st.get("boundInboundCount"),
                             "lastBindError": st.get("lastBindError"),
                         },
                     )
                     return envelope
 
-                remote = endpoint
+                remote = acq.endpoint
                 teardown = "server_closed_after_trigger"
                 try:
                     log.info(
                         "tcp_listener_read_basic_registers_start",
-                        extra={"meter_id": request.meterId, "remote": endpoint},
+                        extra={"meter_id": request.meterId, "remote": remote},
                     )
                     envelope = adapter.read_basic_registers_on_accepted_tcp_socket(
-                        request, sock, endpoint
+                        request, acq.hold.sock, acq.endpoint
                     )
                     return envelope
                 finally:
                     try:
-                        sock.close()
+                        acq.hold.sock.close()
                     except Exception:  # noqa: BLE001
                         pass
             finally:
