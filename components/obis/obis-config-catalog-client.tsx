@@ -1,6 +1,6 @@
 "use client"
 
-import { PencilIcon, PlusIcon, SaveIcon, TrashIcon } from "lucide-react"
+import { FileStackIcon, PencilIcon, PlusIcon, SaveIcon, TrashIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { PageHeader } from "@/components/shared/page-header"
@@ -47,6 +47,8 @@ export function ObisConfigCatalogClient() {
   const [error, setError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importInfo, setImportInfo] = useState<string | null>(null)
   const [packFilter, setPackFilter] = useState<string | "all">("all")
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ObisCatalogEntry | null>(null)
@@ -164,15 +166,60 @@ export function ObisConfigCatalogClient() {
     }
   }
 
+  async function importSt34Manual() {
+    if (
+      !confirm(
+        "Import ST34-HW08 manual OBIS from data/obis-catalogs/st34-hw08-user-manual-3ph.yaml? Rows already in the catalog are left unchanged (no duplicates).",
+      )
+    ) {
+      return
+    }
+    setImporting(true)
+    setImportInfo(null)
+    setSaveError(null)
+    try {
+      const r = await fetch("/api/obis-catalog/import-st34-hw08", { method: "POST" })
+      const data = (await r.json()) as {
+        ok?: boolean
+        addedCount?: number
+        skippedCount?: number
+        error?: string
+        message?: string
+      }
+      if (!r.ok || !data.ok) {
+        setImportInfo(data.message || data.error || "Import failed")
+        return
+      }
+      setImportInfo(
+        `Imported: added ${data.addedCount ?? 0} OBIS, skipped ${data.skippedCount ?? 0} (already present). Reloaded from disk.`,
+      )
+      await load()
+    } catch {
+      setImportInfo("Import failed")
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
         title="OBIS catalog"
-        subtitle="Persisted in data/obis-catalog.json. Save to apply."
+        subtitle="Persisted in data/obis-catalog.json. Save to apply. ST34 manual YAML merges via Import (existing OBIS preserved)."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button type="button" size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
               Reload
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={importing || loading}
+              onClick={() => void importSt34Manual()}
+            >
+              <FileStackIcon className="mr-1 size-3.5" />
+              Import ST34 manual
             </Button>
             <Button type="button" size="sm" onClick={openAdd}>
               <PlusIcon className="mr-1 size-3.5" />
@@ -188,6 +235,11 @@ export function ObisConfigCatalogClient() {
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       {saveError ? <p className="text-xs text-destructive">{saveError}</p> : null}
+      {importInfo ? (
+        <p className={importInfo.includes("failed") ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+          {importInfo}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-1.5">
         <button
