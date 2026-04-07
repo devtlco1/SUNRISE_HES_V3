@@ -60,12 +60,17 @@ class RuntimeExecutionDiagnostics(BaseModel):
 
 
 class IdentityPayload(BaseModel):
+    """`serialNumber` is ONLY the value read from OBIS 0.0.96.1.0.255 (canonical business meter id)."""
+
     serialNumber: str
     manufacturer: str
     model: str
     firmwareVersion: str
     protocolVersion: str
-    logicalDeviceName: Optional[str] = None
+    logicalDeviceName: Optional[str] = Field(
+        default=None,
+        description="Optional: value read from OBIS 0.0.96.1.1.255 (auxiliary device id). Never substitutes serialNumber.",
+    )
 
 
 class BasicRegisterReading(BaseModel):

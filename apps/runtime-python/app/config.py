@@ -29,7 +29,11 @@ class Settings(BaseSettings):
     mvp_ami_root: Optional[str] = None
     """Path to MVP-AMI `config.json`. Default: `<mvp_ami_root>/config.json`."""
     mvp_ami_config_path: Optional[str] = None
-    """Logical name read after association (default identity OBIS)."""
+    """
+    Legacy single OBIS string (default was 0.0.96.1.1.255). MVP-AMI `read_identity` uses a fixed pair
+    on wire: 0.0.96.1.0.255 (canonical serial → IdentityPayload.serialNumber) and 0.0.96.1.1.255 (aux → logicalDeviceName).
+    This setting is not used for MVP-AMI identity phase1 OBIS selection.
+    """
     identity_obis: str = "0.0.96.1.1.255"
     """
     Comma-separated OBIS list for read-basic-registers (default: clock, active import, L1 voltage).

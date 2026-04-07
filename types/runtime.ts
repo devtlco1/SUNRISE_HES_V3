@@ -141,11 +141,13 @@ export interface AssociatePayload {
 }
 
 export interface IdentityPayload {
+  /** Value read from OBIS 0.0.96.1.0.255 only — canonical meter business id; never substitute from logicalDeviceName. */
   serialNumber: string
   manufacturer: string
   model: string
   firmwareVersion: string
   protocolVersion: string
+  /** Optional: OBIS 0.0.96.1.1.255 auxiliary identity; does not replace serialNumber. */
   logicalDeviceName?: string
 }
 

@@ -31,13 +31,14 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
         finished = datetime.now(timezone.utc)
         duration_ms = int((finished - started).total_seconds() * 1000) or 1
 
+        mid = request.meterId[:32]
         payload = IdentityPayload(
-            serialNumber=f"STUB-{request.meterId[:32]}",
+            serialNumber=f"STUB-CANONICAL-{mid}",
             manufacturer="SunriseRuntimeStub",
             model="python-sidecar-v0",
             firmwareVersion="0.0.0-stub",
             protocolVersion="DLMS/COSEM (not on wire)",
-            logicalDeviceName=f"stub::{request.meterId}",
+            logicalDeviceName=f"STUB-AUX-{mid}",
         )
 
         diagnostics = RuntimeExecutionDiagnostics(

@@ -145,19 +145,32 @@ def _success_envelope(
     )
 
 
-def _identity_payload_from_obis_row(obis: str, row: dict) -> IdentityPayload:
+# Canonical business meter identity MUST come from 0.0.96.1.0.255 only (never substitute 1.1.255).
+CANONICAL_METER_BUSINESS_ID_OBIS = "0.0.96.1.0.255"
+AUX_DEVICE_IDENTITY_OBIS = "0.0.96.1.1.255"
+IDENTITY_PHASE1_OBIS_LIST = [CANONICAL_METER_BUSINESS_ID_OBIS, AUX_DEVICE_IDENTITY_OBIS]
+
+
+def _identity_row_display_value(row: dict) -> str:
     disp = (row.get("value_str") or "").strip()
     val = row.get("value")
-    primary = disp or (str(val) if val is not None else "")
-    if not primary:
-        primary = "unknown"
+    return (disp or (str(val) if val is not None else "")).strip()
+
+
+def _identity_payload_from_parsed_values(parsed: Optional[dict]) -> IdentityPayload:
+    """Map wire rows: serialNumber ← 0.0.96.1.0.255 only; logicalDeviceName ← 0.0.96.1.1.255 if present."""
+    pv = parsed or {}
+    row_c = pv.get(CANONICAL_METER_BUSINESS_ID_OBIS) or {}
+    row_a = pv.get(AUX_DEVICE_IDENTITY_OBIS) or {}
+    canonical = _identity_row_display_value(row_c)
+    aux = _identity_row_display_value(row_a)
     return IdentityPayload(
-        serialNumber=primary,
+        serialNumber=canonical,
         manufacturer="unknown",
         model="unknown",
         firmwareVersion="unknown",
         protocolVersion="DLMS/Gurux (MVP-AMI MeterClient)",
-        logicalDeviceName=primary if primary != "unknown" else None,
+        logicalDeviceName=aux if aux else None,
     )
 
 
@@ -1337,7 +1350,6 @@ def _read_identity_finish_phase1_result(
     request: ReadIdentityRequest,
     boot: Any,
     started: datetime,
-    obis: str,
     result: Any,
     transport_kind: str,
     tcp_endpoint: Optional[str],
@@ -1368,14 +1380,17 @@ def _read_identity_finish_phase1_result(
     assoc_d = find_stage(diags, "association")
     assoc_ok = bool(assoc_d and assoc_d.success)
 
-    row = (result.parsed_values or {}).get(obis) or {}
-    read_err = row.get("error")
-    has_value = row.get("value") is not None or bool((row.get("value_str") or "").strip())
-    read_ok = read_err is None and has_value
+    pv = result.parsed_values or {}
+    row_c = pv.get(CANONICAL_METER_BUSINESS_ID_OBIS) or {}
+    read_err_c = row_c.get("error")
+    canon_val = _identity_row_display_value(row_c)
+    read_ok_canonical = read_err_c is None and bool(canon_val)
 
     id_err_extras: dict[str, Any] = {
-        "obis": obis,
-        "row": row,
+        "canonicalObis": CANONICAL_METER_BUSINESS_ID_OBIS,
+        "auxObis": AUX_DEVICE_IDENTITY_OBIS,
+        "rowCanonical": row_c,
+        "rowAux": pv.get(AUX_DEVICE_IDENTITY_OBIS) or {},
         "mvpAmiDiagnostics": diag_dump,
         "readObis": getattr(read_d, "__dict__", {}) if read_d else None,
         "transportMode": envelope_transport_mode,
@@ -1383,13 +1398,16 @@ def _read_identity_finish_phase1_result(
     if tcp_endpoint:
         id_err_extras["tcpEndpoint"] = tcp_endpoint
 
-    if not read_ok:
+    if not read_ok_canonical:
         return _failure_envelope(
             meter_id=request.meterId,
             operation="readIdentity",
             started=started,
             finished=finished,
-            message=f"Identity OBIS read failed for {obis!r}: {read_err or 'no value'}",
+            message=(
+                f"Canonical identity OBIS {CANONICAL_METER_BUSINESS_ID_OBIS!r} read failed: "
+                f"{read_err_c or 'no value'} (auxiliary {AUX_DEVICE_IDENTITY_OBIS!r} is not a substitute)."
+            ),
             code="IDENTITY_READ_FAILED",
             transport_state="disconnected",
             association_state="associated",
@@ -1401,8 +1419,8 @@ def _read_identity_finish_phase1_result(
             err_details=id_err_extras,
         )
 
-    payload = _identity_payload_from_obis_row(obis, row)
-    verified = bool(assoc_ok and read_ok)
+    payload = _identity_payload_from_parsed_values(pv)
+    verified = bool(assoc_ok and read_ok_canonical)
     port_ref = getattr(result, "port_used", None) or getattr(
         getattr(boot.app_cfg, "serial", None), "port_primary", None
     )
@@ -1411,22 +1429,24 @@ def _read_identity_finish_phase1_result(
 
     if transport_kind == "tcp_client":
         msg = (
-            f"Identity OBIS {obis} read via MVP-AMI TCP client path "
+            f"Identity reads {IDENTITY_PHASE1_OBIS_LIST} via MVP-AMI TCP client path "
             f"(endpoint={tcp_endpoint!r}, verifiedOnWire={verified}). "
+            "Canonical meter id from 0.0.96.1.0.255. "
             "Outbound dial — secondary for modem-programmed server topology; prefer inbound listener when the modem connects to you."
         )
         detail = "MVP_AMI_IDENTITY_OK_TCP_CLIENT"
     elif transport_kind == "tcp_listener":
         msg = (
-            f"Identity OBIS {obis} read via MVP-AMI staged inbound TCP listener "
+            f"Identity reads {IDENTITY_PHASE1_OBIS_LIST} via MVP-AMI staged inbound TCP listener "
             f"(modem {tcp_endpoint!r}, verifiedOnWire={verified}). "
-            "Modem-initiated TCP to this server — experimental; serial remains the proven baseline."
+            "Canonical meter id from 0.0.96.1.0.255."
         )
         detail = "MVP_AMI_IDENTITY_OK_TCP_INBOUND"
     else:
         msg = (
-            f"Identity OBIS {obis} read via MVP-AMI serial path "
-            f"(port={port_ref!r}, verifiedOnWire={verified})."
+            f"Identity reads {IDENTITY_PHASE1_OBIS_LIST} via MVP-AMI serial path "
+            f"(port={port_ref!r}, verifiedOnWire={verified}). "
+            "Canonical meter id from 0.0.96.1.0.255."
         )
         detail = "MVP_AMI_IDENTITY_OK"
 
@@ -1578,8 +1598,6 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                 err_details=boot.details,
             )
 
-        obis = settings.identity_obis.strip() or "0.0.96.1.1.255"
-
         mc_logger = logging.getLogger("sunrise.mvp_ami.meter_client")
         mc_logger.setLevel(settings.log_level.upper())
 
@@ -1691,7 +1709,7 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                 )
 
             try:
-                result = run_tcp(sock, obis_list=[obis])
+                result = run_tcp(sock, obis_list=IDENTITY_PHASE1_OBIS_LIST)
             except Exception as exc:  # noqa: BLE001
                 log.exception("mvp_ami_run_phase1_tcp_socket_failed")
                 finished = datetime.now(timezone.utc)
@@ -1726,14 +1744,13 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                 request=request,
                 boot=boot,
                 started=started,
-                obis=obis,
                 result=result,
                 transport_kind="tcp_client",
                 tcp_endpoint=endpoint,
             )
 
         try:
-            result = client.run_phase1(obis_list=[obis])
+            result = client.run_phase1(obis_list=IDENTITY_PHASE1_OBIS_LIST)
         except Exception as exc:  # noqa: BLE001
             log.exception("mvp_ami_run_phase1_failed")
             finished = datetime.now(timezone.utc)
@@ -1758,7 +1775,6 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             request=request,
             boot=boot,
             started=started,
-            obis=obis,
             result=result,
             transport_kind="serial",
             tcp_endpoint=None,
@@ -1797,7 +1813,6 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                 err_details={**(boot.details or {}), "transportMode": "tcp_inbound"},
             )
 
-        obis = settings.identity_obis.strip() or "0.0.96.1.1.255"
         mc_logger = logging.getLogger("sunrise.mvp_ami.meter_client")
         mc_logger.setLevel(settings.log_level.upper())
 
@@ -1847,7 +1862,7 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             )
 
         try:
-            result = run_tcp(sock, obis_list=[obis])
+            result = run_tcp(sock, obis_list=IDENTITY_PHASE1_OBIS_LIST)
         except Exception as exc:  # noqa: BLE001
             log.exception("mvp_ami_run_phase1_tcp_socket_inbound_failed")
             finished = datetime.now(timezone.utc)
@@ -1876,7 +1891,6 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             request=request,
             boot=boot,
             started=started,
-            obis=obis,
             result=result,
             transport_kind="tcp_listener",
             tcp_endpoint=remote_endpoint,

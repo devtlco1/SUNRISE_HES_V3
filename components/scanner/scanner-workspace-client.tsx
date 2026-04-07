@@ -36,6 +36,7 @@ export function ScannerWorkspaceClient() {
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [identifiedSerial, setIdentifiedSerial] = useState<string | null>(null)
+  const [identifiedAux, setIdentifiedAux] = useState<string | null>(null)
   const [identifyState, setIdentifyState] = useState<"idle" | "ok" | "error">("idle")
   const lastEndpointRef = useRef<string | null>(null)
 
@@ -108,6 +109,7 @@ export function ScannerWorkspaceClient() {
     if (stageKey !== lastEndpointRef.current) {
       lastEndpointRef.current = stageKey
       setIdentifiedSerial(null)
+      setIdentifiedAux(null)
       setIdentifyState("idle")
       setActionError(null)
     }
@@ -133,15 +135,16 @@ export function ScannerWorkspaceClient() {
         return
       }
       const p = r.data.payload
-      const val =
-        (p?.serialNumber ?? "").trim() ||
-        (p?.logicalDeviceName ?? "").trim()
-      if (!val) {
+      const canonical = (p?.serialNumber ?? "").trim()
+      const aux = (p?.logicalDeviceName ?? "").trim()
+      setIdentifiedAux(aux || null)
+      if (!canonical) {
+        setIdentifiedSerial(null)
         setIdentifyState("error")
-        setActionError("No serial / logical device from identity read")
+        setActionError("Canonical serial (0.0.96.1.0.255) not read — auxiliary fields cannot substitute.")
         return
       }
-      setIdentifiedSerial(val)
+      setIdentifiedSerial(canonical)
       setIdentifyState("ok")
       await reloadMeters()
     } finally {
@@ -240,6 +243,7 @@ export function ScannerWorkspaceClient() {
               <TableHead>Staged since</TableHead>
               <TableHead>Socket</TableHead>
               <TableHead>Serial (0.0.96.1.0.255)</TableHead>
+              <TableHead className="text-muted-foreground">Aux (0.0.96.1.1.255)</TableHead>
               <TableHead>Identify</TableHead>
               <TableHead>Registry</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -259,10 +263,18 @@ export function ScannerWorkspaceClient() {
                 </StatusBadge>
               </TableCell>
               <TableCell className="max-w-[min(14rem,32vw)] align-top font-mono text-xs whitespace-normal break-words">
-                {identifiedSerial ?? "—"}
+                {identifiedSerial ??
+                  (identifyState === "error" ? (
+                    <span className="text-muted-foreground">Unavailable</span>
+                  ) : (
+                    "—"
+                  ))}
                 {identifyState === "error" ? (
                   <span className="ml-1 text-destructive">failed</span>
                 ) : null}
+              </TableCell>
+              <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-[11px] whitespace-normal break-words text-muted-foreground">
+                {identifiedAux ?? "—"}
               </TableCell>
               <TableCell>
                 <Button

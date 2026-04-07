@@ -52,7 +52,7 @@ export const SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS: readonly string[] = [
   "1.0.32.7.0.255",
 ]
 
-/** OBIS rows populated from a single `read-identity` call (logical mapping from IdentityPayload). */
+/** OBIS rows populated from a single `read-identity` call (IdentityPayload field mapping). */
 export const IDENTITY_READ_MAPPED_OBIS: readonly string[] = [
   "0.0.96.1.0.255",
   "0.0.96.1.1.255",
@@ -60,17 +60,17 @@ export const IDENTITY_READ_MAPPED_OBIS: readonly string[] = [
 
 export const OBIS_CATALOG_SEED: ObisCatalogEntry[] = [
   // Basic setting
-  e("basic_setting", 1, "0.0.96.1.0.255", "Device ID #1 (logical device name)", {
+  e("basic_setting", 1, "0.0.96.1.0.255", "Canonical meter serial / business id (device id #1)", {
     object_type: "Data",
     class_id: 1,
     attribute: 2,
-    notes: "Mapped from identity read (logicalDeviceName) when available.",
+    notes: "Mapped from identity read: IdentityPayload.serialNumber only (OBIS 0.0.96.1.0.255 on wire).",
   }),
-  e("basic_setting", 2, "0.0.96.1.1.255", "Device ID #2 (COSEM device ID / serial)", {
+  e("basic_setting", 2, "0.0.96.1.1.255", "Auxiliary device identity (device id #2)", {
     object_type: "Data",
     class_id: 1,
     attribute: 2,
-    notes: "Mapped from identity read (serialNumber) when available.",
+    notes: "Mapped from identity read: IdentityPayload.logicalDeviceName only (OBIS 0.0.96.1.1.255). Never substitutes canonical serial.",
   }),
   e("basic_setting", 3, "0.0.1.0.0.255", "Date and time (clock)", {
     object_type: "Clock",

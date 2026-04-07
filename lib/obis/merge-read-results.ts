@@ -64,16 +64,20 @@ export function mergeIdentityIntoRowState(
     next[obis] = { result, status, error: err, lastReadAt: t }
   }
 
-  const ld = (payload.logicalDeviceName ?? "").trim()
   const sn = (payload.serialNumber ?? "").trim()
-  const primary = ld || sn
+  const ld = (payload.logicalDeviceName ?? "").trim()
   set(
     "0.0.96.1.0.255",
-    primary,
-    primary ? "ok" : "error",
-    primary ? undefined : "no logical device name / serial"
+    sn,
+    sn ? "ok" : "error",
+    sn ? undefined : "canonical serial (0.0.96.1.0.255) not in identity payload"
   )
-  set("0.0.96.1.1.255", sn, sn ? "ok" : "error", sn ? undefined : "no serial")
+  set(
+    "0.0.96.1.1.255",
+    ld,
+    ld ? "ok" : "skipped",
+    undefined
+  )
 
   return next
 }
