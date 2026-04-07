@@ -5,6 +5,7 @@
 import type {
   BasicRegistersPayload,
   IdentityPayload,
+  ObisSelectionJobPollView,
   ReadObisSelectionPayload,
   ReadObisSelectionRequest,
   RelayControlPayload,
@@ -29,6 +30,12 @@ async function parseJson(res: Response): Promise<unknown> {
   } catch {
     return null
   }
+}
+
+function isObisSelectionJobPollView(v: unknown): v is ObisSelectionJobPollView {
+  if (!v || typeof v !== "object") return false
+  const o = v as Record<string, unknown>
+  return typeof o.jobId === "string" && typeof o.status === "string" && Array.isArray(o.rows)
 }
 
 function formatReadingsProxyFailure(parsed: unknown, status: number): string {
@@ -188,6 +195,67 @@ export async function postReadObisSelectionDirect(
       ok: true,
       data: parsed as RuntimeResponseEnvelope<ReadObisSelectionPayload>,
     }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postStartTcpListenerObisSelectionJob(
+  body: ReadObisSelectionRequest,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<{ jobId: string }>> {
+  try {
+    const res = await fetch("/api/readings/tcp-listener/read-obis-selection/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal,
+    })
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
+    }
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof (parsed as { jobId: unknown }).jobId !== "string"
+    ) {
+      return { ok: false, error: "Invalid job start response from readings API." }
+    }
+    return { ok: true, data: { jobId: (parsed as { jobId: string }).jobId } }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function getTcpListenerObisSelectionJobPoll(
+  jobId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<ObisSelectionJobPollView>> {
+  try {
+    const res = await fetch(
+      `/api/readings/tcp-listener/read-obis-selection/job/${encodeURIComponent(jobId)}`,
+      { method: "GET", cache: "no-store", signal }
+    )
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
+    }
+    if (!isObisSelectionJobPollView(parsed)) {
+      return { ok: false, error: "Invalid job poll response from readings API." }
+    }
+    return { ok: true, data: parsed }
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") throw e
     return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }

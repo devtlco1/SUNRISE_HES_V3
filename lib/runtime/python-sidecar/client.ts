@@ -244,6 +244,89 @@ export async function postTcpListenerReadObisSelectionToPythonSidecar(
 }
 
 /**
+ * Server-only: POST /v1/runtime/tcp-listener/read-obis-selection/start (returns jobId).
+ */
+export async function postTcpListenerReadObisSelectionStartToPythonSidecar(
+  body: ReadObisSelectionRequest
+): Promise<{ jobId: string }> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/read-obis-selection/start`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text, url)
+  }
+
+  let json: unknown
+  try {
+    json = JSON.parse(text) as unknown
+  } catch {
+    throw new Error("Python sidecar returned non-JSON body")
+  }
+
+  if (!json || typeof json !== "object" || !("jobId" in json)) {
+    throw new Error("Python sidecar job start response missing jobId")
+  }
+  const jobId = (json as { jobId: unknown }).jobId
+  if (typeof jobId !== "string") {
+    throw new Error("Python sidecar job start response jobId invalid")
+  }
+  return { jobId }
+}
+
+/**
+ * Server-only: GET /v1/runtime/tcp-listener/read-obis-selection/job/{jobId}
+ */
+export async function getTcpListenerReadObisSelectionJobFromPythonSidecar(
+  jobId: string
+): Promise<unknown> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {}
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/read-obis-selection/job/${encodeURIComponent(jobId)}`
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text, url)
+  }
+
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw new Error("Python sidecar returned non-JSON job body")
+  }
+}
+
+/**
  * Server-only: POST /v1/runtime/read-basic-registers on the Python sidecar.
  */
 export async function postReadBasicRegistersToPythonSidecar(

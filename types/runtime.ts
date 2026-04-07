@@ -168,7 +168,7 @@ export interface BasicRegistersPayload {
   registers: Record<string, BasicRegisterReading>
 }
 
-export type ObisSelectionRowStatus = "ok" | "error" | "unsupported"
+export type ObisSelectionRowStatus = "ok" | "error" | "unsupported" | "not_attempted"
 
 /** One row returned from read-obis-selection (operator table merge). */
 export interface ObisSelectionRowResult {
@@ -201,6 +201,33 @@ export interface ObisSelectionItemInput {
 
 export interface ReadObisSelectionRequest extends RuntimeTargetRequest {
   selectedItems: ObisSelectionItemInput[]
+}
+
+/** Polling view for inbound sequential read-obis-selection jobs (Python job store). */
+export interface ObisSelectionJobRowPollView {
+  index: number
+  obis: string
+  phase: string
+  row?: ObisSelectionRowResult
+}
+
+export type ObisSelectionJobPollStatus = "queued" | "running" | "completed" | "failed"
+
+export interface ObisSelectionJobPollView {
+  jobId: string
+  status: ObisSelectionJobPollStatus
+  meterId: string
+  transport: string
+  totalRows: number
+  wireTotal: number
+  completedWire: number
+  currentObis?: string | null
+  currentIndex?: number | null
+  fatalError?: string | null
+  stale?: boolean
+  rows: ObisSelectionJobRowPollView[]
+  updatedAt: string
+  envelope?: RuntimeResponseEnvelope<ReadObisSelectionPayload> | null
 }
 
 /** One row from the meter's association object list (current AA). */

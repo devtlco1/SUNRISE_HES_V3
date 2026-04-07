@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 import socket
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.adapters.base import ProtocolRuntimeAdapter
+from app.adapters.mvp_ami_relay_impl import _tcp_assoc
 from app.adapters.mvp_ami_discovery import run_association_view_discovery
 from app.adapters.obis_selection_v1 import obis_selection_item_supported_v1
 from app.adapters.mvp_ami_shared import (
@@ -413,6 +414,322 @@ def _prepare_obis_selection_slots(
                 wire_unique.append(item.obis)
 
     return slots, wire_unique, wire_indices
+
+
+def _obis_read_error_is_fatal(exc: BaseException) -> bool:
+    """True when the DLMS/TCP session is likely unusable; row-level COSEM errors stay False."""
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+        return True
+    msg = str(exc).lower()
+    for needle in (
+        "broken pipe",
+        "connection reset",
+        "not connected",
+        "connection aborted",
+        "bad file descriptor",
+    ):
+        if needle in msg:
+            return True
+    return False
+
+
+def _mark_wire_remaining_not_attempted(
+    slots: List[Optional[ObisSelectionRowResult]],
+    items: List[ObisSelectionItem],
+    wire_indices: List[int],
+    failed_wi: int,
+) -> None:
+    try:
+        pos = wire_indices.index(failed_wi)
+    except ValueError:
+        return
+    last_at = _iso_z(datetime.now(timezone.utc))
+    for wj in wire_indices[pos + 1 :]:
+        it = items[wj]
+        slots[wj] = ObisSelectionRowResult(
+            obis=it.obis,
+            value="",
+            status="not_attempted",
+            error="Not attempted (transport/session ended after earlier failure)",
+            packKey=it.packKey,
+            lastReadAt=last_at,
+        )
+
+
+def _sequential_obis_wire_loop(
+    client: Any,
+    transport: Any,
+    request: ReadObisSelectionRequest,
+    slots: List[Optional[ObisSelectionRowResult]],
+    wire_indices: List[int],
+    progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Optional[str]:
+    """
+    After IEC + DLMS association on transport. Reads each wire index in order.
+    Returns None on success, or fatal error message string (session should be torn down).
+    """
+    items = request.selectedItems
+    total_w = len(wire_indices)
+    done = 0
+    gx = getattr(client, "_gurux_client", None)
+    if gx is None:
+        last_at = _iso_z(datetime.now(timezone.utc))
+        for wi in wire_indices:
+            item = items[wi]
+            slots[wi] = ObisSelectionRowResult(
+                obis=item.obis,
+                value="",
+                status="error",
+                error="MVP-AMI internal error: gurux client not available",
+                packKey=item.packKey,
+                lastReadAt=last_at,
+            )
+            done += 1
+            if progress:
+                progress(
+                    {
+                        "rowDoneIndex": wi,
+                        "row": slots[wi].model_dump(mode="json"),
+                        "completedWire": done,
+                        "totalWire": total_w,
+                    }
+                )
+        return None
+
+    for wi in wire_indices:
+        item = items[wi]
+        if progress:
+            progress(
+                {
+                    "currentIndex": wi,
+                    "currentObis": item.obis,
+                    "completedWire": done,
+                    "totalWire": total_w,
+                }
+            )
+        try:
+            chunk = client._read_obis_via_gurux(
+                transport,
+                gx,
+                [item.obis],
+                progress_callback=None,
+                cancel_event=None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception(
+                "mvp_ami_sequential_obis_read_failed",
+                extra={"index": wi, "obis": item.obis},
+            )
+            last_at = _iso_z(datetime.now(timezone.utc))
+            slots[wi] = ObisSelectionRowResult(
+                obis=item.obis,
+                value="",
+                status="error",
+                error=f"read raised: {exc}"[:500],
+                packKey=item.packKey,
+                lastReadAt=last_at,
+            )
+            fatal = _obis_read_error_is_fatal(exc)
+            done += 1
+            if progress:
+                patch: Dict[str, Any] = {
+                    "rowDoneIndex": wi,
+                    "row": slots[wi].model_dump(mode="json"),
+                    "completedWire": done,
+                    "totalWire": total_w,
+                }
+                if fatal:
+                    patch["fatal"] = True
+                    patch["fatalMessage"] = str(exc)[:500]
+                progress(patch)
+            if fatal:
+                _mark_wire_remaining_not_attempted(slots, items, wire_indices, wi)
+                try:
+                    fail_pos = wire_indices.index(wi)
+                except ValueError:
+                    fail_pos = -1
+                if progress and fail_pos >= 0:
+                    for wj in wire_indices[fail_pos + 1 :]:
+                        cell = slots[wj]
+                        if cell is not None:
+                            done += 1
+                            progress(
+                                {
+                                    "rowDoneIndex": wj,
+                                    "row": cell.model_dump(mode="json"),
+                                    "completedWire": done,
+                                    "totalWire": total_w,
+                                }
+                            )
+                return str(exc)
+            continue
+
+        row = chunk.get(item.obis) if isinstance(chunk, dict) else {}
+        last_at = _iso_z(datetime.now(timezone.utc))
+        slots[wi] = _obis_selection_row_from_parsed(item, row, last_at)
+        done += 1
+        if progress:
+            progress(
+                {
+                    "rowDoneIndex": wi,
+                    "row": slots[wi].model_dump(mode="json"),
+                    "completedWire": done,
+                    "totalWire": total_w,
+                }
+            )
+    return None
+
+
+def _finalize_obis_selection_filled_slots(
+    *,
+    request: ReadObisSelectionRequest,
+    boot: Any,
+    started: datetime,
+    slots: List[Optional[ObisSelectionRowResult]],
+    wire_indices: List[int],
+    assoc_ok: bool,
+    envelope_transport_mode: str,
+    tcp_endpoint: Optional[str],
+) -> RuntimeResponseEnvelope:
+    """Build envelope when slots are already filled (sequential job path)."""
+    finished = datetime.now(timezone.utc)
+    last_at = _iso_z(finished)
+    items = request.selectedItems
+    n = len(items)
+    final_rows = [slots[i] for i in range(n)]  # type: ignore[list-item]
+
+    if not assoc_ok:
+        return _failure_envelope(
+            meter_id=request.meterId,
+            operation="readObisSelection",
+            started=started,
+            finished=finished,
+            message="DLMS association failed before sequential OBIS reads.",
+            code="ASSOCIATION_FAILED",
+            transport_state="disconnected",
+            association_state="failed",
+            transport_attempted=True,
+            association_attempted=True,
+            verified=False,
+            outcome="attempted_failed",
+            detail_code="ASSOCIATION_FAILED",
+            err_details={
+                "transportMode": envelope_transport_mode,
+                "tcpEndpoint": tcp_endpoint,
+                "sequential": True,
+            },
+            payload=ReadObisSelectionPayload(rows=final_rows),
+        )
+
+    ok_wire = sum(
+        1 for i in wire_indices if slots[i] is not None and slots[i].status == "ok"  # type: ignore[union-attr]
+    )
+    n_wire = len(wire_indices)
+    transport_extras: dict[str, Any] = {"transportMode": envelope_transport_mode}
+    if tcp_endpoint:
+        transport_extras["tcpEndpoint"] = tcp_endpoint
+
+    if n_wire > 0 and ok_wire == 0:
+        return _failure_envelope(
+            meter_id=request.meterId,
+            operation="readObisSelection",
+            started=started,
+            finished=finished,
+            message="All selected OBIS reads failed after successful association.",
+            code="OBIS_SELECTION_ALL_FAILED",
+            transport_state="disconnected",
+            association_state="associated",
+            transport_attempted=True,
+            association_attempted=True,
+            verified=False,
+            outcome="attempted_failed",
+            detail_code="OBIS_SELECTION_ALL_FAILED",
+            err_details=transport_extras,
+            payload=ReadObisSelectionPayload(rows=final_rows),
+        )
+
+    if n_wire == 0:
+        duration_ms = max(1, int((finished - started).total_seconds() * 1000))
+        return RuntimeResponseEnvelope(
+            ok=True,
+            simulated=False,
+            operation="readObisSelection",
+            meterId=request.meterId,
+            startedAt=_iso_z(started),
+            finishedAt=last_at,
+            durationMs=duration_ms,
+            message="No wire reads attempted — all rows unsupported in v1.",
+            transportState="disconnected",
+            associationState="none",
+            payload=ReadObisSelectionPayload(rows=final_rows),
+            error=None,
+            diagnostics=RuntimeExecutionDiagnostics(
+                outcome="attempted_failed",  # type: ignore[arg-type]
+                capabilityStage="cosem_read",
+                transportAttempted=False,
+                associationAttempted=False,
+                verifiedOnWire=False,
+                detailCode="OBIS_SELECTION_ALL_UNSUPPORTED_V1",
+            ),
+        )
+
+    partial = n_wire > 0 and ok_wire < n_wire
+    verified = ok_wire > 0
+
+    if envelope_transport_mode == "tcp_inbound":
+        detail = (
+            "MVP_AMI_OBIS_SELECTION_PARTIAL_TCP_INBOUND"
+            if partial
+            else "MVP_AMI_OBIS_SELECTION_OK_TCP_INBOUND"
+        )
+        ep = tcp_endpoint or "?"
+        msg = (
+            f"OBIS selection (sequential, inbound {ep}): {ok_wire}/{n_wire} wire reads succeeded"
+            + ("; see per-row status." if partial else ".")
+        )
+    elif envelope_transport_mode == "tcp_client":
+        detail = (
+            "MVP_AMI_OBIS_SELECTION_PARTIAL_TCP_CLIENT"
+            if partial
+            else "MVP_AMI_OBIS_SELECTION_OK_TCP_CLIENT"
+        )
+        msg = (
+            f"OBIS selection (sequential, TCP client): {ok_wire}/{n_wire} wire reads succeeded"
+            + ("; see per-row status." if partial else ".")
+        )
+    else:
+        detail = "MVP_AMI_OBIS_SELECTION_PARTIAL" if partial else "MVP_AMI_OBIS_SELECTION_OK"
+        port_ref = getattr(getattr(boot, "app_cfg", None), "serial", None)
+        port_ref = getattr(port_ref, "port_primary", None) if port_ref else None
+        msg = (
+            f"OBIS selection (sequential, serial port={port_ref!r}): {ok_wire}/{n_wire} wire reads succeeded"
+            + ("; see per-row status." if partial else ".")
+        )
+
+    duration_ms = max(1, int((finished - started).total_seconds() * 1000))
+    out = "verified_on_wire_success" if verified else "attempted_failed"
+    return RuntimeResponseEnvelope(
+        ok=True,
+        simulated=False,
+        operation="readObisSelection",
+        meterId=request.meterId,
+        startedAt=_iso_z(started),
+        finishedAt=last_at,
+        durationMs=duration_ms,
+        message=msg,
+        transportState="disconnected",
+        associationState="associated",
+        payload=ReadObisSelectionPayload(rows=final_rows),
+        error=None,
+        diagnostics=RuntimeExecutionDiagnostics(
+            outcome=out,  # type: ignore[arg-type]
+            capabilityStage="cosem_read",
+            transportAttempted=True,
+            associationAttempted=True,
+            verifiedOnWire=verified,
+            detailCode=detail,
+        ),
+    )
 
 
 def _finalize_obis_selection_from_meter_result(
@@ -1604,6 +1921,148 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             transport_layer="serial",
             envelope_transport_mode="serial",
             tcp_endpoint=None,
+        )
+
+    def read_obis_selection_inbound_tcp_sequential(
+        self,
+        request: ReadObisSelectionRequest,
+        sock: socket.socket,
+        remote_endpoint: str,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> RuntimeResponseEnvelope:
+        """
+        One IEC + association, then each OBIS read separately (for job progress / long selections).
+        """
+        settings = get_settings()
+        started = datetime.now(timezone.utc)
+
+        boot = mvp_ami_bootstrap(settings, None)
+        if isinstance(boot, MvpAmiBootstrapFailure):
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readObisSelection",
+                started=started,
+                finished=finished,
+                message=boot.message,
+                code=boot.code,
+                transport_state="disconnected",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code=boot.code,
+                err_details={**(boot.details or {}), "transportMode": "tcp_inbound", "sequential": True},
+            )
+
+        slots, wire_unique, wire_indices = _prepare_obis_selection_slots(request)
+        if not wire_unique:
+            finished = datetime.now(timezone.utc)
+            n = len(request.selectedItems)
+            final_rows = [slots[i] for i in range(n)]  # type: ignore[list-item]
+            duration_ms = max(1, int((finished - started).total_seconds() * 1000))
+            return RuntimeResponseEnvelope(
+                ok=True,
+                simulated=False,
+                operation="readObisSelection",
+                meterId=request.meterId,
+                startedAt=_iso_z(started),
+                finishedAt=_iso_z(finished),
+                durationMs=duration_ms,
+                message="No wire reads attempted — all rows unsupported in v1 (Data/Clock/Register, attr 2).",
+                transportState="disconnected",
+                associationState="none",
+                payload=ReadObisSelectionPayload(rows=final_rows),
+                error=None,
+                diagnostics=RuntimeExecutionDiagnostics(
+                    outcome="attempted_failed",  # type: ignore[arg-type]
+                    capabilityStage="cosem_read",
+                    transportAttempted=False,
+                    associationAttempted=False,
+                    verifiedOnWire=False,
+                    detailCode="OBIS_SELECTION_ALL_UNSUPPORTED_V1",
+                ),
+            )
+
+        mc_logger = logging.getLogger("sunrise.mvp_ami.meter_client")
+        mc_logger.setLevel(settings.log_level.upper())
+
+        try:
+            client = boot.meter_mod.MeterClient(boot.app_cfg, mc_logger)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("mvp_ami_meter_client_construct_failed_tcp_inbound_obis_seq")
+            finished = datetime.now(timezone.utc)
+            return _failure_envelope(
+                meter_id=request.meterId,
+                operation="readObisSelection",
+                started=started,
+                finished=finished,
+                message=f"MVP-AMI MeterClient construct failed: {exc}",
+                code="MVP_AMI_RUNTIME_ERROR",
+                transport_state="error",
+                association_state="none",
+                transport_attempted=False,
+                association_attempted=False,
+                verified=False,
+                outcome="attempted_failed",
+                detail_code="MVP_AMI_RUNTIME_ERROR",
+                err_details={"error": str(exc), "transportMode": "tcp_inbound", "sequential": True},
+            )
+
+        transport, gx, errc = _tcp_assoc(client, sock)
+        if errc:
+            last_at = _iso_z(datetime.now(timezone.utc))
+            for wi in wire_indices:
+                it = request.selectedItems[wi]
+                slots[wi] = ObisSelectionRowResult(
+                    obis=it.obis,
+                    value="",
+                    status="error",
+                    error=f"Association failed: {errc}",
+                    packKey=it.packKey,
+                    lastReadAt=last_at,
+                )
+            try:
+                if gx is not None:
+                    client._try_gurux_disconnect(transport, gx)
+            except Exception:  # noqa: BLE001
+                pass
+            return _finalize_obis_selection_filled_slots(
+                request=request,
+                boot=boot,
+                started=started,
+                slots=slots,
+                wire_indices=wire_indices,
+                assoc_ok=False,
+                envelope_transport_mode="tcp_inbound",
+                tcp_endpoint=remote_endpoint,
+            )
+
+        _sequential_obis_wire_loop(
+            client,
+            transport,
+            request,
+            slots,
+            wire_indices,
+            progress_callback,
+        )
+
+        try:
+            if gx is not None:
+                client._try_gurux_disconnect(transport, gx)
+        except Exception:  # noqa: BLE001
+            pass
+
+        return _finalize_obis_selection_filled_slots(
+            request=request,
+            boot=boot,
+            started=started,
+            slots=slots,
+            wire_indices=wire_indices,
+            assoc_ok=True,
+            envelope_transport_mode="tcp_inbound",
+            tcp_endpoint=remote_endpoint,
         )
 
     def read_obis_selection_on_accepted_tcp_socket(

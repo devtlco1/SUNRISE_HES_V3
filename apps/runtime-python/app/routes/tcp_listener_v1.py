@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from app.jobs import obis_selection_job_store as obis_job_store
 from app.routes.runtime_v1 import verify_service_token
 from app.schemas.envelope import RuntimeResponseEnvelope
 from app.schemas.requests import (
@@ -17,6 +18,9 @@ from app.services.tcp_listener_read_basic_registers import (
     execute_tcp_listener_read_basic_registers,
 )
 from app.services.tcp_listener_read_identity import execute_tcp_listener_read_identity
+from app.services.tcp_listener_obis_selection_job import (
+    start_tcp_listener_obis_selection_job,
+)
 from app.services.tcp_listener_read_obis_selection import (
     execute_tcp_listener_read_obis_selection,
 )
@@ -89,6 +93,38 @@ def post_tcp_listener_read_obis_selection(
     envelope = execute_tcp_listener_read_obis_selection(body)
     # Avoid FastAPI response_model Union validation issues on payload variants.
     return JSONResponse(content=envelope.model_dump(mode="json"))
+
+
+@router.post(
+    "/read-obis-selection/start",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_read_obis_selection_start(body: ReadObisSelectionRequest) -> Dict[str, Any]:
+    """
+    Start a background sequential read-obis-selection job on the staged inbound socket.
+    Returns immediately with jobId; poll GET .../job/{jobId} for progress.
+    """
+    log.info(
+        "http_tcp_listener_read_obis_selection_start",
+        extra={"meter_id": body.meterId, "items": len(body.selectedItems)},
+    )
+    jid = start_tcp_listener_obis_selection_job(body)
+    return {"jobId": jid}
+
+
+@router.get(
+    "/read-obis-selection/job/{job_id}",
+    dependencies=[Depends(verify_service_token)],
+)
+def get_tcp_listener_read_obis_selection_job(job_id: str) -> JSONResponse:
+    """Poll in-memory job state (per-row progress + final envelope when done)."""
+    view = obis_job_store.get_job(job_id)
+    if view is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "JOB_NOT_FOUND", "message": job_id},
+        )
+    return JSONResponse(content=view.model_dump(mode="json"))
 
 
 @router.post(

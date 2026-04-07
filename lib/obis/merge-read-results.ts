@@ -5,6 +5,8 @@
 import type {
   BasicRegistersPayload,
   IdentityPayload,
+  ObisSelectionJobRowPollView,
+  ObisSelectionRowResult,
   ReadObisSelectionPayload,
 } from "@/types/runtime"
 
@@ -56,7 +58,7 @@ export function mergeObisSelectionIntoRowState(
   for (const r of payload.rows) {
     let st: ObisRowReadState["status"]
     if (r.status === "ok") st = "ok"
-    else if (r.status === "unsupported") st = "skipped"
+    else if (r.status === "unsupported" || r.status === "not_attempted") st = "skipped"
     else st = "error"
 
     const base = (r.value ?? "").trim()
@@ -77,6 +79,20 @@ export function mergeObisSelectionIntoRowState(
     }
   }
   return next
+}
+
+/** Build a payload from job poll rows that have a concrete `row` result (for progressive UI merge). */
+export function readObisSelectionPayloadFromJobPollRows(
+  rows: ObisSelectionJobRowPollView[]
+): ReadObisSelectionPayload {
+  const list: ObisSelectionRowResult[] = []
+  for (const rv of rows) {
+    const r = rv.row
+    if (r && typeof r === "object" && typeof r.obis === "string") {
+      list.push(r as ObisSelectionRowResult)
+    }
+  }
+  return { rows: list }
 }
 
 export function mergeBasicRegistersIntoRowState(

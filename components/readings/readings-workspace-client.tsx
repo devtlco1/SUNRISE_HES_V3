@@ -18,8 +18,9 @@ import {
 } from "@/components/ui/table"
 import {
   fetchTcpListenerStatus,
+  getTcpListenerObisSelectionJobPoll,
   postReadObisSelectionDirect,
-  postReadObisSelectionTcpListener,
+  postStartTcpListenerObisSelectionJob,
   postRelayDisconnectReadings,
   postRelayReadStatusReadings,
   postRelayReconnectReadings,
@@ -30,12 +31,17 @@ import {
   getCatalogRowsForPackFromRows,
   packKeysForCatalogRows,
 } from "@/lib/obis/catalog-seed"
-import { mergeObisSelectionIntoRowState, type ObisRowReadState } from "@/lib/obis/merge-read-results"
+import {
+  mergeObisSelectionIntoRowState,
+  readObisSelectionPayloadFromJobPollRows,
+  type ObisRowReadState,
+} from "@/lib/obis/merge-read-results"
 import { obisSelectionRowSupportedV1Catalog } from "@/lib/obis/obis-selection-v1-client"
 import { packLabel, type ObisCatalogEntry } from "@/lib/obis/types"
 import type { MeterListRow } from "@/types/meter"
 import type {
   ObisSelectionItemInput,
+  ObisSelectionJobPollView,
   ReadObisSelectionPayload,
   RelayControlPayload,
   RelayUiState,
@@ -44,6 +50,8 @@ import type {
 import { cn } from "@/lib/utils"
 
 const POLL_MS = 6000
+const OBIS_JOB_POLL_MS = 600
+const OBIS_JOB_MAX_MS = 46 * 60_000
 
 type TransportMode = "inbound" | "direct"
 
@@ -91,6 +99,7 @@ export function ReadingsWorkspaceClient() {
   const [lastEnv, setLastEnv] = useState<RuntimeResponseEnvelope<
     ReadObisSelectionPayload
   > | null>(null)
+  const [obisJobProgress, setObisJobProgress] = useState<string | null>(null)
 
   const packKeys = useMemo(() => packKeysForCatalogRows(catalog), [catalog])
 
@@ -242,11 +251,70 @@ export function ReadingsWorkspaceClient() {
     const body = { meterId: mid, selectedItems: items }
 
     setBusy(true)
+    setObisJobProgress(null)
     try {
-      const r =
-        transport === "inbound"
-          ? await postReadObisSelectionTcpListener(body)
-          : await postReadObisSelectionDirect(body)
+      if (transport === "inbound") {
+        const start = await postStartTcpListenerObisSelectionJob(body)
+        if (!start.ok) {
+          setActionError(start.error)
+          return
+        }
+        const jobId = start.data.jobId
+        const deadline = Date.now() + OBIS_JOB_MAX_MS
+        let last: ObisSelectionJobPollView | null = null
+        let pollAborted = false
+        while (Date.now() < deadline) {
+          const jr = await getTcpListenerObisSelectionJobPoll(jobId)
+          if (!jr.ok) {
+            setActionError(jr.error)
+            pollAborted = true
+            break
+          }
+          const snap = jr.data
+          last = snap
+          setRowState((p) =>
+            mergeObisSelectionIntoRowState(
+              p,
+              readObisSelectionPayloadFromJobPollRows(snap.rows)
+            )
+          )
+          const wDone = snap.completedWire
+          const wTot = snap.wireTotal
+          const cur = snap.currentObis
+          let line = `${wDone} / ${wTot} wire rows`
+          if (cur) line += ` — running: ${cur}`
+          if (snap.stale && snap.status === "running") {
+            line += " (stale: job may be stuck)"
+          }
+          setObisJobProgress(line)
+          if (snap.status === "completed" || snap.status === "failed") {
+            if (snap.envelope) {
+              setLastEnv(snap.envelope as RuntimeResponseEnvelope<ReadObisSelectionPayload>)
+            }
+            if (snap.fatalError) {
+              setActionError(snap.fatalError)
+            } else if (snap.envelope && !snap.envelope.ok) {
+              setActionError(
+                snap.envelope.error?.message ??
+                  snap.envelope.message ??
+                  "readObisSelection failed"
+              )
+            } else {
+              setActionError(null)
+            }
+            break
+          }
+          await new Promise((r) => setTimeout(r, OBIS_JOB_POLL_MS))
+        }
+        if (!pollAborted && last?.status === "running" && Date.now() >= deadline) {
+          setActionError(
+            "Timed out waiting for OBIS job (still running). Check listener / modem."
+          )
+        }
+        return
+      }
+
+      const r = await postReadObisSelectionDirect(body)
 
       if (!r.ok) {
         setActionError(r.error)
@@ -269,6 +337,7 @@ export function ReadingsWorkspaceClient() {
       }
     } finally {
       setBusy(false)
+      setObisJobProgress(null)
       if (transport === "inbound") {
         await loadStatus()
       }
@@ -630,6 +699,9 @@ export function ReadingsWorkspaceClient() {
           ) : null}
           {busy ? (
             <p className="text-xs text-muted-foreground">Running runtime request…</p>
+          ) : null}
+          {obisJobProgress ? (
+            <p className="text-xs text-muted-foreground">{obisJobProgress}</p>
           ) : null}
 
           {lastEnv ? (

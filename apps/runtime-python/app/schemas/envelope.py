@@ -84,7 +84,7 @@ class BasicRegistersPayload(BaseModel):
     registers: dict[str, BasicRegisterReading]
 
 
-ObisSelectionRowStatus = Literal["ok", "error", "unsupported"]
+ObisSelectionRowStatus = Literal["ok", "error", "unsupported", "not_attempted"]
 
 
 class ObisSelectionRowResult(BaseModel):
