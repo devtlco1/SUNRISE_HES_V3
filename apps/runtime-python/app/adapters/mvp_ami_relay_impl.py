@@ -217,11 +217,21 @@ def _state_and_raw_from_meter_result(result: Any, ln: str) -> Tuple[str, str]:
     return _relay_state_and_raw_from_row(row)
 
 
+def _relay_status_debug_type_name(v: Any) -> str:
+    if v is None:
+        return "NoneType"
+    t = type(v)
+    return f"{getattr(t, '__module__', '?')}.{getattr(t, '__qualname__', type(v).__name__)}"
+
+
 def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln: str) -> dict[str, Any]:
     """
     Read class 70 disconnect control as GXDLMSDisconnectControl — not GXDLMSData@2
     (MVP-AMI phase1 uses Data for 0.0.96.*, which mis-reads this LN).
     Tries attribute 2 (outputState, boolean) then 3 (controlState, enum).
+
+    TEMPORARY: always issues GET for attrs 2 and 3 so logs capture both raw values
+    (one extra DLMS round-trip when attr2 alone would suffice). Remove when mapping is final.
     """
     from gurux_dlms.objects.GXDLMSDisconnectControl import GXDLMSDisconnectControl
 
@@ -230,34 +240,64 @@ def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln:
         "strategy": "disconnect_control",
         "error": None,
     }
+
     _v2, e2 = meter_client._gurux_read_attribute(transport, gx, dc, 2)
     out_b = getattr(dc, "outputState", None)
+    log.info(
+        "RELAY_STATUS_DEBUG ln=%s attr2_ok=%s attr2_err=%s attr2_gurux_return=%r attr2_gurux_return_type=%s "
+        "outputState_field=%r outputState_field_type=%s",
+        ln,
+        e2 is None,
+        e2,
+        _v2,
+        _relay_status_debug_type_name(_v2),
+        out_b,
+        _relay_status_debug_type_name(out_b),
+    )
+
+    _v3, e3 = meter_client._gurux_read_attribute(transport, gx, dc, 3)
+    cs = getattr(dc, "controlState", None)
+    log.info(
+        "RELAY_STATUS_DEBUG ln=%s attr3_ok=%s attr3_err=%s attr3_gurux_return=%r attr3_gurux_return_type=%s "
+        "controlState_field=%r controlState_field_type=%s",
+        ln,
+        e3 is None,
+        e3,
+        _v3,
+        _relay_status_debug_type_name(_v3),
+        cs,
+        _relay_status_debug_type_name(cs),
+    )
+
+    ci: Optional[int] = None
+    if cs is not None:
+        try:
+            ci = int(cs)
+        except (TypeError, ValueError):
+            ci = None
+
     if e2 is None and isinstance(out_b, bool):
         row["output_state"] = out_b
         row["value"] = out_b
         row["value_str"] = "true" if out_b else "false"
         log.info(
-            "relay_disconnect_control_attr2",
-            extra={"ln": ln, "outputState": out_b, "err": e2},
+            "RELAY_STATUS_DEBUG ln=%s row_branch=attr2_bool controlState_raw_for_ref=%r int(controlState)=%s",
+            ln,
+            cs,
+            ci,
         )
         return row
 
-    _v3, e3 = meter_client._gurux_read_attribute(transport, gx, dc, 3)
-    cs = getattr(dc, "controlState", None)
-    if e3 is None and cs is not None:
-        try:
-            ci = int(cs)
-        except (TypeError, ValueError):
-            ci = None
-        if ci is not None:
-            row["control_state"] = ci
-            row["value"] = ci
-            row["value_str"] = str(cs)
-            log.info(
-                "relay_disconnect_control_attr3",
-                extra={"ln": ln, "controlState": ci, "err": e3},
-            )
-            return row
+    if e3 is None and ci is not None:
+        row["control_state"] = ci
+        row["value"] = ci
+        row["value_str"] = str(cs)
+        log.info(
+            "RELAY_STATUS_DEBUG ln=%s row_branch=attr3_enum outputState_raw_for_ref=%r",
+            ln,
+            out_b,
+        )
+        return row
 
     row["error"] = "; ".join(
         x for x in (f"attr2={e2}" if e2 else None, f"attr3={e3}" if e3 else None) if x
@@ -265,6 +305,13 @@ def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln:
     log.warning(
         "relay_disconnect_control_read_failed",
         extra={"ln": ln, "attr2_err": e2, "attr3_err": e3},
+    )
+    log.info(
+        "RELAY_STATUS_DEBUG ln=%s row_branch=failed outputState=%r controlState=%r int_cs=%s",
+        ln,
+        out_b,
+        cs,
+        ci,
     )
     return row
 
@@ -286,6 +333,11 @@ def _finalize_relay_read_status(
 ) -> RuntimeResponseEnvelope:
     finished = datetime.now(timezone.utc)
     if association_failed:
+        log.info(
+            "RELAY_STATUS_DEBUG meterId=%s ln=%s outcome=assoc_fail detail_code=RELAY_ASSOC_FAILED",
+            request.meterId,
+            ln,
+        )
         return _relay_fail(
             meter_id=request.meterId,
             operation="relayReadStatus",
@@ -298,6 +350,12 @@ def _finalize_relay_read_status(
             association_attempted=association_attempted,
         )
     if row.get("error"):
+        log.info(
+            "RELAY_STATUS_DEBUG meterId=%s ln=%s outcome=read_fail detail_code=RELAY_STATUS_DISCONNECT_READ_FAILED err=%s",
+            request.meterId,
+            ln,
+            row.get("error"),
+        )
         return _relay_fail(
             meter_id=request.meterId,
             operation="relayReadStatus",
@@ -311,6 +369,15 @@ def _finalize_relay_read_status(
         )
     st, raw = _relay_state_and_raw_from_row(row)
     ok_wire = st != "unknown"
+    chosen_detail = detail_ok if ok_wire else detail_unverified
+    log.info(
+        "RELAY_STATUS_DEBUG meterId=%s ln=%s outcome=ok normalized_relayState=%s detail_code=%s raw_display=%r",
+        request.meterId,
+        ln,
+        st,
+        chosen_detail,
+        raw,
+    )
     payload = RelayControlPayload(
         relayState=st,  # type: ignore[arg-type]
         rawDisplay=raw or None,
@@ -327,7 +394,7 @@ def _finalize_relay_read_status(
         transport_attempted=transport_attempted,
         association_attempted=association_attempted,
         verified=ok_wire,
-        detail_code=detail_ok if ok_wire else detail_unverified,
+        detail_code=chosen_detail,
     )
 
 
