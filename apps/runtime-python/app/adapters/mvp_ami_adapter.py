@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 import socket
+import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from app.adapters.base import ProtocolRuntimeAdapter
 from app.adapters.mvp_ami_relay_impl import _tcp_assoc
@@ -478,6 +479,20 @@ _SESSION_STOPPED_REASON = "Session stopped — transport or framing unusable."
 # Two consecutive wire errors that are neither clearly session-broken nor ordinary row-level COSEM faults.
 _BATCH_STOPPED_AMBIGUOUS_REASON = "Batch stopped — repeated ambiguous errors (session uncertain)."
 
+# Long inbound batches: DLMS/HDLC over staged TCP degrades after many sequential GETs (~12–13 observed).
+# Chunk wire reads with a full IEC + association refresh between chunks (same TCP socket, same job id).
+INBOUND_OBIS_WIRE_CHUNK_SIZE = 8
+INBOUND_OBIS_INTER_CHUNK_SLEEP_SEC = 0.08
+
+
+def _inbound_session_retry_warranted(text: str) -> bool:
+    """One bounded refresh+retry is only for transport/session degradation — not meter-local COSEM faults."""
+    if not (text or "").strip():
+        return False
+    if _ordinary_row_error_message(text):
+        return False
+    return _session_broken_message(text)
+
 
 def _session_broken_message(text: str) -> bool:
     """True when the TCP/DLMS/HDLC session is almost certainly unusable — stop the wire tail immediately."""
@@ -628,18 +643,26 @@ def _sequential_obis_wire_loop(
     progress: Optional[Callable[[Dict[str, Any]], None]] = None,
     abort_check: Optional[Callable[[], Optional[str]]] = None,
     skip_check: Optional[Callable[[int], bool]] = None,
-) -> Optional[str]:
+    total_wire_global: Optional[int] = None,
+    completed_wire_base: int = 0,
+    chunk_indices: Optional[List[int]] = None,
+    session_pair: Optional[List[Any]] = None,
+    refresh_session: Optional[Callable[[], Tuple[Any, Any, Optional[str]]]] = None,
+) -> Tuple[Optional[str], int]:
     """
-    After IEC + DLMS association on transport. Reads each wire index in order.
-    Returns None on success, or fatal error message string (session should be torn down).
+    After IEC + DLMS association on transport. Reads wire indices in order (full wire_indices or chunk_indices).
+
+    Returns (fatal_error_or_none, completed_wire_count) for UI progress; fatal non-None stops the inbound job driver.
     """
     items = request.selectedItems
-    total_w = len(wire_indices)
-    done = 0
-    gx = getattr(client, "_gurux_client", None)
-    if gx is None:
+    total_w = len(wire_indices) if total_wire_global is None else int(total_wire_global)
+    done = int(completed_wire_base)
+    pair: List[Any] = session_pair if session_pair is not None else [transport, getattr(client, "_gurux_client", None)]
+    to_process = chunk_indices if chunk_indices is not None else wire_indices
+
+    if pair[1] is None:
         last_at = _iso_z(datetime.now(timezone.utc))
-        for wi in wire_indices:
+        for wi in to_process:
             item = items[wi]
             slots[wi] = ObisSelectionRowResult(
                 obis=item.obis,
@@ -659,11 +682,14 @@ def _sequential_obis_wire_loop(
                         "totalWire": total_w,
                     }
                 )
-        return None
+        return None, done
 
     consecutive_ambiguous_wire_errors = 0
-    for wi in wire_indices:
+    for wi in to_process:
         item = items[wi]
+
+        if slots[wi] is not None:
+            continue
 
         if skip_check and skip_check(wi):
             last_at = _iso_z(datetime.now(timezone.utc))
@@ -703,7 +729,7 @@ def _sequential_obis_wire_loop(
                     done,
                     total_w,
                 )
-                return None
+                return None, done
 
         if progress:
             progress(
@@ -737,147 +763,188 @@ def _sequential_obis_wire_loop(
                     }
                 )
             continue
-        try:
-            chunk = client._read_obis_via_gurux(
-                transport,
-                gx,
-                [item.obis],
-                progress_callback=None,
-                cancel_event=None,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.exception(
-                "mvp_ami_sequential_obis_read_failed",
-                extra={"index": wi, "obis": item.obis},
-            )
+
+        session_retry_used = False
+        chunk: Any = None
+        while True:
+            try:
+                chunk = client._read_obis_via_gurux(
+                    pair[0],
+                    pair[1],
+                    [item.obis],
+                    progress_callback=None,
+                    cancel_event=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                err_blob = f"{exc}"
+                if (
+                    refresh_session is not None
+                    and not session_retry_used
+                    and _inbound_session_retry_warranted(err_blob)
+                ):
+                    t, g, e = refresh_session()
+                    if e is None:
+                        session_retry_used = True
+                        pair[0] = t
+                        pair[1] = g
+                        continue
+                log.exception(
+                    "mvp_ami_sequential_obis_read_failed",
+                    extra={"index": wi, "obis": item.obis, "session_retry": session_retry_used},
+                )
+                last_at = _iso_z(datetime.now(timezone.utc))
+                slots[wi] = ObisSelectionRowResult(
+                    obis=item.obis,
+                    value="",
+                    status="error",
+                    error=f"read raised: {exc}"[:500],
+                    packKey=item.packKey,
+                    lastReadAt=last_at,
+                )
+                fatal = _obis_read_error_is_fatal(exc)
+                err_blob = f"{exc} {slots[wi].error or ''}"
+                done += 1
+                if progress:
+                    patch: Dict[str, Any] = {
+                        "rowDoneIndex": wi,
+                        "row": slots[wi].model_dump(mode="json"),
+                        "completedWire": done,
+                        "totalWire": total_w,
+                    }
+                    if fatal:
+                        patch["fatal"] = True
+                        patch["fatalMessage"] = str(exc)[:500]
+                    progress(patch)
+                if fatal:
+                    _mark_wire_remaining_not_attempted(slots, items, wire_indices, wi)
+                    try:
+                        fail_pos = wire_indices.index(wi)
+                    except ValueError:
+                        fail_pos = -1
+                    if progress and fail_pos >= 0:
+                        for wj in wire_indices[fail_pos + 1 :]:
+                            cell = slots[wj]
+                            if cell is not None:
+                                done += 1
+                                progress(
+                                    {
+                                        "rowDoneIndex": wj,
+                                        "row": cell.model_dump(mode="json"),
+                                        "completedWire": done,
+                                        "totalWire": total_w,
+                                    }
+                                )
+                    return str(exc), done
+                if _session_broken_message(err_blob):
+                    done = _mark_wire_after_index(
+                        slots,
+                        items,
+                        wire_indices,
+                        wi,
+                        _SESSION_STOPPED_REASON,
+                        "not_attempted",
+                        progress,
+                        done,
+                        total_w,
+                    )
+                    return None, done
+                if _ordinary_row_error_message(err_blob):
+                    consecutive_ambiguous_wire_errors = 0
+                else:
+                    consecutive_ambiguous_wire_errors += 1
+                if consecutive_ambiguous_wire_errors >= 2:
+                    done = _mark_wire_after_index(
+                        slots,
+                        items,
+                        wire_indices,
+                        wi,
+                        _BATCH_STOPPED_AMBIGUOUS_REASON,
+                        "not_attempted",
+                        progress,
+                        done,
+                        total_w,
+                    )
+                    return None, done
+                break
+
+            row = chunk.get(item.obis) if isinstance(chunk, dict) else {}
             last_at = _iso_z(datetime.now(timezone.utc))
-            slots[wi] = ObisSelectionRowResult(
-                obis=item.obis,
-                value="",
-                status="error",
-                error=f"read raised: {exc}"[:500],
-                packKey=item.packKey,
-                lastReadAt=last_at,
-            )
-            fatal = _obis_read_error_is_fatal(exc)
-            err_blob = f"{exc} {slots[wi].error or ''}"
+            slots[wi] = _obis_selection_row_from_parsed(item, row, last_at)
+            cell = slots[wi]
+            if cell is not None and cell.status == "error":
+                et = cell.error or ""
+                if (
+                    refresh_session is not None
+                    and not session_retry_used
+                    and _inbound_session_retry_warranted(et)
+                ):
+                    t, g, e = refresh_session()
+                    if e is None:
+                        session_retry_used = True
+                        pair[0] = t
+                        pair[1] = g
+                        continue
+                done += 1
+                if progress:
+                    progress(
+                        {
+                            "rowDoneIndex": wi,
+                            "row": slots[wi].model_dump(mode="json"),  # type: ignore[union-attr]
+                            "completedWire": done,
+                            "totalWire": total_w,
+                        }
+                    )
+                if _session_broken_message(et):
+                    done = _mark_wire_after_index(
+                        slots,
+                        items,
+                        wire_indices,
+                        wi,
+                        _SESSION_STOPPED_REASON,
+                        "not_attempted",
+                        progress,
+                        done,
+                        total_w,
+                    )
+                    return None, done
+                if _ordinary_row_error_message(et):
+                    consecutive_ambiguous_wire_errors = 0
+                else:
+                    consecutive_ambiguous_wire_errors += 1
+                if consecutive_ambiguous_wire_errors >= 2:
+                    done = _mark_wire_after_index(
+                        slots,
+                        items,
+                        wire_indices,
+                        wi,
+                        _BATCH_STOPPED_AMBIGUOUS_REASON,
+                        "not_attempted",
+                        progress,
+                        done,
+                        total_w,
+                    )
+                    return None, done
+                break
+
             done += 1
             if progress:
-                patch: Dict[str, Any] = {
-                    "rowDoneIndex": wi,
-                    "row": slots[wi].model_dump(mode="json"),
-                    "completedWire": done,
-                    "totalWire": total_w,
-                }
-                if fatal:
-                    patch["fatal"] = True
-                    patch["fatalMessage"] = str(exc)[:500]
-                progress(patch)
-            if fatal:
-                _mark_wire_remaining_not_attempted(slots, items, wire_indices, wi)
-                try:
-                    fail_pos = wire_indices.index(wi)
-                except ValueError:
-                    fail_pos = -1
-                if progress and fail_pos >= 0:
-                    for wj in wire_indices[fail_pos + 1 :]:
-                        cell = slots[wj]
-                        if cell is not None:
-                            done += 1
-                            progress(
-                                {
-                                    "rowDoneIndex": wj,
-                                    "row": cell.model_dump(mode="json"),
-                                    "completedWire": done,
-                                    "totalWire": total_w,
-                                }
-                            )
-                return str(exc)
-            if _session_broken_message(err_blob):
-                done = _mark_wire_after_index(
-                    slots,
-                    items,
-                    wire_indices,
-                    wi,
-                    _SESSION_STOPPED_REASON,
-                    "not_attempted",
-                    progress,
-                    done,
-                    total_w,
+                progress(
+                    {
+                        "rowDoneIndex": wi,
+                        "row": slots[wi].model_dump(mode="json"),  # type: ignore[union-attr]
+                        "completedWire": done,
+                        "totalWire": total_w,
+                    }
                 )
-                return None
-            if _ordinary_row_error_message(err_blob):
+            if cell is not None and cell.status == "ok":
+                consecutive_ambiguous_wire_errors = 0
+            elif cell is not None and cell.status == "unsupported":
                 consecutive_ambiguous_wire_errors = 0
             else:
-                consecutive_ambiguous_wire_errors += 1
-            if consecutive_ambiguous_wire_errors >= 2:
-                done = _mark_wire_after_index(
-                    slots,
-                    items,
-                    wire_indices,
-                    wi,
-                    _BATCH_STOPPED_AMBIGUOUS_REASON,
-                    "not_attempted",
-                    progress,
-                    done,
-                    total_w,
-                )
-                return None
-            continue
+                consecutive_ambiguous_wire_errors = 0
+            break
 
-        row = chunk.get(item.obis) if isinstance(chunk, dict) else {}
-        last_at = _iso_z(datetime.now(timezone.utc))
-        slots[wi] = _obis_selection_row_from_parsed(item, row, last_at)
-        done += 1
-        cell = slots[wi]
-        if progress:
-            progress(
-                {
-                    "rowDoneIndex": wi,
-                    "row": slots[wi].model_dump(mode="json"),  # type: ignore[union-attr]
-                    "completedWire": done,
-                    "totalWire": total_w,
-                }
-            )
-        if cell is not None and cell.status == "ok":
-            consecutive_ambiguous_wire_errors = 0
-        elif cell is not None and cell.status == "unsupported":
-            consecutive_ambiguous_wire_errors = 0
-        elif cell is not None and cell.status == "error":
-            et = cell.error or ""
-            if _session_broken_message(et):
-                done = _mark_wire_after_index(
-                    slots,
-                    items,
-                    wire_indices,
-                    wi,
-                    _SESSION_STOPPED_REASON,
-                    "not_attempted",
-                    progress,
-                    done,
-                    total_w,
-                )
-                return None
-            if _ordinary_row_error_message(et):
-                consecutive_ambiguous_wire_errors = 0
-            else:
-                consecutive_ambiguous_wire_errors += 1
-            if consecutive_ambiguous_wire_errors >= 2:
-                done = _mark_wire_after_index(
-                    slots,
-                    items,
-                    wire_indices,
-                    wi,
-                    _BATCH_STOPPED_AMBIGUOUS_REASON,
-                    "not_attempted",
-                    progress,
-                    done,
-                    total_w,
-                )
-                return None
-        else:
-            consecutive_ambiguous_wire_errors = 0
-    return None
+    return None, done
 
 
 def _finalize_obis_selection_filled_slots(
@@ -2389,16 +2456,67 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             abort_check = _abort
             skip_check = _skip
 
-        _sequential_obis_wire_loop(
-            client,
-            transport,
-            request,
-            slots,
-            wire_indices,
-            progress_callback,
-            abort_check=abort_check,
-            skip_check=skip_check,
-        )
+        session_pair: List[Any] = [transport, gx]
+
+        def _refresh_inbound_session() -> Tuple[Any, Any, Optional[str]]:
+            try:
+                if session_pair[1] is not None:
+                    client._try_gurux_disconnect(session_pair[0], session_pair[1])
+            except Exception:  # noqa: BLE001
+                pass
+            if INBOUND_OBIS_INTER_CHUNK_SLEEP_SEC > 0:
+                time.sleep(INBOUND_OBIS_INTER_CHUNK_SLEEP_SEC)
+            t, g, err = _tcp_assoc(client, sock)
+            session_pair[0] = t
+            session_pair[1] = g
+            return t, g, err
+
+        total_w = len(wire_indices)
+        done_global = 0
+        fatal_loop: Optional[str] = None
+        cs = INBOUND_OBIS_WIRE_CHUNK_SIZE
+        for chunk_start in range(0, total_w, cs):
+            chunk = wire_indices[chunk_start : chunk_start + cs]
+            if chunk_start > 0 and any(slots[wi] is None for wi in chunk):
+                _t, _g, rerr = _refresh_inbound_session()
+                if rerr:
+                    first_open: Optional[int] = None
+                    for wi in wire_indices:
+                        if slots[wi] is None:
+                            first_open = wi
+                            break
+                    if first_open is not None:
+                        done_global = _mark_wire_forward_from_index(
+                            slots,
+                            request.selectedItems,
+                            wire_indices,
+                            first_open,
+                            f"Session refresh failed between OBIS chunks: {rerr}",
+                            "not_attempted",
+                            progress_callback,
+                            done_global,
+                            total_w,
+                        )
+                    break
+            fatal_loop, done_global = _sequential_obis_wire_loop(
+                client,
+                session_pair[0],
+                request,
+                slots,
+                wire_indices,
+                progress_callback,
+                abort_check=abort_check,
+                skip_check=skip_check,
+                total_wire_global=total_w,
+                completed_wire_base=done_global,
+                chunk_indices=chunk,
+                session_pair=session_pair,
+                refresh_session=_refresh_inbound_session,
+            )
+            if fatal_loop:
+                break
+
+        transport, gx = session_pair[0], session_pair[1]
 
         try:
             if gx is not None:
