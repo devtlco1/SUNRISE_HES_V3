@@ -904,6 +904,185 @@ def relay_read_status_inbound(
     )
 
 
+def _direct_relay_finish_after_method(
+    *,
+    request: ReadIdentityRequest,
+    operation: RuntimeOperation,
+    expected_state: str,
+    started: datetime,
+    client: Any,
+    transport: Any,
+    gx: Any,
+    ln: str,
+    method_index: int,
+    cmd_audit: dict[str, Any],
+    cmd_spec: Any,
+    ok_m: bool,
+    em: Optional[str],
+    tcp_endpoint: Optional[str],
+    transport_mode: str,
+) -> RuntimeResponseEnvelope:
+    """
+    Same DLMS association as the method invoke: read disconnect-control for verification,
+    then Gurux disconnect. Matches inbound relay sequencing (no premature release before readback).
+    """
+    profile_id = resolve_relay_profile_id(request.meterId)
+    label = "disconnect" if operation == "relayDisconnect" else "reconnect"
+    loc = f" ({tcp_endpoint})" if tcp_endpoint else ""
+
+    if not ok_m:
+        if gx is not None:
+            try:
+                client._try_gurux_disconnect(transport, gx)
+            except Exception:  # noqa: BLE001
+                pass
+        err_code, detail_txt = _classify_relay_cosem_method_detail(em)
+        finished = datetime.now(timezone.utc)
+        details: dict[str, Any] = {
+            "method": method_index,
+            "detail": em,
+            "relayCommandAudit": cmd_audit,
+            "relayCommandProfileId": cmd_spec.command_profile_id,
+            "transportMode": transport_mode,
+        }
+        if tcp_endpoint:
+            details["tcpEndpoint"] = tcp_endpoint
+        return _relay_fail(
+            meter_id=request.meterId,
+            operation=operation,
+            started=started,
+            finished=finished,
+            message=f"Relay COSEM method failed: {detail_txt}",
+            code=err_code,
+            details=details,
+            transport_attempted=True,
+            association_attempted=True,
+            association_succeeded=True,
+            verified=False,
+        )
+
+    post_row: dict[str, Any] = {}
+    st_post = "unknown"
+    raw_post = ""
+    post_read_err: Optional[str] = None
+    diag: dict[str, Any]
+    if gx is not None:
+        post_row = _read_disconnect_control_row(client, transport, gx, ln)
+        post_read_err = post_row.get("error")
+        st_post, raw_post, diag = normalize_relay_disconnect_control_row(
+            post_row, profile_id=profile_id, meter_serial=request.meterId
+        )
+    else:
+        post_read_err = "no_gurux_context_for_post_read"
+        diag = {
+            "targetMeterSerial": request.meterId.strip(),
+            "relayProfileId": profile_id,
+            "disconnectControlReadError": post_read_err,
+            "interpretationRule": "no_gurux_context",
+            "normalizedRelayState": "unknown",
+        }
+
+    if gx is not None:
+        try:
+            client._try_gurux_disconnect(transport, gx)
+        except Exception:  # noqa: BLE001
+            pass
+
+    finished = datetime.now(timezone.utc)
+    if post_read_err:
+        verified = False
+        relay_ui_state = "unknown"  # type: ignore[assignment]
+        detail_code = "RELAY_METHOD_DIRECT_POST_READ_FAILED"
+        msg = (
+            f"Remote {label} method {method_index} on {ln!r}{loc}; "
+            f"post-read could not confirm state ({post_read_err})."
+        )
+    elif st_post == "unknown":
+        verified = False
+        relay_ui_state = "unknown"  # type: ignore[assignment]
+        detail_code = "RELAY_METHOD_DIRECT_STATE_UNVERIFIED"
+        msg = (
+            f"Remote {label} method {method_index} on {ln!r}{loc}; "
+            "post-read normalized state is unknown."
+        )
+    elif st_post != expected_state:
+        verified = False
+        relay_ui_state = st_post  # type: ignore[assignment]
+        detail_code = "RELAY_METHOD_DIRECT_STATE_MISMATCH"
+        msg = (
+            f"Remote {label} method {method_index} on {ln!r}{loc}; "
+            f"post-read shows {st_post!r}, expected {expected_state!r} after method."
+        )
+    else:
+        verified = True
+        relay_ui_state = st_post  # type: ignore[assignment]
+        detail_code = "RELAY_METHOD_DIRECT_OK"
+        msg = (
+            f"Remote {label} method {method_index} on {ln!r}{loc}; "
+            f"post-read confirms {st_post!r}."
+        )
+
+    full_diag = relay_diagnostics_for_command_verify(
+        diag,
+        expected_state=expected_state,
+        verified=verified,
+        detail_code=detail_code,
+        operation=operation,
+        method_index=method_index,
+        method_detail=str(em).strip() if em else None,
+    )
+    full_diag["transportMode"] = transport_mode
+    full_diag["relayMethodLabel"] = label
+    full_diag["relayCommandAudit"] = cmd_audit
+    full_diag["relayCommandProfileId"] = cmd_spec.command_profile_id
+    full_diag["relayStateProfileId"] = profile_id
+    full_diag["relayReadbackAnalysis"] = build_relay_readback_analysis(
+        expected_state=expected_state,
+        pre_normalized=None,
+        post_normalized=st_post,
+        method_dlms_layer_ok=bool(cmd_audit.get("dlmsLayerOk")),
+        post_read_error=post_read_err,
+    )
+    if tcp_endpoint:
+        full_diag["tcpEndpoint"] = tcp_endpoint
+
+    log.info(
+        "relay_method_direct_post_verify",
+        extra={
+            "meter_id": request.meterId,
+            "operation": operation,
+            "method_index": method_index,
+            "expected_state": expected_state,
+            "post_relay_state": st_post,
+            "verified_on_wire": verified,
+            "detail_code": detail_code,
+            "transport_mode": transport_mode,
+        },
+    )
+
+    payload = RelayControlPayload(
+        relayState=relay_ui_state,  # type: ignore[arg-type]
+        logicalName=ln,
+        methodExecuted=method_index,
+        rawDisplay=raw_post or None,
+        relayProfileId=profile_id,
+        relayCommandProfileId=cmd_spec.command_profile_id,
+        relayDiagnostics=full_diag,
+    )
+    return _relay_ok(
+        meter_id=request.meterId,
+        operation=operation,
+        started=started,
+        finished=finished,
+        message=msg,
+        payload=payload,
+        transport_attempted=True,
+        association_attempted=True,
+        verified=verified,
+        detail_code=detail_code,
+    )
+
+
 def _relay_method_direct(
     request: ReadIdentityRequest,
     operation: RuntimeOperation,
@@ -1018,36 +1197,25 @@ def _relay_method_direct(
                 client, transport, gx, dc_obj, method_index
             )
             cmd_audit["relayCommandProfileId"] = cmd_spec.command_profile_id
-            if gx is not None:
-                try:
-                    client._try_gurux_disconnect(transport, gx)
-                except Exception:  # noqa: BLE001
-                    pass
-            finished = datetime.now(timezone.utc)
-            if not ok_m:
-                err_code, detail_txt = _classify_relay_cosem_method_detail(em)
-                return _relay_fail(
-                    meter_id=request.meterId,
-                    operation=operation,
-                    started=started,
-                    finished=finished,
-                    message=f"Relay COSEM method failed: {detail_txt}",
-                    code=err_code,
-                    details={
-                        "method": method_index,
-                        "detail": em,
-                        "tcpEndpoint": endpoint,
-                        "relayCommandAudit": cmd_audit,
-                        "relayCommandProfileId": cmd_spec.command_profile_id,
-                    },
-                    transport_attempted=True,
-                    association_attempted=True,
-                    association_succeeded=True,
-                    verified=False,
-                )
+            return _direct_relay_finish_after_method(
+                request=request,
+                operation=operation,
+                expected_state=expected_state,
+                started=started,
+                client=client,
+                transport=transport,
+                gx=gx,
+                ln=ln,
+                method_index=method_index,
+                cmd_audit=cmd_audit,
+                cmd_spec=cmd_spec,
+                ok_m=ok_m,
+                em=em,
+                tcp_endpoint=endpoint,
+                transport_mode="direct_tcp",
+            )
         else:
             ser, gx, _port, errc = _serial_assoc(client)
-            transport = ser
             if errc:
                 finished = datetime.now(timezone.utc)
                 return _relay_fail(
@@ -1061,67 +1229,33 @@ def _relay_method_direct(
                     transport_attempted=True,
                     association_attempted=True,
                 )
-            ok_m, em, cmd_audit = _gurux_invoke_disconnect_control_method(
-                client, ser, gx, dc_obj, method_index
-            )
-            cmd_audit["relayCommandProfileId"] = cmd_spec.command_profile_id
-            if gx is not None:
+            try:
+                ok_m, em, cmd_audit = _gurux_invoke_disconnect_control_method(
+                    client, ser, gx, dc_obj, method_index
+                )
+                cmd_audit["relayCommandProfileId"] = cmd_spec.command_profile_id
+                return _direct_relay_finish_after_method(
+                    request=request,
+                    operation=operation,
+                    expected_state=expected_state,
+                    started=started,
+                    client=client,
+                    transport=ser,
+                    gx=gx,
+                    ln=ln,
+                    method_index=method_index,
+                    cmd_audit=cmd_audit,
+                    cmd_spec=cmd_spec,
+                    ok_m=ok_m,
+                    em=em,
+                    tcp_endpoint=None,
+                    transport_mode="direct_serial",
+                )
+            finally:
                 try:
-                    client._try_gurux_disconnect(ser, gx)
+                    ser.close()
                 except Exception:  # noqa: BLE001
                     pass
-            try:
-                ser.close()
-            except Exception:  # noqa: BLE001
-                pass
-            finished = datetime.now(timezone.utc)
-            if not ok_m:
-                err_code, detail_txt = _classify_relay_cosem_method_detail(em)
-                return _relay_fail(
-                    meter_id=request.meterId,
-                    operation=operation,
-                    started=started,
-                    finished=finished,
-                    message=f"Relay COSEM method failed: {detail_txt}",
-                    code=err_code,
-                    details={
-                        "method": method_index,
-                        "detail": em,
-                        "relayCommandAudit": cmd_audit,
-                        "relayCommandProfileId": cmd_spec.command_profile_id,
-                    },
-                    transport_attempted=True,
-                    association_attempted=True,
-                    association_succeeded=True,
-                    verified=False,
-                )
-
-        finished = datetime.now(timezone.utc)
-        payload = RelayControlPayload(
-            relayState=expected_state,  # type: ignore[arg-type]
-            logicalName=ln,
-            methodExecuted=method_index,
-            relayCommandProfileId=cmd_spec.command_profile_id,
-            relayDiagnostics={
-                "relayCommandAudit": cmd_audit,
-                "relayReadbackAnalysis": {
-                    "note": "direct_transport_posture_assumed_without_disconnect_control_read",
-                },
-            },
-        )
-        label = "disconnect" if operation == "relayDisconnect" else "reconnect"
-        return _relay_ok(
-            meter_id=request.meterId,
-            operation=operation,
-            started=started,
-            finished=finished,
-            message=f"Remote {label} method {method_index} executed on {ln!r} (posture assumed {expected_state!r}).",
-            payload=payload,
-            transport_attempted=True,
-            association_attempted=True,
-            verified=True,
-            detail_code="RELAY_METHOD_OK",
-        )
     finally:
         if sock is not None:
             try:

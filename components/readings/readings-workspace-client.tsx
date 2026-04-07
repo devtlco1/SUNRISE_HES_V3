@@ -277,14 +277,11 @@ export function ReadingsWorkspaceClient() {
   const [actionLog, setActionLog] = useState<ActionLogEntry[]>([])
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(() => new Set())
-  const [batchPanelOpen, setBatchPanelOpen] = useState(false)
-  const [batchCheckedSerials, setBatchCheckedSerials] = useState<Set<string>>(() => new Set())
   const [inboundObisJobId, setInboundObisJobId] = useState<string | null>(null)
   const [obisJobRowPhases, setObisJobRowPhases] = useState<Record<string, string>>({})
   const [obisJobCancelling, setObisJobCancelling] = useState(false)
 
   const inFlightTargetRef = useRef<string>("")
-  const activeObisJobMeterRef = useRef<string>("")
 
   const meterKey = meterId.trim()
   const currentMeterState = useMemo(
@@ -343,15 +340,6 @@ export function ReadingsWorkspaceClient() {
   useEffect(() => {
     setSelected(new Set())
   }, [pack])
-
-  useEffect(() => {
-    if (!batchPanelOpen) return
-    setBatchCheckedSerials((prev) => {
-      if (prev.size > 0) return prev
-      const m = meterId.trim()
-      return m ? new Set([m]) : new Set()
-    })
-  }, [batchPanelOpen, meterId])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -502,23 +490,6 @@ export function ReadingsWorkspaceClient() {
     setSelected(new Set())
   }
 
-  function toggleBatchSerial(serial: string) {
-    setBatchCheckedSerials((prev) => {
-      const n = new Set(prev)
-      if (n.has(serial)) n.delete(serial)
-      else n.add(serial)
-      return n
-    })
-  }
-
-  function selectAllBatchSerials() {
-    setBatchCheckedSerials(new Set(meters.map((m) => m.serialNumber)))
-  }
-
-  function clearBatchSerials() {
-    setBatchCheckedSerials(new Set())
-  }
-
   /**
    * One meter read (inbound job or direct). Does not toggle page `busy` — caller owns that.
    * Updates per-meter state, listener job UI, and action log for this serial only.
@@ -543,7 +514,6 @@ export function ReadingsWorkspaceClient() {
           return
         }
         const jobId = start.data.jobId
-        activeObisJobMeterRef.current = mid
         setInboundObisJobId(jobId)
         const deadline = Date.now() + OBIS_JOB_MAX_MS
         let last: ObisSelectionJobPollView | null = null
@@ -658,7 +628,6 @@ export function ReadingsWorkspaceClient() {
       }
     } finally {
       patchMeter(mid, { obisJobProgress: null })
-      activeObisJobMeterRef.current = ""
       setInboundObisJobId(null)
       setObisJobRowPhases({})
       setObisJobCancelling(false)
@@ -701,68 +670,9 @@ export function ReadingsWorkspaceClient() {
     }
   }
 
-  /** Sequential multi-meter reads: strict per-serial routing; no parallel jobs. */
-  async function executeBatchReadObisSelection(
-    serials: string[],
-    items: ObisSelectionItemInput[]
-  ): Promise<void> {
-    const uniq = [...new Set(serials.map((s) => s.trim()).filter(Boolean))]
-    if (uniq.length < 2) return
-    if (items.length === 0) {
-      const m = meterId.trim() || "unknown-meter"
-      patchMeter(m, { actionError: "No OBIS rows to read." })
-      return
-    }
-    inFlightTargetRef.current = `batch:${uniq.length}`
-    setBusy(true)
-    pushActionLog({
-      level: "info",
-      serial: uniq.join(","),
-      tag: "batch_read",
-      summary: `Batch started (${uniq.length} meters, sequential)`,
-    })
-    try {
-      for (const mid of uniq) {
-        if (transport === "inbound") {
-          const st = await fetchTcpListenerStatus()
-          const routeOk =
-            st.ok && tcpListenerStrictRouteAvailableForSerial(st.data, mid)
-          if (!routeOk) {
-            const detail = !st.ok
-              ? st.error
-              : "NO_STAGED_SESSION_FOR_SELECTED_METER (strict routing — serial not bound to staged session)"
-            patchMeter(mid, { actionError: detail })
-            pushActionLog({
-              level: "warn",
-              serial: mid,
-              tag: "batch_read",
-              summary: "Skipped — no live routed session for serial",
-              detail,
-            })
-            continue
-          }
-        }
-        await performObisRead(mid, items)
-      }
-    } finally {
-      setBusy(false)
-      inFlightTargetRef.current = ""
-      pushActionLog({
-        level: "info",
-        serial: uniq.join(","),
-        tag: "batch_read",
-        summary: `Batch finished (${uniq.length} meters)`,
-      })
-      if (transport === "inbound") {
-        await loadStatus()
-      }
-    }
-  }
-
   async function onStopObisJob() {
     if (!inboundObisJobId) return
-    const mid =
-      activeObisJobMeterRef.current.trim() || meterId.trim() || "unknown-meter"
+    const mid = meterId.trim() || "unknown-meter"
     setObisJobCancelling(true)
     try {
       const r = await postTcpListenerObisJobCancel(inboundObisJobId)
@@ -775,8 +685,7 @@ export function ReadingsWorkspaceClient() {
   async function onSkipQueuedJobRow(obis: string) {
     const jid = inboundObisJobId
     if (!jid) return
-    const mid =
-      activeObisJobMeterRef.current.trim() || meterId.trim() || "unknown-meter"
+    const mid = meterId.trim() || "unknown-meter"
     const jr = await getTcpListenerObisSelectionJobPoll(jid)
     if (!jr.ok) {
       patchMeter(mid, { actionError: jr.error })
@@ -809,55 +718,6 @@ export function ReadingsWorkspaceClient() {
     }
     const items = v1SupportedRowsInPack.map(catalogEntryToSelectionItem)
     await executeReadObisSelection(items)
-  }
-
-  async function onBatchReadSelected() {
-    const serials = [...batchCheckedSerials]
-    const focus = meterId.trim() || "unknown-meter"
-    if (serials.length < 2) {
-      patchMeter(focus, {
-        actionError: "Multi-meter: select at least two meters below.",
-      })
-      return
-    }
-    if (selected.size === 0) {
-      patchMeter(focus, { actionError: "Select at least one OBIS row." })
-      return
-    }
-    const rows = catalogRows.filter((r) => selected.has(r.obis))
-    const items = rows.map(catalogEntryToSelectionItem)
-    await executeBatchReadObisSelection(serials, items)
-  }
-
-  async function onBatchReadCategory() {
-    const serials = [...batchCheckedSerials]
-    const focus = meterId.trim() || "unknown-meter"
-    if (serials.length < 2) {
-      patchMeter(focus, {
-        actionError: "Multi-meter: select at least two meters below.",
-      })
-      return
-    }
-    if (v1SupportedRowsInPack.length === 0) {
-      patchMeter(focus, {
-        actionError: "No v1-readable rows in this category (Data/Clock/Register, attr 2).",
-      })
-      return
-    }
-    const items = v1SupportedRowsInPack.map(catalogEntryToSelectionItem)
-    await executeBatchReadObisSelection(serials, items)
-  }
-
-  async function refreshRelayStatusAfterCommand(targetSerial: string) {
-    const r = await postRelayReadStatusReadings(transport, targetSerial)
-    if (!r.ok) return
-    const env = r.data
-    patchMeter(targetSerial, {
-      relayConfidence: relayConfidenceFromEnvelope(env),
-      ...(env.payload?.relayState
-        ? { relayState: env.payload.relayState, lastRelayPayload: env.payload }
-        : {}),
-    })
   }
 
   async function onRelayReadStatus() {
@@ -953,12 +813,16 @@ export function ReadingsWorkspaceClient() {
           relayConfidence: relayConfidenceFromEnvelope(env),
         })
       }
-      await refreshRelayStatusAfterCommand(mid)
+      const conf = relayConfidenceFromEnvelope(env)
       pushActionLog({
-        level: "info",
+        level: conf === "confirmed" ? "info" : "warn",
         serial: mid,
         tag: "relay_off",
-        summary: "OFF command sent",
+        summary:
+          conf === "confirmed"
+            ? `OFF confirmed (${env.payload?.relayState ?? "?"})`
+            : `OFF unconfirmed (${env.payload?.relayState ?? "?"})`,
+        detail: env.diagnostics?.detailCode,
       })
     } finally {
       setRelayBusy(false)
@@ -1007,12 +871,16 @@ export function ReadingsWorkspaceClient() {
           relayConfidence: relayConfidenceFromEnvelope(env),
         })
       }
-      await refreshRelayStatusAfterCommand(mid)
+      const conf = relayConfidenceFromEnvelope(env)
       pushActionLog({
-        level: "info",
+        level: conf === "confirmed" ? "info" : "warn",
         serial: mid,
         tag: "relay_on",
-        summary: "ON command sent",
+        summary:
+          conf === "confirmed"
+            ? `ON confirmed (${env.payload?.relayState ?? "?"})`
+            : `ON unconfirmed (${env.payload?.relayState ?? "?"})`,
+        detail: env.diagnostics?.detailCode,
       })
     } finally {
       setRelayBusy(false)
@@ -1218,85 +1086,6 @@ export function ReadingsWorkspaceClient() {
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="rounded-lg border border-border bg-muted/15">
-        <button
-          type="button"
-          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted/40"
-          onClick={() => setBatchPanelOpen((o) => !o)}
-        >
-          <span className="font-medium">Multi-meter read</span>
-          <span className="text-xs text-muted-foreground">
-            Sequential · strict routing per serial
-          </span>
-        </button>
-        {batchPanelOpen ? (
-          <div className="space-y-2 border-t border-border px-3 py-2 text-xs">
-            <p className="text-muted-foreground">
-              Select two or more meters, then run the same OBIS selection or pack category for each in
-              order (one inbound job at a time). Unroutable serials are skipped and logged — no
-              cross-meter session use.
-            </p>
-            <div className="flex max-h-32 flex-wrap gap-x-4 gap-y-1 overflow-y-auto">
-              {meters.map((m) => (
-                <label
-                  key={m.id}
-                  className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px]"
-                >
-                  <input
-                    type="checkbox"
-                    checked={batchCheckedSerials.has(m.serialNumber)}
-                    onChange={() => toggleBatchSerial(m.serialNumber)}
-                    disabled={actionLocked}
-                  />
-                  {m.serialNumber}
-                </label>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={selectAllBatchSerials}
-                disabled={actionLocked}
-              >
-                Select all
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={clearBatchSerials}
-                disabled={actionLocked}
-              >
-                Clear
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="h-7 text-xs"
-                disabled={actionLocked || batchCheckedSerials.size < 2}
-                onClick={() => void onBatchReadSelected()}
-              >
-                Batch: selected OBIS ({batchCheckedSerials.size})
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-7 text-xs"
-                disabled={actionLocked || batchCheckedSerials.size < 2}
-                onClick={() => void onBatchReadCategory()}
-              >
-                Batch: category ({batchCheckedSerials.size})
-              </Button>
-            </div>
-          </div>
-        ) : null}
       </div>
 
       {meterPickerLocked ? (
