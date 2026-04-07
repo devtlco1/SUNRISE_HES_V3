@@ -242,15 +242,39 @@ function boolish(v: unknown): boolean {
 }
 
 function catalogEntryToSelectionItem(r: ObisCatalogEntry): ObisSelectionItemInput {
+  const rx = r as ObisCatalogEntry & {
+    objectType?: string
+    classId?: number
+    packKey?: string
+    scalerUnitAttribute?: number
+  }
+  const objectType =
+    String(rx.objectType ?? r.object_type ?? "Data").trim() || "Data"
+  const rawClass = rx.classId ?? r.class_id
+  const classId =
+    typeof rawClass === "number" && Number.isFinite(rawClass)
+      ? Math.trunc(rawClass)
+      : Math.trunc(Number(rawClass))
+  const rawAttr = r.attribute
+  const attribute =
+    typeof rawAttr === "number" && Number.isFinite(rawAttr)
+      ? Math.trunc(rawAttr)
+      : undefined
+  const rawSu = rx.scalerUnitAttribute ?? r.scaler_unit_attribute
+  const scalerUnitAttribute =
+    typeof rawSu === "number" && Number.isFinite(rawSu)
+      ? Math.trunc(rawSu)
+      : undefined
+  const packKey = (rx.packKey ?? r.pack_key) || undefined
   return {
     obis: r.obis,
     description: r.description,
-    objectType: r.object_type,
-    classId: r.class_id,
-    attribute: r.attribute,
-    scalerUnitAttribute: r.scaler_unit_attribute || undefined,
+    objectType,
+    classId: Number.isFinite(classId) ? classId : r.class_id,
+    ...(attribute !== undefined ? { attribute } : {}),
+    ...(scalerUnitAttribute !== undefined ? { scalerUnitAttribute } : {}),
     unit: r.unit || undefined,
-    packKey: r.pack_key,
+    packKey,
   }
 }
 

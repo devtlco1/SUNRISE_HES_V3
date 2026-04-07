@@ -2,6 +2,7 @@
  * Browser → Next `/api/readings/*` (server calls Python sidecar; no direct browser→Python).
  */
 
+import { summarizeFastApiValidationDetail } from "@/lib/readings/python-sidecar-proxy-error"
 import type {
   BasicRegistersPayload,
   IdentityPayload,
@@ -51,6 +52,9 @@ function formatReadingsProxyFailure(parsed: unknown, status: number): string {
     const p = parsed as Record<string, unknown>
     const msg = typeof p.message === "string" ? p.message : ""
     const errTag = typeof p.error === "string" ? p.error : ""
+    if (errTag === "PYTHON_SIDECAR_VALIDATION_ERROR" && msg.trim()) {
+      return msg.trim()
+    }
     if (typeof p.hint === "string" && p.hint.trim()) {
       return [errTag || `HTTP ${status}`, p.hint].filter(Boolean).join(": ")
     }
@@ -67,6 +71,10 @@ function formatReadingsProxyFailure(parsed: unknown, status: number): string {
     if (py && typeof py === "object" && "detail" in py) {
       const d = (py as { detail: unknown }).detail
       if (typeof d === "string") return [msg, d].filter(Boolean).join(" — ") || d
+      if (Array.isArray(d)) {
+        const flat = summarizeFastApiValidationDetail(py)
+        if (flat.trim()) return [msg, flat].filter(Boolean).join(" — ") || flat
+      }
     }
     if (typeof p.bodyPreview === "string" && p.bodyPreview.trim()) {
       return [msg, p.bodyPreview.slice(0, 500)].filter(Boolean).join(" — ")

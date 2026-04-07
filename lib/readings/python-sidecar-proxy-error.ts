@@ -2,6 +2,28 @@ import { NextResponse } from "next/server"
 
 import { PythonSidecarHttpError } from "@/lib/runtime/python-sidecar/client"
 
+/** Flatten FastAPI/Pydantic 422 `{ detail: [...] }` into a single operator-facing line. */
+export function summarizeFastApiValidationDetail(parsed: unknown): string {
+  if (!parsed || typeof parsed !== "object") return ""
+  const detail = (parsed as { detail?: unknown }).detail
+  if (!Array.isArray(detail) || detail.length === 0) return ""
+  const parts: string[] = []
+  for (const item of detail) {
+    if (!item || typeof item !== "object") continue
+    const row = item as Record<string, unknown>
+    const loc = Array.isArray(row.loc) ? row.loc.map(String).join(".") : ""
+    const msg =
+      typeof row.msg === "string"
+        ? row.msg
+        : typeof row.message === "string"
+          ? row.message
+          : ""
+    if (loc && msg) parts.push(`${loc}: ${msg}`)
+    else if (msg) parts.push(msg)
+  }
+  return parts.join("; ")
+}
+
 const ROUTE_NOT_FOUND_HINT =
   "The Python sidecar has no HTTP handler for this URL. Restart the sidecar after deploying new code. Set RUNTIME_PYTHON_SIDECAR_URL to the server root only (e.g. http://127.0.0.1:8011), not including /v1 or /v1/runtime."
 
@@ -26,6 +48,25 @@ export function jsonResponseForPythonSidecarHttpError(
         ? pythonDetail
         : { error: "SESSION_BUSY", message: e.message }
     return NextResponse.json(body, { status: 409, headers: { "Cache-Control": "no-store" } })
+  }
+
+  if (e.status === 422) {
+    const validationSummary = summarizeFastApiValidationDetail(pythonDetail)
+    const message = validationSummary.trim() || e.message
+    console.warn("[readings proxy] Python sidecar request validation failed (422)", {
+      downstreamUrl: e.requestUrl,
+      validationSummary: validationSummary || undefined,
+    })
+    return NextResponse.json(
+      {
+        error: "PYTHON_SIDECAR_VALIDATION_ERROR",
+        message,
+        pythonDetail,
+        downstreamUrl: e.requestUrl ?? null,
+        bodyPreview: e.bodyText.slice(0, 2000),
+      },
+      { status: 422, headers: { "Cache-Control": "no-store" } }
+    )
   }
 
   const shared = {
