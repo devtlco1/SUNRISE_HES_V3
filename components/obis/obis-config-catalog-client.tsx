@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { CatalogImportSummary } from "@/lib/obis/catalog-import-upsert"
+import type { ExcelCatalogMergeSummary } from "@/lib/obis/excel-catalog-merge"
 import { packLabel } from "@/lib/obis/types"
 import type { ObisCatalogEntry } from "@/lib/obis/types"
 import { cn } from "@/lib/utils"
@@ -51,6 +52,7 @@ export function ObisConfigCatalogClient() {
   const [importing, setImporting] = useState(false)
   const [importInfo, setImportInfo] = useState<string | null>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
+  const importExcelRef = useRef<HTMLInputElement>(null)
   const [packFilter, setPackFilter] = useState<string | "all">("all")
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ObisCatalogEntry | null>(null)
@@ -172,6 +174,10 @@ export function ObisConfigCatalogClient() {
     importFileRef.current?.click()
   }
 
+  function openExcelImportPicker() {
+    importExcelRef.current?.click()
+  }
+
   async function onImportFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ""
@@ -233,11 +239,56 @@ export function ObisConfigCatalogClient() {
     }
   }
 
+  async function onExcelImportSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    setImporting(true)
+    setImportInfo(null)
+    setSaveError(null)
+    try {
+      const body = new FormData()
+      body.set("file", file)
+      const r = await fetch("/api/obis-catalog/import-excel", {
+        method: "POST",
+        body,
+      })
+      const data = (await r.json()) as {
+        ok?: boolean
+        error?: string
+        summary?: ExcelCatalogMergeSummary
+        rowCount?: number
+        message?: string
+      }
+      if (!r.ok || !data.ok) {
+        setImportInfo(
+          [data.error, data.message].filter(Boolean).join(": ") || "Excel import failed"
+        )
+        return
+      }
+      const s = data.summary
+      if (s) {
+        setImportInfo(
+          `Excel merge: ${s.inserted} inserted, ${s.updated} updated, ${s.unchanged} unchanged, ` +
+            `${s.skippedInvalidObis} invalid OBIS skipped, ${s.duplicateInSheetCollapsed} sheet duplicates collapsed ` +
+            `(${s.duplicateDescriptionMismatches} desc conflicts). Rows: ${data.rowCount ?? "—"}.`
+        )
+      } else {
+        setImportInfo("Excel import applied.")
+      }
+      await load()
+    } catch {
+      setImportInfo("Excel import failed")
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
         title="OBIS catalog"
-        subtitle="Server file data/obis-catalog.json — Save commits edits; template import upserts by OBIS."
+        subtitle="data/obis-catalog.json — JSON import upserts by OBIS; Excel merge refreshes meter-supported rows (OBIS, DESCRIPTION, ATTRIBUTES, R/W, UNIT) while preserving pack/sort and identity notes."
         actions={
           <div className="flex flex-wrap gap-2">
             <input
@@ -246,6 +297,13 @@ export function ObisConfigCatalogClient() {
               accept=".json,application/json"
               className="hidden"
               onChange={(e) => void onImportFileSelected(e)}
+            />
+            <input
+              ref={importExcelRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={(e) => void onExcelImportSelected(e)}
             />
             <Button type="button" size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
               Reload
@@ -274,7 +332,17 @@ export function ObisConfigCatalogClient() {
               onClick={openImportPicker}
             >
               <UploadIcon className="mr-1 size-3.5" />
-              Import
+              Import JSON
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={importing || loading}
+              onClick={openExcelImportPicker}
+            >
+              <UploadIcon className="mr-1 size-3.5" />
+              Import Excel
             </Button>
             <Button type="button" size="sm" onClick={openAdd}>
               <PlusIcon className="mr-1 size-3.5" />
