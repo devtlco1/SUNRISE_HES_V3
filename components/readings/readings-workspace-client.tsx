@@ -404,8 +404,17 @@ export function ReadingsWorkspaceClient() {
           const wTot = snap.wireTotal
           const cur = snap.currentObis
           let line = `${wDone} / ${wTot} wire rows`
-          if (cur) line += ` — running: ${cur}`
-          if (snap.stale && snap.status === "running") {
+          if (snap.status === "waiting_for_restage") {
+            line = `Waiting for restage — ${wDone} / ${wTot} wire rows`
+            const rm = snap.restageMessage
+            if (typeof rm === "string" && rm.trim()) line += `. ${rm.trim()}`
+          } else if (cur) {
+            line += ` — running: ${cur}`
+          }
+          if (
+            snap.stale &&
+            (snap.status === "running" || snap.status === "waiting_for_restage")
+          ) {
             line += " (stale: job may be stuck)"
           }
           setObisJobProgress(line)

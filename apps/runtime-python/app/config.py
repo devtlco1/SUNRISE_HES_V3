@@ -61,6 +61,18 @@ class Settings(BaseSettings):
         description="Listen port for inbound modem (distinct from FastAPI SUNRISE_RUNTIME_PORT).",
     )
     tcp_listener_backlog: int = Field(default=8, ge=1, le=128, description="listen() backlog.")
+    inbound_obis_wire_chunk_size: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        description="Wire rows per staged inbound TCP socket before closing and waiting for modem reconnect (OBIS job).",
+    )
+    inbound_obis_job_restage_timeout_seconds: float = Field(
+        default=180.0,
+        ge=5.0,
+        le=3600.0,
+        description="Max wait for next staged inbound connection between OBIS job chunks.",
+    )
 
 
 @lru_cache

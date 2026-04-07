@@ -168,6 +168,12 @@ class TcpModemListenerController:
                 self._staged_sock = conn
                 self._staged_meta = meta
             log.info("tcp_modem_staged_connection", extra={"remote": f"{rh}:{rp}"})
+            try:
+                from app.jobs import obis_selection_job_store as _obis_job_store
+
+                _obis_job_store.notify_staged_inbound_arrival()
+            except Exception:  # noqa: BLE001
+                pass
 
         try:
             if self._server_sock is not None:

@@ -479,10 +479,15 @@ _SESSION_STOPPED_REASON = "Session stopped — transport or framing unusable."
 # Two consecutive wire errors that are neither clearly session-broken nor ordinary row-level COSEM faults.
 _BATCH_STOPPED_AMBIGUOUS_REASON = "Batch stopped — repeated ambiguous errors (session uncertain)."
 
-# Long inbound batches: DLMS/HDLC over staged TCP degrades after many sequential GETs (~12–13 observed).
-# Chunk wire reads with a full IEC + association refresh between chunks (same TCP socket, same job id).
-INBOUND_OBIS_WIRE_CHUNK_SIZE = 8
+# Pacing between IEC teardown and re-association on the same socket (single-segment row retry only).
 INBOUND_OBIS_INTER_CHUNK_SLEEP_SEC = 0.08
+
+# Segment association failed — caller should close socket, wait for a fresh staged inbound connection, retry segment.
+INBOUND_JOB_SEGMENT_ASSOC_FAILED = "INBOUND_JOB_SEGMENT_ASSOC_FAILED"
+
+_RESTAGE_TIMEOUT_TAIL_REASON = (
+    "Not attempted — restage timeout (no new inbound modem connection within the wait limit)."
+)
 
 
 def _inbound_session_retry_warranted(text: str) -> bool:
@@ -2324,68 +2329,32 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             tcp_endpoint=None,
         )
 
-    def read_obis_selection_inbound_tcp_sequential(
+    def read_obis_selection_inbound_tcp_job_segment(
         self,
         request: ReadObisSelectionRequest,
         sock: socket.socket,
         remote_endpoint: str,
+        slots: List[Optional[ObisSelectionRowResult]],
+        wire_indices: List[int],
+        segment_wire_indices: List[int],
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         job_id: Optional[str] = None,
-    ) -> RuntimeResponseEnvelope:
+        completed_wire_base: int = 0,
+    ) -> Tuple[Optional[str], int]:
         """
-        One IEC + association, then each OBIS read separately (for job progress / long selections).
+        One staged inbound TCP lifecycle: IEC + association, then sequential reads for `segment_wire_indices` only.
+        Mutates `slots` in place. Caller closes `sock` after return.
+
+        Returns `(fatal_or_none, done_count)`. Use `INBOUND_JOB_SEGMENT_ASSOC_FAILED` to mean: association
+        failed on this socket — close it, wait for a fresh staged connection, retry the same segment indices.
         """
         settings = get_settings()
-        started = datetime.now(timezone.utc)
+        if not segment_wire_indices:
+            return None, completed_wire_base
 
         boot = mvp_ami_bootstrap(settings, None)
         if isinstance(boot, MvpAmiBootstrapFailure):
-            finished = datetime.now(timezone.utc)
-            return _failure_envelope(
-                meter_id=request.meterId,
-                operation="readObisSelection",
-                started=started,
-                finished=finished,
-                message=boot.message,
-                code=boot.code,
-                transport_state="disconnected",
-                association_state="none",
-                transport_attempted=False,
-                association_attempted=False,
-                verified=False,
-                outcome="attempted_failed",
-                detail_code=boot.code,
-                err_details={**(boot.details or {}), "transportMode": "tcp_inbound", "sequential": True},
-            )
-
-        slots, wire_unique, wire_indices = _prepare_obis_selection_slots(request)
-        if not wire_unique:
-            finished = datetime.now(timezone.utc)
-            n = len(request.selectedItems)
-            final_rows = [slots[i] for i in range(n)]  # type: ignore[list-item]
-            duration_ms = max(1, int((finished - started).total_seconds() * 1000))
-            return RuntimeResponseEnvelope(
-                ok=True,
-                simulated=False,
-                operation="readObisSelection",
-                meterId=request.meterId,
-                startedAt=_iso_z(started),
-                finishedAt=_iso_z(finished),
-                durationMs=duration_ms,
-                message="No wire reads attempted — all rows unsupported in v1 (Data/Clock/Register, attr 2).",
-                transportState="disconnected",
-                associationState="none",
-                payload=ReadObisSelectionPayload(rows=final_rows),
-                error=None,
-                diagnostics=RuntimeExecutionDiagnostics(
-                    outcome="attempted_failed",  # type: ignore[arg-type]
-                    capabilityStage="cosem_read",
-                    transportAttempted=False,
-                    associationAttempted=False,
-                    verifiedOnWire=False,
-                    detailCode="OBIS_SELECTION_ALL_UNSUPPORTED_V1",
-                ),
-            )
+            return (boot.message, completed_wire_base)
 
         mc_logger = logging.getLogger("sunrise.mvp_ami.meter_client")
         mc_logger.setLevel(settings.log_level.upper())
@@ -2393,53 +2362,17 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
         try:
             client = boot.meter_mod.MeterClient(boot.app_cfg, mc_logger)
         except Exception as exc:  # noqa: BLE001
-            log.exception("mvp_ami_meter_client_construct_failed_tcp_inbound_obis_seq")
-            finished = datetime.now(timezone.utc)
-            return _failure_envelope(
-                meter_id=request.meterId,
-                operation="readObisSelection",
-                started=started,
-                finished=finished,
-                message=f"MVP-AMI MeterClient construct failed: {exc}",
-                code="MVP_AMI_RUNTIME_ERROR",
-                transport_state="error",
-                association_state="none",
-                transport_attempted=False,
-                association_attempted=False,
-                verified=False,
-                outcome="attempted_failed",
-                detail_code="MVP_AMI_RUNTIME_ERROR",
-                err_details={"error": str(exc), "transportMode": "tcp_inbound", "sequential": True},
-            )
+            log.exception("mvp_ami_meter_client_construct_failed_tcp_inbound_obis_segment")
+            return (str(exc), completed_wire_base)
 
         transport, gx, errc = _tcp_assoc(client, sock)
         if errc:
-            last_at = _iso_z(datetime.now(timezone.utc))
-            for wi in wire_indices:
-                it = request.selectedItems[wi]
-                slots[wi] = ObisSelectionRowResult(
-                    obis=it.obis,
-                    value="",
-                    status="error",
-                    error=f"Association failed: {errc}",
-                    packKey=it.packKey,
-                    lastReadAt=last_at,
-                )
             try:
                 if gx is not None:
                     client._try_gurux_disconnect(transport, gx)
             except Exception:  # noqa: BLE001
                 pass
-            return _finalize_obis_selection_filled_slots(
-                request=request,
-                boot=boot,
-                started=started,
-                slots=slots,
-                wire_indices=wire_indices,
-                assoc_ok=False,
-                envelope_transport_mode="tcp_inbound",
-                tcp_endpoint=remote_endpoint,
-            )
+            return (INBOUND_JOB_SEGMENT_ASSOC_FAILED, completed_wire_base)
 
         from app.jobs import obis_selection_job_store as _obis_job_store
 
@@ -2457,8 +2390,9 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             skip_check = _skip
 
         session_pair: List[Any] = [transport, gx]
+        total_w = len(wire_indices)
 
-        def _refresh_inbound_session() -> Tuple[Any, Any, Optional[str]]:
+        def _refresh_same_socket_session() -> Tuple[Any, Any, Optional[str]]:
             try:
                 if session_pair[1] is not None:
                     client._try_gurux_disconnect(session_pair[0], session_pair[1])
@@ -2471,74 +2405,29 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             session_pair[1] = g
             return t, g, err
 
-        total_w = len(wire_indices)
-        done_global = 0
-        fatal_loop: Optional[str] = None
-        cs = INBOUND_OBIS_WIRE_CHUNK_SIZE
-        for chunk_start in range(0, total_w, cs):
-            chunk = wire_indices[chunk_start : chunk_start + cs]
-            if chunk_start > 0 and any(slots[wi] is None for wi in chunk):
-                _t, _g, rerr = _refresh_inbound_session()
-                if rerr:
-                    first_open: Optional[int] = None
-                    for wi in wire_indices:
-                        if slots[wi] is None:
-                            first_open = wi
-                            break
-                    if first_open is not None:
-                        done_global = _mark_wire_forward_from_index(
-                            slots,
-                            request.selectedItems,
-                            wire_indices,
-                            first_open,
-                            f"Session refresh failed between OBIS chunks: {rerr}",
-                            "not_attempted",
-                            progress_callback,
-                            done_global,
-                            total_w,
-                        )
-                    break
-            fatal_loop, done_global = _sequential_obis_wire_loop(
-                client,
-                session_pair[0],
-                request,
-                slots,
-                wire_indices,
-                progress_callback,
-                abort_check=abort_check,
-                skip_check=skip_check,
-                total_wire_global=total_w,
-                completed_wire_base=done_global,
-                chunk_indices=chunk,
-                session_pair=session_pair,
-                refresh_session=_refresh_inbound_session,
-            )
-            if fatal_loop:
-                break
-
-        transport, gx = session_pair[0], session_pair[1]
+        fatal_loop, done_global = _sequential_obis_wire_loop(
+            client,
+            session_pair[0],
+            request,
+            slots,
+            wire_indices,
+            progress_callback,
+            abort_check=abort_check,
+            skip_check=skip_check,
+            total_wire_global=total_w,
+            completed_wire_base=completed_wire_base,
+            chunk_indices=segment_wire_indices,
+            session_pair=session_pair,
+            refresh_session=_refresh_same_socket_session,
+        )
 
         try:
-            if gx is not None:
-                client._try_gurux_disconnect(transport, gx)
+            if session_pair[1] is not None:
+                client._try_gurux_disconnect(session_pair[0], session_pair[1])
         except Exception:  # noqa: BLE001
             pass
 
-        op_cancel: Optional[str] = None
-        if job_id and _obis_job_store.cancel_requested(job_id):
-            op_cancel = _CANCEL_BATCH_REASON
-
-        return _finalize_obis_selection_filled_slots(
-            request=request,
-            boot=boot,
-            started=started,
-            slots=slots,
-            wire_indices=wire_indices,
-            assoc_ok=True,
-            envelope_transport_mode="tcp_inbound",
-            tcp_endpoint=remote_endpoint,
-            operator_cancel_message=op_cancel,
-        )
+        return (fatal_loop, done_global)
 
     def read_obis_selection_on_accepted_tcp_socket(
         self,

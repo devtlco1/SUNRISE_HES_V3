@@ -25,6 +25,7 @@ def _iso_z() -> str:
 class ObisSelectionJobStatus(str, Enum):
     queued = "queued"
     running = "running"
+    waiting_for_restage = "waiting_for_restage"
     completed = "completed"
     failed = "failed"
     cancelled = "cancelled"
@@ -51,6 +52,8 @@ class ObisSelectionJobView(BaseModel):
     currentIndex: Optional[int] = None
     fatalError: Optional[str] = None
     stale: bool = False
+    restageMessage: Optional[str] = None
+    restageSegmentsDone: int = 0
     rows: List[ObisSelectionJobRowView]
     updatedAt: str
     envelope: Optional[Dict[str, Any]] = None  # final RuntimeResponseEnvelope as JSON when done
@@ -74,6 +77,8 @@ class _JobInternal:
         "worker_thread",
         "cancel_requested",
         "skipped_indices",
+        "restage_message",
+        "restage_segments_done",
     )
 
     def __init__(
@@ -98,6 +103,8 @@ class _JobInternal:
         self.worker_thread: Optional[threading.Thread] = None
         self.cancel_requested: bool = False
         self.skipped_indices: set[int] = set()
+        self.restage_message: Optional[str] = None
+        self.restage_segments_done: int = 0
         now = _iso_z()
         self.updated_at = now
         self.created_at = now
@@ -105,6 +112,7 @@ class _JobInternal:
 
 _store: Dict[str, _JobInternal] = {}
 _lock = threading.Lock()
+_restage_cv = threading.Condition()
 
 # If a job stays "running" longer than this, GET marks stale=True (operator hint).
 STALE_AFTER_SECONDS = 480
@@ -163,7 +171,7 @@ def attach_worker_thread(job_id: str, thread: threading.Thread) -> None:
 
 def _maybe_reconcile_stale_job_locked(job: _JobInternal) -> None:
     """If the worker thread died without writing a terminal state, mark failed (unblocks stale triggers)."""
-    if job.status != ObisSelectionJobStatus.running:
+    if job.status not in (ObisSelectionJobStatus.running, ObisSelectionJobStatus.waiting_for_restage):
         return
     wt = job.worker_thread
     if wt is not None and wt.is_alive():
@@ -242,11 +250,56 @@ def apply_progress(job_id: str, patch: Dict[str, Any]) -> None:
             j.fatal_error = patch.get("fatalMessage") or "session_error"
 
 
+def notify_staged_inbound_arrival() -> None:
+    """Wake OBIS job workers waiting for the next modem-dial / staged socket."""
+    with _restage_cv:
+        _restage_cv.notify_all()
+
+
+def wait_restage_signal(timeout_seconds: float) -> None:
+    """Block up to timeout_seconds until notify_staged_inbound_arrival() or spurious wakeup."""
+    with _restage_cv:
+        _restage_cv.wait(timeout=max(0.0, float(timeout_seconds)))
+
+
+def touch_job_updated(job_id: str) -> None:
+    with _lock:
+        j = _store.get(job_id)
+        if j:
+            j.updated_at = _iso_z()
+
+
+def set_waiting_for_restage(job_id: str, message: str, segments_done: int) -> None:
+    with _lock:
+        j = _store.get(job_id)
+        if not j:
+            return
+        j.status = ObisSelectionJobStatus.waiting_for_restage
+        j.restage_message = message
+        j.restage_segments_done = int(segments_done)
+        j.current_obis = None
+        j.current_index = None
+        j.updated_at = _iso_z()
+
+
+def mark_running_after_restage(job_id: str) -> None:
+    with _lock:
+        j = _store.get(job_id)
+        if not j:
+            return
+        j.status = ObisSelectionJobStatus.running
+        j.restage_message = None
+        j.updated_at = _iso_z()
+
+
 def request_cancel(job_id: str) -> bool:
     """Operator cancel: worker stops before the next wire row (current read may finish)."""
     with _lock:
         job = _store.get(job_id)
-        if not job or job.status != ObisSelectionJobStatus.running:
+        if not job or job.status not in (
+            ObisSelectionJobStatus.running,
+            ObisSelectionJobStatus.waiting_for_restage,
+        ):
             return False
         job.cancel_requested = True
         job.updated_at = _iso_z()
@@ -257,7 +310,10 @@ def skip_queued_row(job_id: str, index: int) -> tuple[bool, str]:
     """Remove one still-queued wire row from the batch (not started on wire yet)."""
     with _lock:
         job = _store.get(job_id)
-        if not job or job.status != ObisSelectionJobStatus.running:
+        if not job or job.status not in (
+            ObisSelectionJobStatus.running,
+            ObisSelectionJobStatus.waiting_for_restage,
+        ):
             return False, "JOB_NOT_RUNNING"
         if index not in job.wire_indices:
             return False, "NOT_A_WIRE_ROW"
@@ -355,7 +411,10 @@ def fail_job(job_id: str, message: str, envelope_dict: Optional[Dict[str, Any]] 
 
 def _to_view_locked(job: _JobInternal) -> ObisSelectionJobView:
     stale = False
-    if job.status == ObisSelectionJobStatus.running:
+    if job.status in (
+        ObisSelectionJobStatus.running,
+        ObisSelectionJobStatus.waiting_for_restage,
+    ):
         try:
             t0 = datetime.fromisoformat(job.updated_at.replace("Z", "+00:00"))
             dt = datetime.now(timezone.utc) - t0
@@ -375,6 +434,8 @@ def _to_view_locked(job: _JobInternal) -> ObisSelectionJobView:
         currentIndex=job.current_index,
         fatalError=job.fatal_error,
         stale=stale,
+        restageMessage=job.restage_message,
+        restageSegmentsDone=job.restage_segments_done,
         rows=list(job.row_views),
         updatedAt=job.updated_at,
         envelope=job.envelope,

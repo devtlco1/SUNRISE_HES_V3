@@ -214,6 +214,7 @@ export interface ObisSelectionJobRowPollView {
 export type ObisSelectionJobPollStatus =
   | "queued"
   | "running"
+  | "waiting_for_restage"
   | "completed"
   | "failed"
   | "cancelled"
@@ -230,6 +231,8 @@ export interface ObisSelectionJobPollView {
   currentIndex?: number | null
   fatalError?: string | null
   stale?: boolean
+  restageMessage?: string | null
+  restageSegmentsDone?: number
   rows: ObisSelectionJobRowPollView[]
   updatedAt: string
   envelope?: RuntimeResponseEnvelope<ReadObisSelectionPayload> | null

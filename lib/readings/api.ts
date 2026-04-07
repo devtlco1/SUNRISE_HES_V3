@@ -39,6 +39,7 @@ function isObisSelectionJobPollView(v: unknown): v is ObisSelectionJobPollView {
   const okStatus =
     st === "queued" ||
     st === "running" ||
+    st === "waiting_for_restage" ||
     st === "completed" ||
     st === "failed" ||
     st === "cancelled"
