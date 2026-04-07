@@ -102,14 +102,13 @@ export function AppTopbar({ className }: { className?: string }) {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <span>Operations</span>
-          <ChevronRightIcon className="size-3.5 opacity-70" aria-hidden />
-          <span className="font-medium text-foreground">{pageTitle}</span>
+        <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <span className="shrink-0">Operations</span>
+          <ChevronRightIcon className="size-3.5 shrink-0 opacity-70" aria-hidden />
+          <span className="min-w-0 truncate font-medium text-foreground">
+            {pageTitle}
+          </span>
         </div>
-        <p className="truncate text-sm font-semibold text-foreground">
-          {pageTitle}
-        </p>
       </div>
 
       <Separator orientation="vertical" className="hidden h-6 md:block" />

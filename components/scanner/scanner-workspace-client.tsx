@@ -3,7 +3,6 @@
 import { Loader2Icon, RefreshCwIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { PageHeader } from "@/components/shared/page-header"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -82,7 +81,6 @@ export function ScannerWorkspaceClient() {
   const [statusLoading, setStatusLoading] = useState(true)
   const [listenerStatus, setListenerStatus] = useState<TcpListenerStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
-  const [lastStatusOkAt, setLastStatusOkAt] = useState<number | null>(null)
   const [meters, setMeters] = useState<MeterListRow[]>([])
   const [identifyInFlight, setIdentifyInFlight] = useState(false)
   const [addInFlight, setAddInFlight] = useState(false)
@@ -101,7 +99,6 @@ export function ScannerWorkspaceClient() {
       return
     }
     setListenerStatus(r.data)
-    setLastStatusOkAt(Date.now())
   }, [])
 
   const reloadMeters = useCallback(async () => {
@@ -248,6 +245,48 @@ export function ScannerWorkspaceClient() {
     Boolean(listenerStatus) &&
     !statusError
 
+  const manualIdentifyBlockedHint = useMemo(() => {
+    if (canManualIdentify || identifyInFlight) return null
+    if (statusLoading) return null
+    if (statusError) {
+      return "Manual identify needs listener status — refresh or check the control plane → runtime link."
+    }
+    if (!listenerStatus) {
+      return "Manual identify needs listener status — refresh."
+    }
+    if (!listenerEnabled) {
+      return "Inbound listener is disabled in runtime configuration."
+    }
+    if (!listening) {
+      return "Listener is not accepting — fix bind/port on the runtime, then refresh."
+    }
+    if (triggerInProgress) {
+      return "Inbound session busy — wait for the current operation to finish."
+    }
+    if (tcpActionBusy) {
+      return "Another table or identify action is still running."
+    }
+    if (awaitingAuto > 0 && routableUnbound <= 0) {
+      return "Auto-identify still running. Manual identify is only when a session shows Manual attention (failed auto-identify)."
+    }
+    if (routableUnbound <= 0) {
+      return "Manual identify requires a live unbound inbound session after auto-identify failed (table: Manual attention)."
+    }
+    return null
+  }, [
+    canManualIdentify,
+    identifyInFlight,
+    statusLoading,
+    statusError,
+    listenerStatus,
+    listenerEnabled,
+    listening,
+    triggerInProgress,
+    tcpActionBusy,
+    awaitingAuto,
+    routableUnbound,
+  ])
+
   const bindHost =
     listenerStatus && typeof listenerStatus.bindHost === "string"
       ? listenerStatus.bindHost
@@ -260,8 +299,6 @@ export function ScannerWorkspaceClient() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Scanner" />
-
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-card px-3 py-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -286,13 +323,7 @@ export function ScannerWorkspaceClient() {
               </>
             ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <span>
-              Last update:{" "}
-              <span className="text-foreground">
-                {formatOperatorUtc(lastStatusOkAt)}
-              </span>
-            </span>
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               variant="ghost"
@@ -312,40 +343,47 @@ export function ScannerWorkspaceClient() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="h-8"
-            disabled={!canManualIdentify || identifyInFlight}
-            onClick={() => void onIdentify()}
-          >
-            {identifyInFlight ? (
-              <Loader2Icon className="mr-1 size-3.5 animate-spin" aria-hidden />
-            ) : null}
-            Manual identify
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8"
-            disabled={scanWatchActive || statusLoading}
-            onClick={() => setScanWatchActive(true)}
-          >
-            Start scan
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8"
-            disabled={!scanWatchActive}
-            onClick={() => setScanWatchActive(false)}
-          >
-            Stop scan
-          </Button>
+        <div className="flex flex-col gap-1.5 border-t border-border pt-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-8"
+              disabled={!canManualIdentify || identifyInFlight}
+              onClick={() => void onIdentify()}
+            >
+              {identifyInFlight ? (
+                <Loader2Icon className="mr-1 size-3.5 animate-spin" aria-hidden />
+              ) : null}
+              Manual identify
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              disabled={scanWatchActive || statusLoading}
+              onClick={() => setScanWatchActive(true)}
+            >
+              Start live watch
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              disabled={!scanWatchActive}
+              onClick={() => setScanWatchActive(false)}
+            >
+              Stop live watch
+            </Button>
+          </div>
+          {manualIdentifyBlockedHint ? (
+            <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+              {manualIdentifyBlockedHint}
+            </p>
+          ) : null}
         </div>
 
         {awaitingAuto > 0 ? (
