@@ -41,6 +41,21 @@ class Settings(BaseSettings):
     basic_registers_obis: str = "0.0.1.0.0.255,1.0.1.8.0.255,1.0.32.7.0.255"
     """Disconnect control (class 70) logical name for relay status read and remote disconnect/reconnect methods."""
     relay_disconnect_control_ln: str = "0.0.96.3.10.255"
+    relay_profile_default: str = Field(
+        default="standard",
+        description=(
+            "Built-in relay semantic profile id (see app.adapters.relay_semantic_profile). "
+            "Use relay_profile_overrides_json to map canonical meter serials to other profiles."
+        ),
+    )
+    relay_profile_overrides_json: str = Field(
+        default="{}",
+        description=(
+            'JSON object: {"<canonicalSerial>":"<profileId>"}. '
+            'Example for meters that report outputState=false with controlState=2 after reconnect: '
+            '{"202402240289":"rcs_output_false_cs2_as_on"}.'
+        ),
+    )
     """Association LN logical name whose attribute 2 (object list) is read for discovery."""
     discovery_association_ln: str = "0.0.40.0.0.255"
     """Directory for JSON discovery snapshots (per-meter subfolders). Default under sidecar `data/`."""

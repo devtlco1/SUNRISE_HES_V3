@@ -132,6 +132,14 @@ class RelayControlPayload(BaseModel):
         default=None,
         description="When set, a COSEM method was invoked (e.g. 1=remote disconnect, 2=remote reconnect).",
     )
+    relayProfileId: Optional[str] = Field(
+        default=None,
+        description="Semantic profile used to interpret outputState/controlState (per-meter via env overrides).",
+    )
+    relayDiagnostics: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Structured relay read/verify evidence (bounded); compare across meters.",
+    )
 
 
 class DiscoveredObjectRow(BaseModel):

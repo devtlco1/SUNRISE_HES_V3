@@ -665,12 +665,26 @@ export function ReadingsWorkspaceClient() {
       : { label: "OFF?", variant: "warning" as const }
   })()
 
+  const relayDiagHint =
+    lastRelayPayload?.relayDiagnostics &&
+    typeof lastRelayPayload.relayDiagnostics === "object"
+      ? (() => {
+          const d = lastRelayPayload.relayDiagnostics as Record<string, unknown>
+          const rule = typeof d.interpretationRule === "string" ? d.interpretationRule : ""
+          const prof = lastRelayPayload.relayProfileId
+          const bits = [prof ? `profile=${prof}` : "", rule ? `rule=${rule}` : ""].filter(
+            Boolean
+          )
+          return bits.length ? ` ${bits.join(" ")}` : ""
+        })()
+      : ""
+
   const relayBadgeTitle =
-    relayConfidence === "confirmed"
+    (relayConfidence === "confirmed"
       ? "Relay state verified on wire (disconnect-control read)."
       : relayConfidence === "unconfirmed"
         ? "Not fully confirmed — payload reflects last response; use Read status."
-        : "Relay state unknown — use Read status."
+        : "Relay state unknown — use Read status.") + relayDiagHint
 
   const triggerRecord =
     listenerStatus?.lastTcpListenerTrigger &&

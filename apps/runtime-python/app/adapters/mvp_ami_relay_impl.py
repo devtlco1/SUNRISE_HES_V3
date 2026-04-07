@@ -16,6 +16,12 @@ from app.adapters.mvp_ami_shared import (
     channel_spec_is_tcp,
     mvp_ami_bootstrap,
 )
+from app.adapters.relay_semantic_profile import (
+    RELAY_PROFILE_STANDARD,
+    normalize_relay_disconnect_control_row,
+    relay_diagnostics_for_command_verify,
+    resolve_relay_profile_id,
+)
 from app.config import Settings, get_settings
 from app.schemas.envelope import (
     RelayControlPayload,
@@ -172,37 +178,24 @@ def _parse_relay_state_from_row(row: dict) -> str:
     return "unknown"
 
 
-def _relay_state_from_disconnect_control_row(row: dict) -> str:
-    """Row from _read_disconnect_control_row: output_state (bool) and/or control_state (int enum)."""
-    if row.get("error"):
-        return "unknown"
-    ob = row.get("output_state")
-    if isinstance(ob, bool):
-        return "on" if ob else "off"
-    cs = row.get("control_state")
-    if cs is not None and isinstance(cs, (int, float)) and not isinstance(cs, bool):
-        ci = int(cs)
-        # Gurux ControlState: DISCONNECTED=0, CONNECTED=1, READY_FOR_RECONNECTION=2 (still off).
-        if ci == 1:
-            return "on"
-        if ci in (0, 2):
-            return "off"
-    return _parse_relay_state_from_row(row)
-
-
-def _relay_state_and_raw_from_row(row: dict) -> Tuple[str, str]:
+def _relay_state_and_raw_from_row(
+    row: dict,
+    *,
+    meter_serial: str = "",
+    profile_id: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Backward-compatible state + raw display. When strategy is disconnect_control and meter_serial
+    is set, uses relay profile resolution; otherwise standard profile only.
+    """
     if not isinstance(row, dict):
         return "unknown", ""
     if row.get("strategy") == "disconnect_control":
-        st = _relay_state_from_disconnect_control_row(row)
-        raw = str(row.get("value_str") or "").strip()
-        if not raw:
-            parts = []
-            if "output_state" in row and row.get("output_state") is not None:
-                parts.append(f"outputState={row.get('output_state')!r}")
-            if "control_state" in row and row.get("control_state") is not None:
-                parts.append(f"controlState={row.get('control_state')!r}")
-            raw = "; ".join(parts) or str(row.get("value") or "")
+        mid = meter_serial or ""
+        pid = profile_id or (resolve_relay_profile_id(mid) if mid else RELAY_PROFILE_STANDARD)
+        st, raw, _diag = normalize_relay_disconnect_control_row(
+            row, profile_id=pid, meter_serial=mid or "unknown"
+        )
         return st, raw
     st = _parse_relay_state_from_row(row)
     raw = str(row.get("value_str") or row.get("value") or "").strip()
@@ -239,9 +232,16 @@ def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln:
     row: dict[str, Any] = {
         "strategy": "disconnect_control",
         "error": None,
+        "logical_name": ln,
+        "attr2_ok": False,
+        "attr3_ok": False,
+        "attr2_err": None,
+        "attr3_err": None,
     }
 
     _v2, e2 = meter_client._gurux_read_attribute(transport, gx, dc, 2)
+    row["attr2_ok"] = e2 is None
+    row["attr2_err"] = str(e2) if e2 else None
     out_b = getattr(dc, "outputState", None)
     log.info(
         "RELAY_STATUS_DEBUG ln=%s attr2_ok=%s attr2_err=%s attr2_gurux_return=%r attr2_gurux_return_type=%s "
@@ -256,6 +256,8 @@ def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln:
     )
 
     _v3, e3 = meter_client._gurux_read_attribute(transport, gx, dc, 3)
+    row["attr3_ok"] = e3 is None
+    row["attr3_err"] = str(e3) if e3 else None
     cs = getattr(dc, "controlState", None)
     log.info(
         "RELAY_STATUS_DEBUG ln=%s attr3_ok=%s attr3_err=%s attr3_gurux_return=%r attr3_gurux_return_type=%s "
@@ -278,6 +280,8 @@ def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln:
 
     if e2 is None and isinstance(out_b, bool):
         row["output_state"] = out_b
+        if ci is not None:
+            row["control_state"] = ci
         row["value"] = out_b
         row["value_str"] = "true" if out_b else "false"
         log.info(
@@ -289,6 +293,8 @@ def _read_disconnect_control_row(meter_client: Any, transport: Any, gx: Any, ln:
         return row
 
     if e3 is None and ci is not None:
+        if isinstance(out_b, bool):
+            row["output_state"] = out_b
         row["control_state"] = ci
         row["value"] = ci
         row["value_str"] = str(cs)
@@ -363,13 +369,38 @@ def _finalize_relay_read_status(
             finished=finished,
             message=f"{message_prefix}: disconnect-control read failed ({row.get('error')}).",
             code="RELAY_STATUS_DISCONNECT_READ_FAILED",
-            details={**(fail_details or {}), "detail": row.get("error"), "logicalName": ln},
+            details={
+                **(fail_details or {}),
+                "detail": row.get("error"),
+                "logicalName": ln,
+                "relayProfileId": resolve_relay_profile_id(request.meterId),
+            },
             transport_attempted=transport_attempted,
             association_attempted=association_attempted,
         )
-    st, raw = _relay_state_and_raw_from_row(row)
+    profile_id = resolve_relay_profile_id(request.meterId)
+    if row.get("strategy") == "disconnect_control":
+        st, raw, diag = normalize_relay_disconnect_control_row(
+            row, profile_id=profile_id, meter_serial=request.meterId
+        )
+    else:
+        st, raw = _relay_state_and_raw_from_row(
+            row, meter_serial=request.meterId, profile_id=profile_id
+        )
+        diag = {
+            "targetMeterSerial": request.meterId.strip(),
+            "relayProfileId": profile_id,
+            "interpretationRule": "non_disconnect_control_row",
+            "normalizedRelayState": st,
+        }
+    if isinstance(fail_details, dict):
+        for k in ("transportMode", "tcpEndpoint"):
+            if k in fail_details and fail_details[k] is not None:
+                diag[k] = fail_details[k]
     ok_wire = st != "unknown"
     chosen_detail = detail_ok if ok_wire else detail_unverified
+    diag["verifiedOnWire"] = ok_wire
+    diag["detailCode"] = chosen_detail
     log.info(
         "RELAY_STATUS_DEBUG meterId=%s ln=%s outcome=ok normalized_relayState=%s detail_code=%s raw_display=%r",
         request.meterId,
@@ -378,10 +409,26 @@ def _finalize_relay_read_status(
         chosen_detail,
         raw,
     )
+    log.info(
+        "relay_read_status_normalize",
+        extra={
+            "meter_id": request.meterId,
+            "ln": ln,
+            "relay_profile_id": profile_id,
+            "normalized_relay_state": st,
+            "interpretation_rule": diag.get("interpretationRule"),
+            "output_state_bool": diag.get("outputStateBool"),
+            "control_state_int": diag.get("controlStateInt"),
+            "detail_code": chosen_detail,
+            "verified_on_wire": ok_wire,
+        },
+    )
     payload = RelayControlPayload(
         relayState=st,  # type: ignore[arg-type]
         rawDisplay=raw or None,
         logicalName=ln,
+        relayProfileId=profile_id,
+        relayDiagnostics=diag,
     )
     ep = f" ({endpoint_note})" if endpoint_note else ""
     return _relay_ok(
@@ -1003,6 +1050,7 @@ def _relay_method_inbound(
     expected_state: str,
 ) -> RuntimeResponseEnvelope:
     settings = get_settings()
+    profile_id = resolve_relay_profile_id(request.meterId, settings)
     started = datetime.now(timezone.utc)
     boot = mvp_ami_bootstrap(settings, None)
     if isinstance(boot, MvpAmiBootstrapFailure):
@@ -1058,7 +1106,12 @@ def _relay_method_inbound(
             finished=finished,
             message=f"Association failed before relay method: {errc}",
             code="RELAY_ASSOC_FAILED",
-            details={"phase": errc, "tcpEndpoint": remote_endpoint, "transportMode": "tcp_inbound"},
+            details={
+                "phase": errc,
+                "tcpEndpoint": remote_endpoint,
+                "transportMode": "tcp_inbound",
+                "relayProfileId": profile_id,
+            },
             transport_attempted=True,
             association_attempted=True,
         )
@@ -1069,12 +1122,22 @@ def _relay_method_inbound(
     st_post = "unknown"
     raw_post = ""
     post_read_err: Optional[str] = None
+    diag: dict[str, Any]
     if ok_m and gx is not None:
         post_row = _read_disconnect_control_row(client, transport, gx, ln)
         post_read_err = post_row.get("error")
-        st_post, raw_post = _relay_state_and_raw_from_row(post_row)
+        st_post, raw_post, diag = normalize_relay_disconnect_control_row(
+            post_row, profile_id=profile_id, meter_serial=request.meterId
+        )
     elif ok_m:
         post_read_err = "no_gurux_context_for_post_read"
+        diag = {
+            "targetMeterSerial": request.meterId.strip(),
+            "relayProfileId": profile_id,
+            "disconnectControlReadError": post_read_err,
+            "interpretationRule": "no_gurux_context",
+            "normalizedRelayState": "unknown",
+        }
 
     if gx is not None:
         try:
@@ -1096,6 +1159,7 @@ def _relay_method_inbound(
                 "detail": em,
                 "tcpEndpoint": remote_endpoint,
                 "transportMode": "tcp_inbound",
+                "relayProfileId": profile_id,
             },
             transport_attempted=True,
             association_attempted=True,
@@ -1137,18 +1201,36 @@ def _relay_method_inbound(
             f"post-read confirms {st_post!r}."
         )
 
+    full_diag = relay_diagnostics_for_command_verify(
+        diag,
+        expected_state=expected_state,
+        verified=verified,
+        detail_code=detail_code,
+        operation=operation,
+        method_index=method_index,
+        method_detail=str(em).strip() if em else None,
+    )
+    full_diag["tcpEndpoint"] = remote_endpoint
+    full_diag["transportMode"] = "tcp_inbound"
+    full_diag["relayMethodLabel"] = label
+
     log.info(
         "relay_method_inbound_post_verify",
         extra={
             "meter_id": request.meterId,
             "operation": operation,
             "method_index": method_index,
+            "relay_profile_id": profile_id,
             "expected_state": expected_state,
             "post_relay_state": st_post,
+            "interpretation_rule": diag.get("interpretationRule"),
+            "output_state_bool": diag.get("outputStateBool"),
+            "control_state_int": diag.get("controlStateInt"),
             "post_read_error": post_read_err,
             "raw_display": (raw_post or "")[:200],
             "verified_on_wire": verified,
             "detail_code": detail_code,
+            "verification_disagrees": full_diag.get("verificationDisagreesWithExpected"),
             "tcp_endpoint": remote_endpoint,
         },
     )
@@ -1158,6 +1240,8 @@ def _relay_method_inbound(
         logicalName=ln,
         methodExecuted=method_index,
         rawDisplay=raw_post or None,
+        relayProfileId=profile_id,
+        relayDiagnostics=full_diag,
     )
     return _relay_ok(
         meter_id=request.meterId,

@@ -350,4 +350,8 @@ export interface RelayControlPayload {
   rawDisplay?: string
   logicalName?: string
   methodExecuted?: number
+  /** Semantic profile id from runtime (per-meter overrides via sidecar env). */
+  relayProfileId?: string
+  /** Structured evidence for outputState/controlState interpretation (bounded). */
+  relayDiagnostics?: Record<string, unknown>
 }
