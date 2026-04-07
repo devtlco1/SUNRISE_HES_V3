@@ -1,6 +1,6 @@
 "use client"
 
-import { RefreshCwIcon } from "lucide-react"
+import { Loader2Icon, RefreshCwIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { PageHeader } from "@/components/shared/page-header"
@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorUtc } from "@/lib/format/operator-datetime"
 import {
   fetchTcpListenerStatus,
   postTcpListenerReadIdentity,
@@ -23,10 +24,16 @@ import {
 import { serialAlreadyRegistered } from "@/lib/meters/create-from-serial"
 import type { MeterListRow } from "@/types/meter"
 
-const POLL_MS = 4000
+const POLL_SLOW_MS = 4000
+const POLL_FAST_MS = 1000
 
 function boolish(v: unknown): boolean {
   return v === true || v === "true" || v === 1
+}
+
+function formatListenerMode(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) return "—"
+  return raw.trim().replace(/_/g, " ")
 }
 
 type ParsedStagedSession = {
@@ -75,11 +82,15 @@ export function ScannerWorkspaceClient() {
   const [statusLoading, setStatusLoading] = useState(true)
   const [listenerStatus, setListenerStatus] = useState<TcpListenerStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
+  const [lastStatusOkAt, setLastStatusOkAt] = useState<number | null>(null)
   const [meters, setMeters] = useState<MeterListRow[]>([])
-  const [busy, setBusy] = useState(false)
+  const [identifyInFlight, setIdentifyInFlight] = useState(false)
+  const [addInFlight, setAddInFlight] = useState(false)
+  const [refreshBusy, setRefreshBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [identifyState, setIdentifyState] = useState<"idle" | "ok" | "error">("idle")
   const [lastIdentifyAux, setLastIdentifyAux] = useState<string | null>(null)
+  const [scanWatchActive, setScanWatchActive] = useState(false)
 
   const loadStatus = useCallback(async (signal?: AbortSignal) => {
     setStatusError(null)
@@ -90,6 +101,7 @@ export function ScannerWorkspaceClient() {
       return
     }
     setListenerStatus(r.data)
+    setLastStatusOkAt(Date.now())
   }, [])
 
   const reloadMeters = useCallback(async () => {
@@ -115,12 +127,13 @@ export function ScannerWorkspaceClient() {
     return () => ac.abort()
   }, [loadStatus])
 
+  const pollMs = scanWatchActive ? POLL_FAST_MS : POLL_SLOW_MS
   useEffect(() => {
     const id = window.setInterval(() => {
       loadStatus().catch(() => {})
-    }, POLL_MS)
+    }, pollMs)
     return () => window.clearInterval(id)
-  }, [loadStatus])
+  }, [loadStatus, pollMs])
 
   const triggerInProgress = listenerStatus
     ? boolish(listenerStatus.sessionTriggerInProgress)
@@ -161,7 +174,7 @@ export function ScannerWorkspaceClient() {
       )
       return
     }
-    setBusy(true)
+    setIdentifyInFlight(true)
     setIdentifyState("idle")
     try {
       const r = await postTcpListenerReadIdentity("inbound-scanner")
@@ -184,7 +197,7 @@ export function ScannerWorkspaceClient() {
       setIdentifyState("ok")
       await reloadMeters()
     } finally {
-      setBusy(false)
+      setIdentifyInFlight(false)
       await loadStatus()
     }
   }
@@ -193,7 +206,7 @@ export function ScannerWorkspaceClient() {
     const s = serial.trim()
     if (!s) return
     setActionError(null)
-    setBusy(true)
+    setAddInFlight(true)
     try {
       const res = await fetch("/api/meters", {
         method: "POST",
@@ -211,100 +224,147 @@ export function ScannerWorkspaceClient() {
       }
       await reloadMeters()
     } finally {
-      setBusy(false)
+      setAddInFlight(false)
     }
   }
 
-  const triggerRecord =
-    listenerStatus?.lastTcpListenerTrigger &&
-    typeof listenerStatus.lastTcpListenerTrigger === "object"
-      ? (listenerStatus.lastTcpListenerTrigger as Record<string, unknown>)
-      : null
+  async function onRefreshStatus() {
+    setRefreshBusy(true)
+    try {
+      await loadStatus()
+    } finally {
+      setRefreshBusy(false)
+    }
+  }
+
+  const tcpActionBusy = identifyInFlight || addInFlight
 
   const canManualIdentify =
     routableUnbound > 0 &&
     !triggerInProgress &&
-    !busy &&
-    !statusLoading &&
-    listenerEnabled
+    !tcpActionBusy &&
+    listenerEnabled &&
+    listening &&
+    Boolean(listenerStatus) &&
+    !statusError
+
+  const bindHost =
+    listenerStatus && typeof listenerStatus.bindHost === "string"
+      ? listenerStatus.bindHost
+      : "—"
+  const bindPort =
+    listenerStatus && typeof listenerStatus.bindPort === "number"
+      ? listenerStatus.bindPort
+      : "—"
+  const bindEp = `${bindHost}:${bindPort}`
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Scanner"
-        subtitle="Monitor inbound sessions; manual identify only when auto-identify failed."
-      />
+      <PageHeader title="Scanner" />
 
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-muted-foreground">Listener</span>
-        {statusLoading ? (
-          <span className="text-muted-foreground">…</span>
-        ) : statusError ? (
-          <span className="text-destructive">
-            {statusError === READINGS_FETCH_NETWORK_ERROR ? "Status unreachable" : statusError}
-          </span>
-        ) : listenerStatus ? (
-          <>
-            <StatusBadge variant={listenerEnabled ? "success" : "warning"}>
-              {listenerEnabled ? "on" : "off"}
-            </StatusBadge>
-            <StatusBadge variant={listening ? "success" : "danger"}>
-              {listening ? "listen" : "down"}
-            </StatusBadge>
-            <span className="font-mono text-[11px]">
-              {String(listenerStatus.bindHost)}:{String(listenerStatus.bindPort)}
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-card px-3 py-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {statusLoading ? (
+              <StatusBadge variant="neutral">…</StatusBadge>
+            ) : statusError ? (
+              <span className="text-xs text-destructive">
+                {statusError === READINGS_FETCH_NETWORK_ERROR ? "Status unreachable" : statusError}
+              </span>
+            ) : listenerStatus ? (
+              <>
+                <StatusBadge variant={listenerEnabled ? "success" : "warning"}>
+                  {listenerEnabled ? "on" : "off"}
+                </StatusBadge>
+                <StatusBadge variant={listening ? "success" : "danger"}>
+                  {listening ? "listen" : "down"}
+                </StatusBadge>
+                <span className="text-[11px] text-muted-foreground">
+                  {formatListenerMode(listenerStatus.listenerMode)}
+                </span>
+                <span className="font-mono text-[11px] text-foreground">{bindEp}</span>
+              </>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span>
+              Last update:{" "}
+              <span className="text-foreground">
+                {formatOperatorUtc(lastStatusOkAt)}
+              </span>
             </span>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 px-2"
-              onClick={() => {
-                setStatusLoading(true)
-                loadStatus().finally(() => setStatusLoading(false))
-              }}
+              className="h-7 gap-1 px-2 text-muted-foreground"
+              disabled={statusLoading || refreshBusy}
+              onClick={() => void onRefreshStatus()}
+              aria-label="Refresh listener status"
             >
-              <RefreshCwIcon className="size-3.5" />
+              {refreshBusy ? (
+                <Loader2Icon className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCwIcon className="size-3.5" aria-hidden />
+              )}
+              Refresh
             </Button>
-          </>
-        ) : null}
-      </div>
+          </div>
+        </div>
 
-      {triggerRecord ? (
-        <p className="font-mono text-[11px] text-muted-foreground">
-          Last: {String(triggerRecord.operation)} ok={String(triggerRecord.ok)}{" "}
-          {String(triggerRecord.detailCode ?? "")}
-        </p>
-      ) : null}
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-8"
+            disabled={!canManualIdentify || identifyInFlight}
+            onClick={() => void onIdentify()}
+          >
+            {identifyInFlight ? (
+              <Loader2Icon className="mr-1 size-3.5 animate-spin" aria-hidden />
+            ) : null}
+            Manual identify
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={scanWatchActive || statusLoading}
+            onClick={() => setScanWatchActive(true)}
+          >
+            Start scan
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={!scanWatchActive}
+            onClick={() => setScanWatchActive(false)}
+          >
+            Stop scan
+          </Button>
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          disabled={!canManualIdentify}
-          onClick={() => void onIdentify()}
-        >
-          Manual identify (recovery)
-        </Button>
         {awaitingAuto > 0 ? (
-          <span className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Auto-identifying… ({awaitingAuto})
-          </span>
+          </p>
         ) : null}
         {identifyState === "error" ? (
-          <span className="text-xs text-destructive">Identify failed</span>
+          <p className="text-xs text-destructive">Identify failed</p>
         ) : identifyState === "ok" ? (
-          <span className="text-xs text-muted-foreground">Manual bind OK</span>
+          <p className="text-xs text-muted-foreground">Manual bind OK</p>
         ) : null}
         {lastIdentifyAux ? (
-          <span className="font-mono text-[10px] text-muted-foreground">
+          <p className="font-mono text-[10px] text-muted-foreground">
             Aux 0.0.96.1.1.255: {lastIdentifyAux}
-          </span>
+          </p>
         ) : null}
+        {actionError ? <p className="text-xs text-destructive">{actionError}</p> : null}
       </div>
-
-      {actionError ? <p className="text-xs text-destructive">{actionError}</p> : null}
 
       <div className="overflow-auto rounded-lg border border-border bg-card">
         <Table>
@@ -325,7 +385,7 @@ export function ScannerWorkspaceClient() {
                   colSpan={6}
                   className="text-xs text-muted-foreground"
                 >
-                  No inbound connections.
+                  No inbound sessions — listener waits for modem connect.
                 </TableCell>
               </TableRow>
             ) : (
@@ -342,8 +402,8 @@ export function ScannerWorkspaceClient() {
                     <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-xs whitespace-normal break-all">
                       {ep}
                     </TableCell>
-                    <TableCell className="max-w-[min(10rem,24vw)] align-top font-mono text-[10px] whitespace-normal break-words text-muted-foreground">
-                      {row.acceptedAtUtc}
+                    <TableCell className="max-w-[min(14rem,30vw)] align-top text-xs whitespace-normal break-words text-muted-foreground">
+                      {formatOperatorUtc(row.acceptedAtUtc)}
                     </TableCell>
                     <TableCell className="max-w-[min(11rem,26vw)] align-top text-xs">
                       <div className="font-medium">{row.operatorLabel ?? "—"}</div>
@@ -369,9 +429,12 @@ export function ScannerWorkspaceClient() {
                       <Button
                         type="button"
                         size="sm"
-                        disabled={!serial || !!reg || busy}
+                        disabled={!serial || !!reg || tcpActionBusy}
                         onClick={() => void onAddSerial(serial!)}
                       >
+                        {addInFlight ? (
+                          <Loader2Icon className="mr-1 size-3.5 animate-spin" aria-hidden />
+                        ) : null}
                         Add
                       </Button>
                     </TableCell>
