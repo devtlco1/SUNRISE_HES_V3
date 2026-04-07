@@ -16,25 +16,13 @@ import {
 } from "@/components/ui/table"
 import {
   fetchTcpListenerStatus,
-  postReadObisSelectionTcpListener,
+  postTcpListenerReadIdentity,
   READINGS_FETCH_NETWORK_ERROR,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
 import { serialAlreadyRegistered } from "@/lib/meters/create-from-serial"
 import type { MeterListRow } from "@/types/meter"
-import type { ObisSelectionItemInput } from "@/types/runtime"
-
 const POLL_MS = 4000
-
-const DEVICE_ID_OBIS_ITEMS: ObisSelectionItemInput[] = [
-  {
-    obis: "0.0.96.1.0.255",
-    description: "Device ID #1",
-    objectType: "Data",
-    classId: 1,
-    attribute: 2,
-  },
-]
 
 function boolish(v: unknown): boolean {
   return v === true || v === "true" || v === 1
@@ -138,21 +126,19 @@ export function ScannerWorkspaceClient() {
     setBusy(true)
     setIdentifyState("idle")
     try {
-      const r = await postReadObisSelectionTcpListener({
-        meterId: "inbound-scanner",
-        selectedItems: DEVICE_ID_OBIS_ITEMS,
-      })
+      const r = await postTcpListenerReadIdentity("inbound-scanner")
       if (!r.ok) {
         setIdentifyState("error")
         setActionError(r.error)
         return
       }
-      const rows = r.data.payload?.rows
-      const row = rows?.find((x) => x.obis === "0.0.96.1.0.255")
-      const val = (row?.value ?? "").trim()
+      const p = r.data.payload
+      const val =
+        (p?.serialNumber ?? "").trim() ||
+        (p?.logicalDeviceName ?? "").trim()
       if (!val) {
         setIdentifyState("error")
-        setActionError(row?.error ?? "No value for 0.0.96.1.0.255")
+        setActionError("No serial / logical device from identity read")
         return
       }
       setIdentifiedSerial(val)

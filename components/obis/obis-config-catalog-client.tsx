@@ -1,10 +1,10 @@
 "use client"
 
-import { FileStackIcon, PencilIcon, PlusIcon, SaveIcon, TrashIcon } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { DownloadIcon, PencilIcon, PlusIcon, SaveIcon, TrashIcon, UploadIcon } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { PageHeader } from "@/components/shared/page-header"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Sheet,
@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import type { CatalogImportSummary } from "@/lib/obis/catalog-import-upsert"
 import { packLabel } from "@/lib/obis/types"
 import type { ObisCatalogEntry } from "@/lib/obis/types"
 import { cn } from "@/lib/utils"
@@ -49,6 +50,7 @@ export function ObisConfigCatalogClient() {
   const [saving, setSaving] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importInfo, setImportInfo] = useState<string | null>(null)
+  const importFileRef = useRef<HTMLInputElement>(null)
   const [packFilter, setPackFilter] = useState<string | "all">("all")
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ObisCatalogEntry | null>(null)
@@ -166,33 +168,63 @@ export function ObisConfigCatalogClient() {
     }
   }
 
-  async function importSt34Manual() {
-    if (
-      !confirm(
-        "Import ST34-HW08 manual OBIS from data/obis-catalogs/st34-hw08-user-manual-3ph.yaml? Rows already in the catalog are left unchanged (no duplicates).",
-      )
-    ) {
-      return
-    }
+  function openImportPicker() {
+    importFileRef.current?.click()
+  }
+
+  async function onImportFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
     setImporting(true)
     setImportInfo(null)
     setSaveError(null)
     try {
-      const r = await fetch("/api/obis-catalog/import-st34-hw08", { method: "POST" })
-      const data = (await r.json()) as {
-        ok?: boolean
-        addedCount?: number
-        skippedCount?: number
-        error?: string
-        message?: string
-      }
-      if (!r.ok || !data.ok) {
-        setImportInfo(data.message || data.error || "Import failed")
+      const text = await file.text()
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text) as unknown
+      } catch {
+        setImportInfo("Invalid JSON file.")
         return
       }
-      setImportInfo(
-        `Imported: added ${data.addedCount ?? 0} OBIS, skipped ${data.skippedCount ?? 0} (already present). Reloaded from disk.`,
-      )
+      const r = await fetch("/api/obis-catalog/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed),
+      })
+      const data = (await r.json()) as {
+        ok?: boolean
+        error?: string
+        summary?: CatalogImportSummary
+      }
+      if (!r.ok || !data.ok) {
+        const s = data.summary
+        const extra =
+          s && s.validationErrors?.length
+            ? ` ${s.validationErrors
+                .slice(0, 4)
+                .map((x) => `[${x.index}] ${x.message}`)
+                .join("; ")}`
+            : ""
+        setImportInfo((data.error ?? "Import failed") + extra)
+        return
+      }
+      const s = data.summary
+      if (s) {
+        const errSample =
+          s.validationErrors.length > 0
+            ? ` Errors: ${s.validationErrors
+                .slice(0, 3)
+                .map((x) => `#${x.index} ${x.message}`)
+                .join("; ")}`
+            : ""
+        setImportInfo(
+          `Applied: inserted ${s.inserted}, updated ${s.updated}, disabled ${s.disabled}, rejected ${s.rejected}.${errSample}`
+        )
+      } else {
+        setImportInfo("Import applied.")
+      }
       await load()
     } catch {
       setImportInfo("Import failed")
@@ -205,21 +237,44 @@ export function ObisConfigCatalogClient() {
     <div className="space-y-4">
       <PageHeader
         title="OBIS catalog"
-        subtitle="Persisted in data/obis-catalog.json. Save to apply. ST34 manual YAML merges via Import (existing OBIS preserved)."
+        subtitle="Server file data/obis-catalog.json — Save commits edits; template import upserts by OBIS."
         actions={
           <div className="flex flex-wrap gap-2">
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(e) => void onImportFileSelected(e)}
+            />
             <Button type="button" size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
               Reload
             </Button>
+            <a
+              href="/api/obis-catalog/template"
+              download
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              <DownloadIcon className="mr-1 size-3.5" />
+              Template
+            </a>
+            <a
+              href="/api/obis-catalog/export"
+              download
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              <DownloadIcon className="mr-1 size-3.5" />
+              Export
+            </a>
             <Button
               type="button"
               size="sm"
               variant="secondary"
               disabled={importing || loading}
-              onClick={() => void importSt34Manual()}
+              onClick={openImportPicker}
             >
-              <FileStackIcon className="mr-1 size-3.5" />
-              Import ST34 manual
+              <UploadIcon className="mr-1 size-3.5" />
+              Import
             </Button>
             <Button type="button" size="sm" onClick={openAdd}>
               <PlusIcon className="mr-1 size-3.5" />

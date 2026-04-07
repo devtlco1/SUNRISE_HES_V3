@@ -201,7 +201,16 @@ def apply_progress(job_id: str, patch: Dict[str, Any]) -> None:
         if "currentObis" in patch:
             j.current_obis = patch.get("currentObis")
         if "currentIndex" in patch:
-            j.current_index = patch.get("currentIndex")
+            idx = patch.get("currentIndex")
+            j.current_index = idx
+            if isinstance(idx, int):
+                for rv in j.row_views:
+                    if rv.phase == "running" and rv.row is None:
+                        rv.phase = "queued"
+                for rv in j.row_views:
+                    if rv.index == idx and rv.row is None:
+                        rv.phase = "running"
+                        break
         if "completedWire" in patch:
             j.completed_wire = int(patch["completedWire"])
         if "rowDoneIndex" in patch and "row" in patch:
@@ -248,6 +257,14 @@ def complete_job(job_id: str, envelope_dict: Dict[str, Any]) -> None:
                     continue
                 for rv in j.row_views:
                     if rv.index == i:
+                        if (
+                            rv.phase == "ok"
+                            and rv.row
+                            and isinstance(rv.row, dict)
+                            and rv.row.get("status") == "ok"
+                            and r.get("status") == "error"
+                        ):
+                            break
                         st = r.get("status") or "error"
                         if st == "not_attempted":
                             rv.phase = "not_attempted"

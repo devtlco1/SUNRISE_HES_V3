@@ -2,6 +2,7 @@
 
 import { AlertCircleIcon, RefreshCwIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { flushSync } from "react-dom"
 
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
@@ -32,8 +33,8 @@ import {
   packKeysForCatalogRows,
 } from "@/lib/obis/catalog-seed"
 import {
+  mergeObisJobPollIntoRowState,
   mergeObisSelectionIntoRowState,
-  readObisSelectionPayloadFromJobPollRows,
   type ObisRowReadState,
 } from "@/lib/obis/merge-read-results"
 import { obisSelectionRowSupportedV1Catalog } from "@/lib/obis/obis-selection-v1-client"
@@ -50,10 +51,29 @@ import type {
 import { cn } from "@/lib/utils"
 
 const POLL_MS = 6000
-const OBIS_JOB_POLL_MS = 600
+const OBIS_JOB_POLL_MS = 280
 const OBIS_JOB_MAX_MS = 46 * 60_000
 
 type TransportMode = "inbound" | "direct"
+
+function obisRowStatusBadgeVariant(
+  st: ObisRowReadState["status"]
+): "success" | "danger" | "neutral" | "warning" | "info" {
+  switch (st) {
+    case "ok":
+      return "success"
+    case "error":
+      return "danger"
+    case "running":
+    case "pending":
+      return "info"
+    case "unsupported":
+    case "not_attempted":
+      return "warning"
+    default:
+      return "neutral"
+  }
+}
 
 function boolish(v: unknown): boolean {
   return v === true || v === "true" || v === 1
@@ -272,12 +292,9 @@ export function ReadingsWorkspaceClient() {
           }
           const snap = jr.data
           last = snap
-          setRowState((p) =>
-            mergeObisSelectionIntoRowState(
-              p,
-              readObisSelectionPayloadFromJobPollRows(snap.rows)
-            )
-          )
+          flushSync(() => {
+            setRowState((p) => mergeObisJobPollIntoRowState(p, snap))
+          })
           const wDone = snap.completedWire
           const wTot = snap.wireTotal
           const cur = snap.currentObis
@@ -291,14 +308,19 @@ export function ReadingsWorkspaceClient() {
             if (snap.envelope) {
               setLastEnv(snap.envelope as RuntimeResponseEnvelope<ReadObisSelectionPayload>)
             }
+            const okWire = snap.rows.filter((r) => r.row?.status === "ok").length
             if (snap.fatalError) {
-              setActionError(snap.fatalError)
-            } else if (snap.envelope && !snap.envelope.ok) {
               setActionError(
-                snap.envelope.error?.message ??
-                  snap.envelope.message ??
-                  "readObisSelection failed"
+                okWire > 0
+                  ? `Session ended after ${okWire} ok row(s). ${snap.fatalError}`
+                  : snap.fatalError
               )
+            } else if (snap.envelope && !snap.envelope.ok) {
+              const msg =
+                snap.envelope.error?.message ??
+                snap.envelope.message ??
+                "readObisSelection failed"
+              setActionError(okWire > 0 ? `Session ended after ${okWire} ok row(s). ${msg}` : msg)
             } else {
               setActionError(null)
             }
@@ -470,7 +492,7 @@ export function ReadingsWorkspaceClient() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Readings" subtitle="OBIS reads via Next → Python runtime." />
+      <PageHeader title="Readings" subtitle="Staged inbound or direct transport." />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(200px,240px)_1fr] lg:items-start">
         <aside className="rounded-lg border border-border bg-card p-3">
@@ -697,9 +719,7 @@ export function ReadingsWorkspaceClient() {
           {actionError ? (
             <p className="text-xs text-destructive">{actionError}</p>
           ) : null}
-          {busy ? (
-            <p className="text-xs text-muted-foreground">Running runtime request…</p>
-          ) : null}
+          {busy ? <p className="text-xs text-muted-foreground">Working…</p> : null}
           {obisJobProgress ? (
             <p className="text-xs text-muted-foreground">{obisJobProgress}</p>
           ) : null}
@@ -776,15 +796,7 @@ export function ReadingsWorkspaceClient() {
                       </TableCell>
                       <TableCell className="text-xs">
                         {rs?.status ? (
-                          <StatusBadge
-                            variant={
-                              rs.status === "ok"
-                                ? "success"
-                                : rs.status === "error"
-                                  ? "danger"
-                                  : "neutral"
-                            }
-                          >
+                          <StatusBadge variant={obisRowStatusBadgeVariant(rs.status)}>
                             {rs.status}
                           </StatusBadge>
                         ) : (

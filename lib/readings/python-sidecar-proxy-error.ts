@@ -20,6 +20,14 @@ export function jsonResponseForPythonSidecarHttpError(
     pythonDetail = undefined
   }
 
+  if (e.status === 409) {
+    const body =
+      pythonDetail && typeof pythonDetail === "object"
+        ? pythonDetail
+        : { error: "SESSION_BUSY", message: e.message }
+    return NextResponse.json(body, { status: 409, headers: { "Cache-Control": "no-store" } })
+  }
+
   const shared = {
     status: e.status,
     message: e.message,

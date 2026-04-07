@@ -71,6 +71,15 @@ function formatReadingsProxyFailure(parsed: unknown, status: number): string {
   return `HTTP ${status}`
 }
 
+function tcpListenerSessionBusyMessage(parsed: unknown): string {
+  if (parsed && typeof parsed === "object") {
+    const o = parsed as Record<string, unknown>
+    if (typeof o.message === "string" && o.message.trim()) return o.message.trim()
+    if (typeof o.detail === "string" && o.detail.trim()) return o.detail.trim()
+  }
+  return "Inbound modem busy — finish the current action first."
+}
+
 export async function fetchTcpListenerStatus(
   signal?: AbortSignal
 ): Promise<ReadingsApiResult<TcpListenerStatus>> {
@@ -119,6 +128,9 @@ export async function postTcpListenerReadIdentity(
     })
     const body = await parseJson(res)
     if (!res.ok) {
+      if (res.status === 409) {
+        return { ok: false, error: tcpListenerSessionBusyMessage(body), status: 409 }
+      }
       const err =
         body &&
         typeof body === "object" &&
@@ -215,6 +227,9 @@ export async function postStartTcpListenerObisSelectionJob(
     })
     const parsed = await parseJson(res)
     if (!res.ok) {
+      if (res.status === 409) {
+        return { ok: false, error: tcpListenerSessionBusyMessage(parsed), status: 409 }
+      }
       return {
         ok: false,
         error: formatReadingsProxyFailure(parsed, res.status),
@@ -276,6 +291,9 @@ export async function postReadObisSelectionTcpListener(
     })
     const parsed = await parseJson(res)
     if (!res.ok) {
+      if (res.status === 409) {
+        return { ok: false, error: tcpListenerSessionBusyMessage(parsed), status: 409 }
+      }
       return {
         ok: false,
         error: formatReadingsProxyFailure(parsed, res.status),
@@ -339,6 +357,9 @@ export async function postTcpListenerReadBasicRegisters(
     })
     const body = await parseJson(res)
     if (!res.ok) {
+      if (res.status === 409) {
+        return { ok: false, error: tcpListenerSessionBusyMessage(body), status: 409 }
+      }
       const err =
         body &&
         typeof body === "object" &&
@@ -378,6 +399,9 @@ async function postRelayReadings(
     })
     const parsed = await parseJson(res)
     if (!res.ok) {
+      if (res.status === 409) {
+        return { ok: false, error: tcpListenerSessionBusyMessage(parsed), status: 409 }
+      }
       return {
         ok: false,
         error: formatReadingsProxyFailure(parsed, res.status),

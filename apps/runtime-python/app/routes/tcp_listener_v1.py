@@ -36,6 +36,13 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/runtime/tcp-listener", tags=["tcp-listener-v1"])
 
 
+def _maybe_session_busy_json(envelope: RuntimeResponseEnvelope) -> JSONResponse | None:
+    err = envelope.error
+    if err is not None and err.code == "SESSION_BUSY":
+        return JSONResponse(status_code=409, content=envelope.model_dump(mode="json"))
+    return None
+
+
 @router.get(
     "/status",
     dependencies=[Depends(verify_service_token)],
@@ -47,32 +54,38 @@ def get_tcp_listener_status() -> Dict[str, Any]:
 
 @router.post(
     "/read-identity",
-    response_model=RuntimeResponseEnvelope,
     dependencies=[Depends(verify_service_token)],
 )
-def post_tcp_listener_read_identity(body: ReadIdentityRequest) -> RuntimeResponseEnvelope:
+def post_tcp_listener_read_identity(body: ReadIdentityRequest) -> JSONResponse:
     """
     Run read-identity on the currently staged inbound TCP socket (modem already connected).
     Does not dial outbound. Pops the staged socket for the duration of the call.
     """
     log.info("http_tcp_listener_read_identity", extra={"meter_id": body.meterId})
-    return execute_tcp_listener_read_identity(body)
+    envelope = execute_tcp_listener_read_identity(body)
+    busy = _maybe_session_busy_json(envelope)
+    if busy is not None:
+        return busy
+    return JSONResponse(content=envelope.model_dump(mode="json"))
 
 
 @router.post(
     "/read-basic-registers",
-    response_model=RuntimeResponseEnvelope,
     dependencies=[Depends(verify_service_token)],
 )
 def post_tcp_listener_read_basic_registers(
     body: ReadBasicRegistersRequest,
-) -> RuntimeResponseEnvelope:
+) -> JSONResponse:
     """
     Run read-basic-registers on the currently staged inbound TCP socket (modem already connected).
     Pops the staged socket for the duration of the call; closes it when done (same as read-identity).
     """
     log.info("http_tcp_listener_read_basic_registers", extra={"meter_id": body.meterId})
-    return execute_tcp_listener_read_basic_registers(body)
+    envelope = execute_tcp_listener_read_basic_registers(body)
+    busy = _maybe_session_busy_json(envelope)
+    if busy is not None:
+        return busy
+    return JSONResponse(content=envelope.model_dump(mode="json"))
 
 
 @router.post(
@@ -91,7 +104,9 @@ def post_tcp_listener_read_obis_selection(
         extra={"meter_id": body.meterId, "items": len(body.selectedItems)},
     )
     envelope = execute_tcp_listener_read_obis_selection(body)
-    # Avoid FastAPI response_model Union validation issues on payload variants.
+    busy = _maybe_session_busy_json(envelope)
+    if busy is not None:
+        return busy
     return JSONResponse(content=envelope.model_dump(mode="json"))
 
 
@@ -99,7 +114,7 @@ def post_tcp_listener_read_obis_selection(
     "/read-obis-selection/start",
     dependencies=[Depends(verify_service_token)],
 )
-def post_tcp_listener_read_obis_selection_start(body: ReadObisSelectionRequest) -> Dict[str, Any]:
+def post_tcp_listener_read_obis_selection_start(body: ReadObisSelectionRequest) -> JSONResponse:
     """
     Start a background sequential read-obis-selection job on the staged inbound socket.
     Returns immediately with jobId; poll GET .../job/{jobId} for progress.
@@ -108,8 +123,21 @@ def post_tcp_listener_read_obis_selection_start(body: ReadObisSelectionRequest) 
         "http_tcp_listener_read_obis_selection_start",
         extra={"meter_id": body.meterId, "items": len(body.selectedItems)},
     )
-    jid = start_tcp_listener_obis_selection_job(body)
-    return {"jobId": jid}
+    ctl = get_tcp_modem_listener()
+    if not ctl.begin_inbound_operator_action():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "SESSION_BUSY",
+                "message": "Inbound modem action already in progress.",
+            },
+        )
+    try:
+        jid = start_tcp_listener_obis_selection_job(body)
+    except Exception:
+        ctl.end_inbound_operator_action()
+        raise
+    return JSONResponse(content={"jobId": jid})
 
 
 @router.get(
@@ -134,6 +162,9 @@ def get_tcp_listener_read_obis_selection_job(job_id: str) -> JSONResponse:
 def post_tcp_listener_relay_read_status(body: ReadIdentityRequest) -> JSONResponse:
     log.info("http_tcp_listener_relay_read_status", extra={"meter_id": body.meterId})
     envelope = execute_tcp_listener_relay_read_status(body)
+    busy = _maybe_session_busy_json(envelope)
+    if busy is not None:
+        return busy
     return JSONResponse(content=envelope.model_dump(mode="json"))
 
 
@@ -144,6 +175,9 @@ def post_tcp_listener_relay_read_status(body: ReadIdentityRequest) -> JSONRespon
 def post_tcp_listener_relay_disconnect(body: ReadIdentityRequest) -> JSONResponse:
     log.info("http_tcp_listener_relay_disconnect", extra={"meter_id": body.meterId})
     envelope = execute_tcp_listener_relay_disconnect(body)
+    busy = _maybe_session_busy_json(envelope)
+    if busy is not None:
+        return busy
     return JSONResponse(content=envelope.model_dump(mode="json"))
 
 
@@ -154,4 +188,7 @@ def post_tcp_listener_relay_disconnect(body: ReadIdentityRequest) -> JSONRespons
 def post_tcp_listener_relay_reconnect(body: ReadIdentityRequest) -> JSONResponse:
     log.info("http_tcp_listener_relay_reconnect", extra={"meter_id": body.meterId})
     envelope = execute_tcp_listener_relay_reconnect(body)
+    busy = _maybe_session_busy_json(envelope)
+    if busy is not None:
+        return busy
     return JSONResponse(content=envelope.model_dump(mode="json"))

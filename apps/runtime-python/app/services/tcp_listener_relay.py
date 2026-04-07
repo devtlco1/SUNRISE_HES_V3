@@ -77,77 +77,91 @@ def _run_tcp_listener_relay(
     remote: Optional[str] = None
     teardown = "not_applicable"
 
-    with ctl.session_context():
-        try:
-            if not settings.tcp_listener_enabled:
-                teardown = "listener_disabled"
-                envelope = _fail(
-                    request,
-                    operation,
-                    started,
-                    datetime.now(timezone.utc),
-                    "TCP modem listener is disabled (set SUNRISE_RUNTIME_TCP_LISTENER_ENABLED=true).",
-                    "TCP_LISTENER_DISABLED",
-                    {"transportMode": "tcp_inbound", "listenerEnabled": False},
-                )
-                return envelope
+    if not ctl.begin_inbound_operator_action():
+        return _fail(
+            request,
+            operation,
+            started,
+            datetime.now(timezone.utc),
+            "Inbound modem action already in progress — wait for it to finish.",
+            "SESSION_BUSY",
+            {"transportMode": "tcp_inbound"},
+        )
 
-            adapter = get_runtime_adapter()
-            if not isinstance(adapter, MvpAmiRuntimeAdapter):
-                teardown = "wrong_adapter"
-                envelope = _fail(
-                    request,
-                    operation,
-                    started,
-                    datetime.now(timezone.utc),
-                    "Inbound TCP relay requires SUNRISE_RUNTIME_ADAPTER=mvp_ami.",
-                    "TCP_LISTENER_REQUIRES_MVP_AMI",
-                    {"transportMode": "tcp_inbound", "adapter": settings.adapter},
-                )
-                return envelope
-
-            sock, endpoint, _meta = ctl.take_staged_socket_for_session()
-            if sock is None:
-                teardown = "no_staged_socket"
-                finished = datetime.now(timezone.utc)
-                st = ctl.get_status_dict()
-                envelope = _fail(
-                    request,
-                    operation,
-                    started,
-                    finished,
-                    "No staged inbound TCP socket — wait for modem to connect, then retry.",
-                    "NO_STAGED_TCP_SOCKET",
-                    {
-                        "transportMode": "tcp_inbound",
-                        "listenerListening": st.get("listening"),
-                        "stagedPresent": st.get("stagedPresent"),
-                        "lastBindError": st.get("lastBindError"),
-                    },
-                )
-                return envelope
-
-            remote = endpoint
-            teardown = "server_closed_after_trigger"
+    try:
+        with ctl.session_context():
             try:
-                log.info(log_event, extra={"meter_id": request.meterId, "remote": endpoint})
-                envelope = run_on_socket(adapter, request, sock, endpoint)
-                return envelope
-            finally:
-                try:
-                    sock.close()
-                except Exception:  # noqa: BLE001
-                    pass
-        finally:
-            if envelope is not None:
-                ctl.record_tcp_listener_trigger(
-                    build_last_tcp_listener_trigger_record(
-                        operation=trigger_op,
-                        remote_endpoint=remote,
-                        envelope=envelope,
-                        socket_teardown=teardown,
+                if not settings.tcp_listener_enabled:
+                    teardown = "listener_disabled"
+                    envelope = _fail(
+                        request,
+                        operation,
+                        started,
+                        datetime.now(timezone.utc),
+                        "TCP modem listener is disabled (set SUNRISE_RUNTIME_TCP_LISTENER_ENABLED=true).",
+                        "TCP_LISTENER_DISABLED",
+                        {"transportMode": "tcp_inbound", "listenerEnabled": False},
                     )
-                )
+                    return envelope
+
+                adapter = get_runtime_adapter()
+                if not isinstance(adapter, MvpAmiRuntimeAdapter):
+                    teardown = "wrong_adapter"
+                    envelope = _fail(
+                        request,
+                        operation,
+                        started,
+                        datetime.now(timezone.utc),
+                        "Inbound TCP relay requires SUNRISE_RUNTIME_ADAPTER=mvp_ami.",
+                        "TCP_LISTENER_REQUIRES_MVP_AMI",
+                        {"transportMode": "tcp_inbound", "adapter": settings.adapter},
+                    )
+                    return envelope
+
+                sock, endpoint, _meta = ctl.take_staged_socket_for_session()
+                if sock is None:
+                    teardown = "no_staged_socket"
+                    finished = datetime.now(timezone.utc)
+                    st = ctl.get_status_dict()
+                    envelope = _fail(
+                        request,
+                        operation,
+                        started,
+                        finished,
+                        "No staged inbound TCP socket — wait for modem to connect, then retry.",
+                        "NO_STAGED_TCP_SOCKET",
+                        {
+                            "transportMode": "tcp_inbound",
+                            "listenerListening": st.get("listening"),
+                            "stagedPresent": st.get("stagedPresent"),
+                            "lastBindError": st.get("lastBindError"),
+                        },
+                    )
+                    return envelope
+
+                remote = endpoint
+                teardown = "server_closed_after_trigger"
+                try:
+                    log.info(log_event, extra={"meter_id": request.meterId, "remote": endpoint})
+                    envelope = run_on_socket(adapter, request, sock, endpoint)
+                    return envelope
+                finally:
+                    try:
+                        sock.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+            finally:
+                if envelope is not None:
+                    ctl.record_tcp_listener_trigger(
+                        build_last_tcp_listener_trigger_record(
+                            operation=trigger_op,
+                            remote_endpoint=remote,
+                            envelope=envelope,
+                            socket_teardown=teardown,
+                        )
+                    )
+    finally:
+        ctl.end_inbound_operator_action()
 
 
 def execute_tcp_listener_relay_read_status(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:

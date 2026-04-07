@@ -1,3 +1,4 @@
+import { jsonResponseForPythonSidecarHttpError } from "@/lib/readings/python-sidecar-proxy-error"
 import {
   postTcpListenerReadBasicRegistersToPythonSidecar,
   PythonSidecarHttpError,
@@ -41,15 +42,9 @@ export async function POST(req: Request) {
       )
     }
     if (e instanceof PythonSidecarHttpError) {
-      return NextResponse.json(
-        {
-          error: "PYTHON_SIDECAR_HTTP_ERROR",
-          status: e.status,
-          message: e.message,
-          body: e.bodyText.slice(0, 2000),
-        },
-        { status: 502 }
-      )
+      return jsonResponseForPythonSidecarHttpError(e, {
+        mapStatus404ToRouteMissing: true,
+      })
     }
     const msg = e instanceof Error ? e.message : "READINGS_PROXY_ERROR"
     return NextResponse.json(

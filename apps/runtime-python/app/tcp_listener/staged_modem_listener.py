@@ -51,12 +51,29 @@ class TcpModemListenerController:
     _server_sock: Optional[socket.socket] = None
     _holder_lock: threading.Lock = field(default_factory=threading.Lock)
     _session_lock: threading.Lock = field(default_factory=threading.Lock)
+    _inbound_operator_lock: threading.Lock = field(default_factory=threading.Lock)
+    _inbound_operator_busy: bool = False
     _staged_sock: Optional[socket.socket] = None
     _staged_meta: Optional[StagedSocketMeta] = None
     _last_replacement_reason: Optional[str] = None
     _last_bind_error: Optional[str] = None
     _session_in_progress: bool = False
     _last_tcp_listener_trigger: Optional[dict[str, Any]] = None
+
+    def begin_inbound_operator_action(self) -> bool:
+        """
+        Single-flight guard for staged inbound work (read/relay/job).
+        Call from route or worker entry; pair with end_inbound_operator_action() in a finally block.
+        """
+        with self._inbound_operator_lock:
+            if self._inbound_operator_busy:
+                return False
+            self._inbound_operator_busy = True
+            return True
+
+    def end_inbound_operator_action(self) -> None:
+        with self._inbound_operator_lock:
+            self._inbound_operator_busy = False
 
     def start(self) -> None:
         s = get_settings()
@@ -183,7 +200,9 @@ class TcpModemListenerController:
             "stagedSocketOpen": staged_open,
             "stagedLocalBound": meta.local_bound if meta else None,
             "lastStagedReplacementReason": rep,
-            "sessionTriggerInProgress": self._session_in_progress,
+            "sessionTriggerInProgress": bool(
+                self._session_in_progress or self._inbound_operator_busy
+            ),
             "lastTcpListenerTrigger": self._last_tcp_listener_trigger,
         }
 

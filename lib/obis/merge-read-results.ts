@@ -5,6 +5,7 @@
 import type {
   BasicRegistersPayload,
   IdentityPayload,
+  ObisSelectionJobPollView,
   ObisSelectionJobRowPollView,
   ObisSelectionRowResult,
   ReadObisSelectionPayload,
@@ -14,7 +15,14 @@ import { IDENTITY_READ_MAPPED_OBIS, SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS } from 
 
 export type ObisRowReadState = {
   result: string
-  status: "ok" | "error" | "skipped"
+  status:
+    | "ok"
+    | "error"
+    | "skipped"
+    | "pending"
+    | "running"
+    | "unsupported"
+    | "not_attempted"
   error?: string
   lastReadAt: string | null
 }
@@ -58,7 +66,8 @@ export function mergeObisSelectionIntoRowState(
   for (const r of payload.rows) {
     let st: ObisRowReadState["status"]
     if (r.status === "ok") st = "ok"
-    else if (r.status === "unsupported" || r.status === "not_attempted") st = "skipped"
+    else if (r.status === "unsupported") st = "unsupported"
+    else if (r.status === "not_attempted") st = "not_attempted"
     else st = "error"
 
     const base = (r.value ?? "").trim()
@@ -93,6 +102,98 @@ export function readObisSelectionPayloadFromJobPollRows(
     }
   }
   return { rows: list }
+}
+
+/** Merge full job poll snapshot into per-OBIS grid state (live phases + completed rows). */
+export function mergeObisJobPollIntoRowState(
+  prev: Record<string, ObisRowReadState>,
+  job: ObisSelectionJobPollView
+): Record<string, ObisRowReadState> {
+  const next = { ...prev }
+  const curObis =
+    typeof job.currentObis === "string" && job.currentObis.trim() ? job.currentObis.trim() : null
+  const terminal = job.status === "completed" || job.status === "failed"
+  const fatal = (job.fatalError ?? "").trim()
+
+  for (const rv of job.rows) {
+    const obis = rv.obis
+    const phase = (rv.phase || "").toLowerCase()
+    const row = rv.row
+    const existing = next[obis]
+
+    if (row && typeof row === "object" && typeof (row as ObisSelectionRowResult).obis === "string") {
+      const payload = mergeObisSelectionIntoRowState({}, {
+        rows: [row as ObisSelectionRowResult],
+      })
+      const cell = payload[obis]
+      if (cell) next[obis] = cell
+      continue
+    }
+
+    if (existing?.status === "ok") continue
+
+    if (phase === "running" || (!terminal && curObis === obis)) {
+      next[obis] = {
+        result: "…",
+        status: "running",
+        lastReadAt: null,
+      }
+      continue
+    }
+    if (phase === "queued") {
+      next[obis] = {
+        result: "",
+        status: "pending",
+        lastReadAt: null,
+      }
+      continue
+    }
+    if (phase === "unsupported") {
+      next[obis] = {
+        result: "",
+        status: "unsupported",
+        error: "unsupported",
+        lastReadAt: null,
+      }
+      continue
+    }
+    if (phase === "not_attempted") {
+      next[obis] = {
+        result: "",
+        status: "not_attempted",
+        error: fatal || undefined,
+        lastReadAt: null,
+      }
+      continue
+    }
+    if (phase === "error") {
+      next[obis] = {
+        result: "",
+        status: "error",
+        error: fatal || "read failed",
+        lastReadAt: null,
+      }
+    }
+  }
+
+  if (terminal && job.status === "failed" && fatal) {
+    for (const rv of job.rows) {
+      const obis = rv.obis
+      const cur = next[obis]
+      if (cur?.status === "ok") continue
+      const phase = (rv.phase || "").toLowerCase()
+      if (phase === "queued" || phase === "running") {
+        next[obis] = {
+          result: "",
+          status: "not_attempted",
+          error: fatal,
+          lastReadAt: null,
+        }
+      }
+    }
+  }
+
+  return next
 }
 
 export function mergeBasicRegistersIntoRowState(
