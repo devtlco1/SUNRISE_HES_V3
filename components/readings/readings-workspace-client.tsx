@@ -1,15 +1,22 @@
 "use client"
 
-import { AlertCircleIcon, RefreshCwIcon, XIcon } from "lucide-react"
+import {
+  AlertCircleIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  RefreshCwIcon,
+  TerminalIcon,
+  XIcon,
+} from "lucide-react"
 import type { ReactNode } from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal, flushSync } from "react-dom"
 
+import { MeterSearchCombobox } from "@/components/readings/meter-search-combobox"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Table,
   TableBody,
@@ -69,6 +76,52 @@ function relayConfidenceFromEnvelope(
   if (!env?.ok) return "unknown"
   if (env.diagnostics?.verifiedOnWire) return "confirmed"
   return "unconfirmed"
+}
+
+type PerMeterReadingsState = {
+  relayState: RelayUiState
+  relayConfidence: RelayConfidence
+  lastRelayPayload: RelayControlPayload | null
+  relayError: string | null
+  actionError: string | null
+  lastEnv: RuntimeResponseEnvelope<ReadObisSelectionPayload> | null
+  rowState: Record<string, ObisRowReadState>
+  obisJobProgress: string | null
+}
+
+function emptyPerMeterState(): PerMeterReadingsState {
+  return {
+    relayState: "unknown",
+    relayConfidence: "unknown",
+    lastRelayPayload: null,
+    relayError: null,
+    actionError: null,
+    lastEnv: null,
+    rowState: {},
+    obisJobProgress: null,
+  }
+}
+
+type ActionLogEntry = {
+  id: string
+  ts: number
+  level: "info" | "warn" | "error"
+  serial: string
+  tag: string
+  summary: string
+  detail?: string
+}
+
+/** Short operator-facing text; full strings stay in diagnostics. */
+function compactSurfaceError(raw: string): string {
+  const t = raw.trim()
+  if (!t) return ""
+  const u = t.toUpperCase()
+  if (u.includes("NO_STAGED") || u.includes("NO STAGED")) return "No live session"
+  if (u.includes("NOT ROUTED") || u.includes("NO ROUTE")) return "No route for this meter"
+  if (u.includes("SESSION BUSY") || u.includes("409")) return "Session busy"
+  if (t.length > 96) return `${t.slice(0, 93)}…`
+  return t
 }
 
 function obisRowStatusBadgeVariant(
@@ -210,7 +263,6 @@ export function ReadingsWorkspaceClient() {
   const [metersError, setMetersError] = useState<string | null>(null)
 
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
-  const [rowState, setRowState] = useState<Record<string, ObisRowReadState>>({})
 
   const [statusLoading, setStatusLoading] = useState(true)
   const [listenerStatus, setListenerStatus] = useState<TcpListenerStatus | null>(
@@ -220,18 +272,57 @@ export function ReadingsWorkspaceClient() {
 
   const [busy, setBusy] = useState(false)
   const [relayBusy, setRelayBusy] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
-  const [relayError, setRelayError] = useState<string | null>(null)
-  const [relayState, setRelayState] = useState<RelayUiState>("unknown")
-  const [relayConfidence, setRelayConfidence] = useState<RelayConfidence>("unknown")
-  const [lastRelayPayload, setLastRelayPayload] = useState<RelayControlPayload | null>(null)
-  const [lastEnv, setLastEnv] = useState<RuntimeResponseEnvelope<
-    ReadObisSelectionPayload
-  > | null>(null)
-  const [obisJobProgress, setObisJobProgress] = useState<string | null>(null)
+  const [perMeter, setPerMeter] = useState<Record<string, PerMeterReadingsState>>({})
+  const [actionLog, setActionLog] = useState<ActionLogEntry[]>([])
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(() => new Set())
   const [inboundObisJobId, setInboundObisJobId] = useState<string | null>(null)
   const [obisJobRowPhases, setObisJobRowPhases] = useState<Record<string, string>>({})
   const [obisJobCancelling, setObisJobCancelling] = useState(false)
+
+  const inFlightTargetRef = useRef<string>("")
+
+  const meterKey = meterId.trim()
+  const currentMeterState = useMemo(
+    () => perMeter[meterKey] ?? emptyPerMeterState(),
+    [perMeter, meterKey]
+  )
+
+  const patchMeter = useCallback((serial: string, patch: Partial<PerMeterReadingsState>) => {
+    const k = serial.trim()
+    if (!k) return
+    setPerMeter((p) => {
+      const cur = p[k] ?? emptyPerMeterState()
+      return { ...p, [k]: { ...cur, ...patch } }
+    })
+  }, [])
+
+  const patchMeterRowState = useCallback(
+    (
+      serial: string,
+      updater: (prev: Record<string, ObisRowReadState>) => Record<string, ObisRowReadState>
+    ) => {
+      const k = serial.trim()
+      if (!k) return
+      setPerMeter((p) => {
+        const cur = p[k] ?? emptyPerMeterState()
+        return { ...p, [k]: { ...cur, rowState: updater(cur.rowState) } }
+      })
+    },
+    []
+  )
+
+  const pushActionLog = useCallback((entry: Omit<ActionLogEntry, "id" | "ts">) => {
+    const row: ActionLogEntry = {
+      id:
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`,
+      ts: Date.now(),
+      ...entry,
+    }
+    setActionLog((prev) => [row, ...prev].slice(0, 200))
+  }, [])
 
   const packKeys = useMemo(() => packKeysForCatalogRows(catalog), [catalog])
 
@@ -340,26 +431,26 @@ export function ReadingsWorkspaceClient() {
     meterId
   )
 
-  const sessionLocked = busy || relayBusy
+  const actionLocked = busy || relayBusy
 
   const canInboundRead =
     transport === "inbound" &&
     stagedPresent &&
     inboundRouteOk &&
     !triggerInProgress &&
-    !sessionLocked &&
+    !actionLocked &&
     !statusLoading
 
-  const canDirectRead = transport === "direct" && !sessionLocked
+  const canDirectRead = transport === "direct" && !actionLocked
   const canRelayInbound =
     transport === "inbound" &&
     stagedPresent &&
     inboundRouteOk &&
     !triggerInProgress &&
-    !sessionLocked &&
+    !actionLocked &&
     !statusLoading &&
     listenerEnabled
-  const canRelayDirect = transport === "direct" && !sessionLocked && Boolean(meterId.trim())
+  const canRelayDirect = transport === "direct" && !actionLocked && Boolean(meterId.trim())
   const canRelayAction = canRelayInbound || canRelayDirect
 
   function toggleObis(obis: string) {
@@ -380,24 +471,29 @@ export function ReadingsWorkspaceClient() {
   }
 
   async function executeReadObisSelection(items: ObisSelectionItemInput[]): Promise<void> {
-    setActionError(null)
+    const mid = meterId.trim() || "unknown-meter"
+    inFlightTargetRef.current = mid
+    patchMeter(mid, { actionError: null })
     if (items.length === 0) {
-      setActionError("No OBIS rows to read.")
+      patchMeter(mid, { actionError: "No OBIS rows to read." })
+      inFlightTargetRef.current = ""
       return
     }
 
-    const mid = meterId.trim() || "unknown-meter"
     const body = { meterId: mid, selectedItems: items }
 
     setBusy(true)
-    setObisJobProgress(null)
+    patchMeter(mid, { obisJobProgress: null })
     setInboundObisJobId(null)
     setObisJobRowPhases({})
+    let finalActionErr: string | null = null
+    let readOk = false
     try {
       if (transport === "inbound") {
         const start = await postStartTcpListenerObisSelectionJob(body)
         if (!start.ok) {
-          setActionError(start.error)
+          finalActionErr = start.error
+          patchMeter(mid, { actionError: start.error })
           return
         }
         const jobId = start.data.jobId
@@ -408,7 +504,8 @@ export function ReadingsWorkspaceClient() {
         while (Date.now() < deadline) {
           const jr = await getTcpListenerObisSelectionJobPoll(jobId)
           if (!jr.ok) {
-            setActionError(jr.error)
+            finalActionErr = jr.error
+            patchMeter(mid, { actionError: jr.error })
             pollAborted = true
             break
           }
@@ -418,7 +515,7 @@ export function ReadingsWorkspaceClient() {
             Object.fromEntries(snap.rows.map((row) => [row.obis, row.phase]))
           )
           flushSync(() => {
-            setRowState((p) => mergeObisJobPollIntoRowState(p, snap))
+            patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, snap))
           })
           const wDone = snap.completedWire
           const wTot = snap.wireTotal
@@ -437,47 +534,52 @@ export function ReadingsWorkspaceClient() {
           ) {
             line += " (stale: job may be stuck)"
           }
-          setObisJobProgress(line)
+          patchMeter(mid, { obisJobProgress: line })
           if (
             snap.status === "completed" ||
             snap.status === "failed" ||
             snap.status === "cancelled"
           ) {
             if (snap.envelope) {
-              setLastEnv(snap.envelope as RuntimeResponseEnvelope<ReadObisSelectionPayload>)
+              patchMeter(mid, {
+                lastEnv: snap.envelope as RuntimeResponseEnvelope<ReadObisSelectionPayload>,
+              })
             }
             const okWire = snap.rows.filter((r) => r.row?.status === "ok").length
             if (snap.status === "cancelled") {
-              setActionError(
+              finalActionErr =
                 okWire > 0
                   ? `Stopped after ${okWire} ok row(s).`
                   : snap.envelope?.error?.message ??
                     snap.envelope?.message ??
                     "Stopped by operator."
-              )
+              patchMeter(mid, { actionError: finalActionErr })
             } else if (snap.fatalError) {
-              setActionError(
+              finalActionErr =
                 okWire > 0
                   ? `Session ended after ${okWire} ok row(s). ${snap.fatalError}`
                   : snap.fatalError
-              )
+              patchMeter(mid, { actionError: finalActionErr })
             } else if (snap.envelope && !snap.envelope.ok) {
               const msg =
                 snap.envelope.error?.message ??
                 snap.envelope.message ??
                 "readObisSelection failed"
-              setActionError(okWire > 0 ? `Session ended after ${okWire} ok row(s). ${msg}` : msg)
+              finalActionErr = okWire > 0 ? `Session ended after ${okWire} ok row(s). ${msg}` : msg
+              patchMeter(mid, { actionError: finalActionErr })
             } else {
-              setActionError(null)
+              finalActionErr = null
+              patchMeter(mid, { actionError: null })
+              readOk = true
             }
             break
           }
           await new Promise((r) => setTimeout(r, OBIS_JOB_POLL_MS))
         }
         if (!pollAborted && last?.status === "running" && Date.now() >= deadline) {
-          setActionError(
+          finalActionErr =
             "Timed out waiting for OBIS job (still running). Check listener / modem."
-          )
+          patchMeter(mid, { actionError: finalActionErr })
         }
         return
       }
@@ -485,42 +587,64 @@ export function ReadingsWorkspaceClient() {
       const r = await postReadObisSelectionDirect(body)
 
       if (!r.ok) {
-        setActionError(r.error)
+        finalActionErr = r.error
+        patchMeter(mid, { actionError: r.error })
         return
       }
 
       const env = r.data
-      setLastEnv(env)
+      patchMeter(mid, { lastEnv: env })
 
       const payload = env.payload
       if (payload && Array.isArray(payload.rows) && payload.rows.length > 0) {
-        setRowState((p) => mergeObisSelectionIntoRowState(p, payload))
+        patchMeterRowState(mid, (p) => mergeObisSelectionIntoRowState(p, payload))
       }
 
       if (env.ok) {
-        setActionError(null)
+        finalActionErr = null
+        patchMeter(mid, { actionError: null })
+        readOk = true
       } else {
         const msg = env.error?.message ?? env.message ?? "readObisSelection failed"
-        setActionError(msg)
+        finalActionErr = msg
+        patchMeter(mid, { actionError: msg })
       }
     } finally {
       setBusy(false)
-      setObisJobProgress(null)
+      patchMeter(mid, { obisJobProgress: null })
       setInboundObisJobId(null)
       setObisJobRowPhases({})
       setObisJobCancelling(false)
+      inFlightTargetRef.current = ""
       if (transport === "inbound") {
         await loadStatus()
+      }
+      if (readOk && !finalActionErr) {
+        pushActionLog({
+          level: "info",
+          serial: mid,
+          tag: transport === "inbound" ? "read_obis_job" : "read_obis_direct",
+          summary: `Read OK (${items.length} item(s))`,
+        })
+      } else if (finalActionErr) {
+        pushActionLog({
+          level: "error",
+          serial: mid,
+          tag: "read_obis",
+          summary: "Read finished with error",
+          detail: finalActionErr,
+        })
       }
     }
   }
 
   async function onStopObisJob() {
     if (!inboundObisJobId) return
+    const mid = meterId.trim() || "unknown-meter"
     setObisJobCancelling(true)
     try {
       const r = await postTcpListenerObisJobCancel(inboundObisJobId)
-      if (!r.ok) setActionError(r.error)
+      if (!r.ok) patchMeter(mid, { actionError: r.error })
     } finally {
       setObisJobCancelling(false)
     }
@@ -529,20 +653,22 @@ export function ReadingsWorkspaceClient() {
   async function onSkipQueuedJobRow(obis: string) {
     const jid = inboundObisJobId
     if (!jid) return
+    const mid = meterId.trim() || "unknown-meter"
     const jr = await getTcpListenerObisSelectionJobPoll(jid)
     if (!jr.ok) {
-      setActionError(jr.error)
+      patchMeter(mid, { actionError: jr.error })
       return
     }
     const row = jr.data.rows.find((x) => x.obis === obis)
     if (!row || row.phase !== "queued") return
     const sk = await postTcpListenerObisJobSkipRow(jid, row.index)
-    if (!sk.ok) setActionError(sk.error)
+    if (!sk.ok) patchMeter(mid, { actionError: sk.error })
   }
 
   async function onReadSelected() {
+    const mid = meterId.trim() || "unknown-meter"
     if (selected.size === 0) {
-      setActionError("Select at least one OBIS row.")
+      patchMeter(mid, { actionError: "Select at least one OBIS row." })
       return
     }
     const rows = catalogRows.filter((r) => selected.has(r.obis))
@@ -551,46 +677,78 @@ export function ReadingsWorkspaceClient() {
   }
 
   async function onReadCategory() {
+    const mid = meterId.trim() || "unknown-meter"
     if (v1SupportedRowsInPack.length === 0) {
-      setActionError("No v1-readable rows in this category (Data/Clock/Register, attr 2).")
+      patchMeter(mid, {
+        actionError: "No v1-readable rows in this category (Data/Clock/Register, attr 2).",
+      })
       return
     }
     const items = v1SupportedRowsInPack.map(catalogEntryToSelectionItem)
     await executeReadObisSelection(items)
   }
 
-  async function refreshRelayStatusAfterCommand() {
-    const mid = meterId.trim() || "unknown-meter"
-    const r = await postRelayReadStatusReadings(transport, mid)
+  async function refreshRelayStatusAfterCommand(targetSerial: string) {
+    const r = await postRelayReadStatusReadings(transport, targetSerial)
     if (!r.ok) return
     const env = r.data
-    setRelayConfidence(relayConfidenceFromEnvelope(env))
-    if (env.payload?.relayState) {
-      setRelayState(env.payload.relayState)
-      setLastRelayPayload(env.payload)
-    }
+    patchMeter(targetSerial, {
+      relayConfidence: relayConfidenceFromEnvelope(env),
+      ...(env.payload?.relayState
+        ? { relayState: env.payload.relayState, lastRelayPayload: env.payload }
+        : {}),
+    })
   }
 
   async function onRelayReadStatus() {
-    setRelayError(null)
     const mid = meterId.trim() || "unknown-meter"
+    inFlightTargetRef.current = mid
+    patchMeter(mid, { relayError: null })
     setRelayBusy(true)
     try {
       const r = await postRelayReadStatusReadings(transport, mid)
       if (!r.ok) {
-        setRelayError(r.error)
+        patchMeter(mid, { relayError: r.error })
+        pushActionLog({
+          level: "error",
+          serial: mid,
+          tag: "relay_status",
+          summary: "Read status failed",
+          detail: r.error,
+        })
         return
       }
       const env = r.data
       const p = env.payload
-      setRelayConfidence(relayConfidenceFromEnvelope(env))
-      if (p?.relayState) setRelayState(p.relayState)
-      setLastRelayPayload(p ?? null)
-      if (!env.ok) {
-        setRelayError(env.error?.message ?? env.message ?? "Relay status failed")
+      patchMeter(mid, {
+        relayConfidence: relayConfidenceFromEnvelope(env),
+        ...(p?.relayState ? { relayState: p.relayState } : {}),
+        lastRelayPayload: p ?? null,
+        ...(!env.ok
+          ? {
+              relayError: env.error?.message ?? env.message ?? "Relay status failed",
+            }
+          : { relayError: null }),
+      })
+      if (env.ok) {
+        pushActionLog({
+          level: "info",
+          serial: mid,
+          tag: "relay_status",
+          summary: `Relay ${p?.relayState ?? "unknown"}`,
+        })
+      } else {
+        pushActionLog({
+          level: "warn",
+          serial: mid,
+          tag: "relay_status",
+          summary: "Relay status incomplete",
+          detail: env.error?.message ?? env.message,
+        })
       }
     } finally {
       setRelayBusy(false)
+      inFlightTargetRef.current = ""
       if (transport === "inbound") {
         await loadStatus()
       }
@@ -598,26 +756,53 @@ export function ReadingsWorkspaceClient() {
   }
 
   async function onRelayOff() {
-    setRelayError(null)
     const mid = meterId.trim() || "unknown-meter"
+    inFlightTargetRef.current = mid
+    patchMeter(mid, { relayError: null })
     setRelayBusy(true)
     try {
       const r = await postRelayDisconnectReadings(transport, mid)
       if (!r.ok) {
-        setRelayError(r.error)
+        patchMeter(mid, { relayError: r.error })
+        pushActionLog({
+          level: "error",
+          serial: mid,
+          tag: "relay_off",
+          summary: "OFF request failed",
+          detail: r.error,
+        })
         return
       }
       const env = r.data
-      setLastRelayPayload(env.payload ?? null)
+      patchMeter(mid, { lastRelayPayload: env.payload ?? null })
       if (!env.ok) {
-        setRelayError(env.error?.message ?? env.message ?? "Relay OFF failed")
+        const msg = env.error?.message ?? env.message ?? "Relay OFF failed"
+        patchMeter(mid, { relayError: msg })
+        pushActionLog({
+          level: "error",
+          serial: mid,
+          tag: "relay_off",
+          summary: "OFF failed",
+          detail: msg,
+        })
         return
       }
-      if (env.payload?.relayState) setRelayState(env.payload.relayState)
-      setRelayConfidence(relayConfidenceFromEnvelope(env))
-      await refreshRelayStatusAfterCommand()
+      if (env.payload?.relayState) {
+        patchMeter(mid, {
+          relayState: env.payload.relayState,
+          relayConfidence: relayConfidenceFromEnvelope(env),
+        })
+      }
+      await refreshRelayStatusAfterCommand(mid)
+      pushActionLog({
+        level: "info",
+        serial: mid,
+        tag: "relay_off",
+        summary: "OFF command sent",
+      })
     } finally {
       setRelayBusy(false)
+      inFlightTargetRef.current = ""
       if (transport === "inbound") {
         await loadStatus()
       }
@@ -625,31 +810,62 @@ export function ReadingsWorkspaceClient() {
   }
 
   async function onRelayOn() {
-    setRelayError(null)
     const mid = meterId.trim() || "unknown-meter"
+    inFlightTargetRef.current = mid
+    patchMeter(mid, { relayError: null })
     setRelayBusy(true)
     try {
       const r = await postRelayReconnectReadings(transport, mid)
       if (!r.ok) {
-        setRelayError(r.error)
+        patchMeter(mid, { relayError: r.error })
+        pushActionLog({
+          level: "error",
+          serial: mid,
+          tag: "relay_on",
+          summary: "ON request failed",
+          detail: r.error,
+        })
         return
       }
       const env = r.data
-      setLastRelayPayload(env.payload ?? null)
+      patchMeter(mid, { lastRelayPayload: env.payload ?? null })
       if (!env.ok) {
-        setRelayError(env.error?.message ?? env.message ?? "Relay ON failed")
+        const msg = env.error?.message ?? env.message ?? "Relay ON failed"
+        patchMeter(mid, { relayError: msg })
+        pushActionLog({
+          level: "error",
+          serial: mid,
+          tag: "relay_on",
+          summary: "ON failed",
+          detail: msg,
+        })
         return
       }
-      if (env.payload?.relayState) setRelayState(env.payload.relayState)
-      setRelayConfidence(relayConfidenceFromEnvelope(env))
-      await refreshRelayStatusAfterCommand()
+      if (env.payload?.relayState) {
+        patchMeter(mid, {
+          relayState: env.payload.relayState,
+          relayConfidence: relayConfidenceFromEnvelope(env),
+        })
+      }
+      await refreshRelayStatusAfterCommand(mid)
+      pushActionLog({
+        level: "info",
+        serial: mid,
+        tag: "relay_on",
+        summary: "ON command sent",
+      })
     } finally {
       setRelayBusy(false)
+      inFlightTargetRef.current = ""
       if (transport === "inbound") {
         await loadStatus()
       }
     }
   }
+
+  const relayState = currentMeterState.relayState
+  const relayConfidence = currentMeterState.relayConfidence
+  const lastRelayPayload = currentMeterState.lastRelayPayload
 
   const relayBadge = (() => {
     if (relayState === "unknown") {
@@ -710,278 +926,295 @@ export function ReadingsWorkspaceClient() {
       ? (triggerRecord.obisSelectionSummary as Record<string, unknown>)
       : null
 
+  const connectionChip = useMemo(() => {
+    if (actionLocked) {
+      return { label: "Busy", variant: "info" as const }
+    }
+    if (transport === "direct") {
+      return { label: "Direct", variant: "neutral" as const }
+    }
+    if (statusLoading) {
+      return { label: "…", variant: "neutral" as const }
+    }
+    if (statusError) {
+      return { label: "Listener fault", variant: "danger" as const }
+    }
+    if (!listenerEnabled) {
+      return { label: "Listener off", variant: "warning" as const }
+    }
+    if (!listening) {
+      return { label: "Offline", variant: "danger" as const }
+    }
+    if (!stagedPresent) {
+      return { label: "No live session", variant: "warning" as const }
+    }
+    if (meterId.trim() && !inboundRouteOk) {
+      return { label: "No route", variant: "warning" as const }
+    }
+    if (triggerInProgress) {
+      return { label: "Session busy", variant: "info" as const }
+    }
+    return { label: "Online", variant: "success" as const }
+  }, [
+    actionLocked,
+    transport,
+    statusLoading,
+    statusError,
+    listenerEnabled,
+    listening,
+    stagedPresent,
+    meterId,
+    inboundRouteOk,
+    triggerInProgress,
+  ])
+
+  const surfaceActionErr = currentMeterState.actionError
+    ? compactSurfaceError(currentMeterState.actionError)
+    : ""
+  const surfaceRelayErr = currentMeterState.relayError
+    ? compactSurfaceError(currentMeterState.relayError)
+    : ""
+
+  const meterPickerLocked = actionLocked
+  const transportLocked = actionLocked
+  const lastEnv = currentMeterState.lastEnv
+  const obisJobProgress = currentMeterState.obisJobProgress
+
+  function toggleLogExpanded(id: string) {
+    setExpandedLogIds((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+
   return (
     <div className="space-y-4">
-      <PageHeader title="Readings" subtitle="Staged inbound or direct transport." />
+      <PageHeader
+        title="Readings"
+        subtitle="Operator console: one meter, OBIS reads, relay — details in Diagnostics."
+      />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(200px,240px)_1fr] lg:items-start">
-        <aside className="rounded-lg border border-border bg-card p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Pack
-          </p>
-          <ul className="mt-2 space-y-0.5">
-            {packKeys.map((key) => (
-              <li key={key}>
-                <button
-                  type="button"
-                  onClick={() => setPack(key)}
-                  className={cn(
-                    "w-full rounded-md px-2 py-1.5 text-left text-sm",
-                    pack === key
-                      ? "bg-primary/15 font-medium text-foreground"
-                      : "text-muted-foreground hover:bg-muted/60"
-                  )}
-                >
-                  {packLabel(key)}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-3 text-xs">
-            <a href="/obis-config" className="text-muted-foreground underline underline-offset-2">
-              Edit catalog
-            </a>
-          </p>
-        </aside>
-
-        <div className="min-w-0 space-y-3">
-          <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
-            <div className="flex min-w-[12rem] flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Meter (serial)</span>
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={meters.some((m) => m.serialNumber === meterId) ? meterId : "__custom__"}
-                onChange={(e) => {
-                  const v = e.target.value
-                  if (v === "__custom__") return
-                  setMeterId(v)
-                }}
-              >
-                <option value="__custom__">Other…</option>
-                {meters.map((m) => (
-                  <option key={m.id} value={m.serialNumber}>
-                    {m.serialNumber}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex min-w-[10rem] flex-1 flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Serial</span>
-              <Input
-                value={meterId}
-                onChange={(e) => setMeterId(e.target.value)}
-                className="h-9 font-mono text-sm"
-                placeholder="Meter serial"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Transport</span>
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={transport}
-                onChange={(e) =>
-                  setTransport(e.target.value === "direct" ? "direct" : "inbound")
-                }
-              >
-                <option value="inbound">Inbound (staged)</option>
-                <option value="direct">Direct</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs">
-            <span className="font-medium text-muted-foreground">Relay</span>
-            <span title={relayBadgeTitle}>
-              <StatusBadge variant={relayBadge.variant}>{relayBadge.label}</StatusBadge>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">Meter</p>
+          <MeterSearchCombobox
+            meters={meters}
+            value={meterId}
+            onChange={setMeterId}
+            disabled={meterPickerLocked}
+          />
+        </div>
+        <div className="flex shrink-0 items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Transport
             </span>
-            <span className="font-mono text-[11px] text-muted-foreground">
-              {meterId.trim() || "—"}
-            </span>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8"
-              disabled={!canRelayAction}
-              onClick={() => void onRelayReadStatus()}
-            >
-              Read status
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-8"
-              disabled={!canRelayAction}
-              onClick={() => void onRelayOff()}
-            >
-              OFF
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-8"
-              disabled={!canRelayAction}
-              onClick={() => void onRelayOn()}
-            >
-              ON
-            </Button>
-            {relayBusy ? (
-              <span className="text-muted-foreground">Working…</span>
-            ) : null}
-            {lastRelayPayload?.logicalName ? (
-              <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">
-                {lastRelayPayload.logicalName}
-              </span>
-            ) : null}
-          </div>
-          {relayError ? (
-            <p className="text-xs text-destructive">{relayError}</p>
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border bg-muted/10 px-3 py-2 text-xs">
-            <span className="font-medium text-muted-foreground">Listener</span>
-            {statusLoading ? (
-              <span className="text-muted-foreground">Loading…</span>
-            ) : statusError ? (
-              <span className="text-destructive">{statusError}</span>
-            ) : listenerStatus ? (
-              <>
-                {listenerEnabled ? (
-                  <StatusBadge variant="success">enabled</StatusBadge>
-                ) : (
-                  <StatusBadge variant="warning">disabled</StatusBadge>
-                )}
-                {listening ? (
-                  <StatusBadge variant="success">listening</StatusBadge>
-                ) : (
-                  <StatusBadge variant="danger">not listening</StatusBadge>
-                )}
-                {stagedPresent ? (
-                  <StatusBadge variant="success">staged</StatusBadge>
-                ) : (
-                  <StatusBadge variant="neutral">no socket</StatusBadge>
-                )}
-                {triggerInProgress ? (
-                  <StatusBadge variant="info">trigger active</StatusBadge>
-                ) : null}
-                <span className="font-mono text-[11px]">
-                  {String(listenerStatus.bindHost)}:{String(listenerStatus.bindPort)}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2"
-                  onClick={() => {
-                    setStatusLoading(true)
-                    loadStatus().finally(() => setStatusLoading(false))
-                  }}
-                >
-                  <RefreshCwIcon className="size-3.5" />
-                </Button>
-              </>
-            ) : null}
-          </div>
-
-          {transport === "inbound" &&
-          meterId.trim() &&
-          !inboundRouteOk &&
-          stagedPresent ? (
-            <p className="text-xs text-amber-600 dark:text-amber-500">
-              No routed inbound session for this serial — wait for auto-identify, connect the modem, or use
-              Scanner if auto-identify failed.
-            </p>
-          ) : null}
-
-          {triggerRecord ? (
-            <p className="text-xs text-muted-foreground">
-              Last trigger:{" "}
-              <span className="font-mono">
-                {String(triggerRecord.operation)} / ok={String(triggerRecord.ok)} /{" "}
-                {String(triggerRecord.detailCode ?? "—")}
-              </span>
-              {obisSummary ? (
-                <span className="ml-1 font-mono">
-                  rows={String(obisSummary.rowCount ?? "—")} ok=
-                  {String(obisSummary.okCount ?? "—")} unsupported=
-                  {String(obisSummary.unsupportedCount ?? "—")} err=
-                  {String(obisSummary.errorCount ?? "—")}
-                </span>
-              ) : null}
-            </p>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              disabled={transport === "inbound" ? !canInboundRead : !canDirectRead}
-              onClick={() => void onReadSelected()}
-            >
-              Read selected
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={transport === "inbound" ? !canInboundRead : !canDirectRead}
-              onClick={() => void onReadCategory()}
-            >
-              Read category
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={selectAllInPack}>
-              Select all in pack
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={clearSelection}>
-              Clear selection
-            </Button>
-            {transport === "inbound" && busy && inboundObisJobId ? (
-              <Button
+            <div className="flex rounded-md border border-border bg-muted/30 p-0.5">
+              <button
                 type="button"
-                size="sm"
-                variant="destructive"
-                disabled={obisJobCancelling}
-                onClick={() => void onStopObisJob()}
+                disabled={transportLocked}
+                onClick={() => setTransport("inbound")}
+                className={cn(
+                  "rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                  transport === "inbound"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                  transportLocked && "opacity-60"
+                )}
               >
-                {obisJobCancelling ? "Stopping…" : "Stop job"}
-              </Button>
-            ) : null}
-            <Button type="button" size="sm" variant="outline" disabled title="Planned">
-              Export
-            </Button>
+                Inbound
+              </button>
+              <button
+                type="button"
+                disabled={transportLocked}
+                onClick={() => setTransport("direct")}
+                className={cn(
+                  "rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                  transport === "direct"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                  transportLocked && "opacity-60"
+                )}
+              >
+                Direct
+              </button>
+            </div>
           </div>
+        </div>
+      </div>
 
-          {catalogError ? (
-            <p className="text-xs text-destructive">{catalogError}</p>
-          ) : null}
-          {metersError ? (
-            <p className="text-xs text-amber-700 dark:text-amber-300">{metersError}</p>
-          ) : null}
-          {actionError ? (
-            <p className="text-xs text-destructive">{actionError}</p>
+      {meterPickerLocked ? (
+        <p className="text-xs text-muted-foreground">
+          Executing on{" "}
+          <span className="font-mono text-foreground">
+            {inFlightTargetRef.current || meterId.trim() || "—"}
+          </span>
+          …
+        </p>
+      ) : null}
+
+      <div className="flex flex-col gap-2 rounded-lg border border-border bg-card px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <StatusBadge variant={connectionChip.variant}>{connectionChip.label}</StatusBadge>
+          <span title={relayBadgeTitle}>
+            <StatusBadge variant={relayBadge.variant}>Relay {relayBadge.label}</StatusBadge>
+          </span>
+          {relayBusy ? (
+            <StatusBadge variant="info">Relay…</StatusBadge>
           ) : null}
           {busy ? (
-            <p className="text-xs text-muted-foreground">
-              {obisJobCancelling ? "Cancelling…" : "Working…"}
-            </p>
+            <StatusBadge variant="info">{obisJobCancelling ? "Stopping…" : "Reading…"}</StatusBadge>
           ) : null}
-          {obisJobProgress ? (
-            <p className="text-xs text-muted-foreground">{obisJobProgress}</p>
+          {(surfaceActionErr || surfaceRelayErr) && !actionLocked ? (
+            <StatusBadge variant="danger">Last action failed</StatusBadge>
           ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={!canRelayAction}
+            onClick={() => void onRelayReadStatus()}
+          >
+            Read status
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-8"
+            disabled={!canRelayAction}
+            onClick={() => void onRelayOff()}
+          >
+            OFF
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-8"
+            disabled={!canRelayAction}
+            onClick={() => void onRelayOn()}
+          >
+            ON
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={transport === "inbound" ? !canInboundRead : !canDirectRead}
+            onClick={() => void onReadSelected()}
+          >
+            Read selected
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={transport === "inbound" ? !canInboundRead : !canDirectRead}
+            onClick={() => void onReadCategory()}
+          >
+            Read category
+          </Button>
+          {transport === "inbound" && busy && inboundObisJobId ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              className="h-8"
+              disabled={obisJobCancelling}
+              onClick={() => void onStopObisJob()}
+            >
+              {obisJobCancelling ? "Stopping…" : "Stop job"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
 
-          {lastEnv ? (
-            <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs whitespace-normal break-words">
-              <span className="font-medium">Last envelope</span>{" "}
-              <span className="font-mono">{lastEnv.operation}</span> ok=
-              {String(lastEnv.ok)} simulated={String(lastEnv.simulated)} detail=
-              {lastEnv.diagnostics?.detailCode ?? "—"} verifiedOnWire=
-              {String(lastEnv.diagnostics?.verifiedOnWire ?? false)}
-            </div>
+      {(surfaceActionErr || surfaceRelayErr) && !actionLocked ? (
+        <div className="flex flex-wrap gap-2 text-xs text-destructive">
+          {surfaceActionErr ? (
+            <span className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1">
+              {surfaceActionErr}
+            </span>
           ) : null}
+          {surfaceRelayErr ? (
+            <span className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1">
+              {surfaceRelayErr}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
-          <div className="max-h-[min(70vh,720px)] overflow-auto rounded-lg border border-border bg-card">
+      <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            OBIS pack
+          </p>
+          <a
+            href="/obis-config"
+            className="text-[10px] text-muted-foreground underline underline-offset-2"
+          >
+            Edit catalog
+          </a>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {packKeys.map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setPack(key)}
+              className={cn(
+                "rounded-md px-2 py-1 text-xs",
+                pack === key
+                  ? "bg-primary/15 font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted/60"
+              )}
+            >
+              {packLabel(key)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          <Button type="button" size="sm" variant="outline" className="h-8" onClick={selectAllInPack}>
+            Select all
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8" onClick={clearSelection}>
+            Clear
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8" disabled title="Planned">
+            Export
+          </Button>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-8 gap-1 text-muted-foreground"
+          onClick={() => {
+            setStatusLoading(true)
+            loadStatus().finally(() => setStatusLoading(false))
+          }}
+        >
+          <RefreshCwIcon className="size-3.5" />
+          Refresh listener
+        </Button>
+      </div>
+
+      {catalogError ? (
+        <p className="text-xs text-destructive">{catalogError}</p>
+      ) : null}
+      {metersError ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300">{metersError}</p>
+      ) : null}
+
+      <div className="max-h-[min(70vh,720px)] overflow-auto rounded-lg border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -1011,7 +1244,7 @@ export function ReadingsWorkspaceClient() {
               </TableHeader>
               <TableBody>
                 {catalogRows.map((r) => {
-                  const rs = rowState[r.obis]
+                  const rs = currentMeterState.rowState[r.obis]
                   return (
                     <TableRow key={r.obis}>
                       <TableCell className="align-top">
@@ -1061,19 +1294,195 @@ export function ReadingsWorkspaceClient() {
             </Table>
           </div>
 
-          {statusError && !listenerStatus ? (
-            <EmptyState
-              title="Listener status unavailable"
-              description={
-                statusError === READINGS_FETCH_NETWORK_ERROR
-                  ? READINGS_FETCH_NETWORK_ERROR
-                  : statusError
-              }
-              icon={<AlertCircleIcon className="size-5" aria-hidden />}
-              className="border-dashed bg-muted/10"
-            />
-          ) : null}
-        </div>
+      {statusError && !listenerStatus ? (
+        <EmptyState
+          title="Listener status unavailable"
+          description={
+            statusError === READINGS_FETCH_NETWORK_ERROR
+              ? READINGS_FETCH_NETWORK_ERROR
+              : statusError
+          }
+          icon={<AlertCircleIcon className="size-5" aria-hidden />}
+          className="border-dashed bg-muted/10"
+        />
+      ) : null}
+
+      <div className="rounded-lg border border-border bg-card">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted/40"
+          onClick={() => setDiagnosticsOpen((o) => !o)}
+        >
+          <span className="flex items-center gap-2">
+            <TerminalIcon className="size-4 text-muted-foreground" aria-hidden />
+            {"Diagnostics & action log"}
+            {diagnosticsOpen ? (
+              <ChevronUpIcon className="size-4 text-muted-foreground" aria-hidden />
+            ) : (
+              <ChevronDownIcon className="size-4 text-muted-foreground" aria-hidden />
+            )}
+          </span>
+          <span className="text-xs font-normal text-muted-foreground">
+            Listener, envelopes, raw errors, timestamps
+          </span>
+        </button>
+        {diagnosticsOpen ? (
+          <div className="space-y-3 border-t border-border px-3 py-3 font-mono text-[11px] leading-relaxed">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => setActionLog([])}
+              >
+                Clear log
+              </Button>
+            </div>
+
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Action log
+              </p>
+              {actionLog.length === 0 ? (
+                <p className="text-muted-foreground">No entries yet.</p>
+              ) : (
+                <ul className="max-h-48 space-y-1 overflow-auto rounded border border-border bg-muted/20 p-2">
+                  {actionLog.map((line) => (
+                    <li key={line.id} className="border-b border-border/60 pb-1 last:border-0">
+                      <button
+                        type="button"
+                        className="w-full text-left"
+                        onClick={() => toggleLogExpanded(line.id)}
+                      >
+                        <span className="text-muted-foreground">
+                          {new Date(line.ts).toISOString()}
+                        </span>{" "}
+                        <span
+                          className={
+                            line.level === "error"
+                              ? "text-destructive"
+                              : line.level === "warn"
+                                ? "text-amber-600 dark:text-amber-400"
+                                : ""
+                          }
+                        >
+                          [{line.level}]
+                        </span>{" "}
+                        <span className="text-foreground">{line.serial}</span>{" "}
+                        <span className="text-muted-foreground">{line.tag}</span> — {line.summary}
+                        {line.detail ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            {expandedLogIds.has(line.id) ? "▼" : "▶"}
+                          </span>
+                        ) : null}
+                      </button>
+                      {line.detail && expandedLogIds.has(line.id) ? (
+                        <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-background/80 p-2 text-[10px]">
+                          {line.detail}
+                        </pre>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Listener / session
+              </p>
+              {statusLoading ? (
+                <p>Loading…</p>
+              ) : statusError ? (
+                <p className="text-destructive">{statusError}</p>
+              ) : listenerStatus ? (
+                <div className="space-y-1 whitespace-pre-wrap break-words">
+                  <p>
+                    enabled={String(listenerEnabled)} listening={String(listening)} staged=
+                    {String(stagedPresent)} triggerInProgress={String(triggerInProgress)}
+                  </p>
+                  <p>
+                    bind {String(listenerStatus.bindHost)}:{String(listenerStatus.bindPort)}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-muted-foreground">No status payload.</p>
+              )}
+            </div>
+
+            {triggerRecord ? (
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Last trigger
+                </p>
+                <p>
+                  operation={String(triggerRecord.operation)} ok={String(triggerRecord.ok)} detailCode=
+                  {String(triggerRecord.detailCode ?? "—")}
+                </p>
+                {obisSummary ? (
+                  <p>
+                    rows={String(obisSummary.rowCount ?? "—")} ok={String(obisSummary.okCount ?? "—")}{" "}
+                    unsupported={String(obisSummary.unsupportedCount ?? "—")} err=
+                    {String(obisSummary.errorCount ?? "—")}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {lastEnv ? (
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Last envelope (this meter)
+                </p>
+                <p>
+                  {lastEnv.operation} ok={String(lastEnv.ok)} simulated={String(lastEnv.simulated)} detail=
+                  {lastEnv.diagnostics?.detailCode ?? "—"} verifiedOnWire=
+                  {String(lastEnv.diagnostics?.verifiedOnWire ?? false)}
+                </p>
+              </div>
+            ) : null}
+
+            {currentMeterState.actionError ? (
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Last read / job error (full)
+                </p>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted/20 p-2">
+                  {currentMeterState.actionError}
+                </pre>
+              </div>
+            ) : null}
+
+            {currentMeterState.relayError ? (
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Last relay error (full)
+                </p>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted/20 p-2">
+                  {currentMeterState.relayError}
+                </pre>
+              </div>
+            ) : null}
+
+            {obisJobProgress ? (
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  OBIS job progress (last)
+                </p>
+                <p>{obisJobProgress}</p>
+              </div>
+            ) : null}
+
+            {lastRelayPayload?.logicalName ? (
+              <p>
+                logicalName={String(lastRelayPayload.logicalName)}
+                {relayDiagHint ? <span>{relayDiagHint}</span> : null}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   )
