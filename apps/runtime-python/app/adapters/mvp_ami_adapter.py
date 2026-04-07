@@ -8,6 +8,7 @@ Requires a local checkout of https://github.com/devtlco1/MVP-AMI and a valid MVP
 from __future__ import annotations
 
 import logging
+import re
 import socket
 import time
 from datetime import datetime, timezone
@@ -536,7 +537,7 @@ def _session_broken_message(text: str) -> bool:
 def _ordinary_row_error_message(text: str) -> bool:
     """Row-level COSEM / meter faults where continuing other reads is still reasonable."""
     t = (text or "").lower()
-    return any(
+    if any(
         n in t
         for n in (
             "access denied",
@@ -550,8 +551,20 @@ def _ordinary_row_error_message(text: str) -> bool:
             "type does not match",
             "object attribute",
             "temporary failure",
+            "data-access-result",
+            "data access result",
+            "scope of access",
+            "type-unmatched",
+            "object-unavailable",
         )
-    )
+    ):
+        return True
+    # Gurux / MVP-AMI row read outcome like "DLMS 4/4" (service/data result — not transport collapse).
+    if re.search(r"\bdlms\b.{0,48}\d+\s*/\s*\d+", t):
+        return True
+    if "dlms_error_" in t or re.search(r"\bdlms\s+error\b", t):
+        return True
+    return False
 
 
 def _mark_wire_forward_from_index(
