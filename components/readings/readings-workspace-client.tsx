@@ -60,6 +60,17 @@ const OBIS_JOB_MAX_MS = 46 * 60_000
 
 type TransportMode = "inbound" | "direct"
 
+/** Relay UI: only "confirmed" when diagnostics say verified on wire (not HTTP 200 alone). */
+type RelayConfidence = "confirmed" | "unconfirmed" | "unknown"
+
+function relayConfidenceFromEnvelope(
+  env: RuntimeResponseEnvelope<unknown> | null | undefined
+): RelayConfidence {
+  if (!env?.ok) return "unknown"
+  if (env.diagnostics?.verifiedOnWire) return "confirmed"
+  return "unconfirmed"
+}
+
 function obisRowStatusBadgeVariant(
   st: ObisRowReadState["status"]
 ): "success" | "danger" | "neutral" | "warning" | "info" {
@@ -212,6 +223,7 @@ export function ReadingsWorkspaceClient() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [relayError, setRelayError] = useState<string | null>(null)
   const [relayState, setRelayState] = useState<RelayUiState>("unknown")
+  const [relayConfidence, setRelayConfidence] = useState<RelayConfidence>("unknown")
   const [lastRelayPayload, setLastRelayPayload] = useState<RelayControlPayload | null>(null)
   const [lastEnv, setLastEnv] = useState<RuntimeResponseEnvelope<
     ReadObisSelectionPayload
@@ -550,9 +562,12 @@ export function ReadingsWorkspaceClient() {
   async function refreshRelayStatusAfterCommand() {
     const mid = meterId.trim() || "unknown-meter"
     const r = await postRelayReadStatusReadings(transport, mid)
-    if (r.ok && r.data.payload?.relayState) {
-      setRelayState(r.data.payload.relayState)
-      setLastRelayPayload(r.data.payload)
+    if (!r.ok) return
+    const env = r.data
+    setRelayConfidence(relayConfidenceFromEnvelope(env))
+    if (env.payload?.relayState) {
+      setRelayState(env.payload.relayState)
+      setLastRelayPayload(env.payload)
     }
   }
 
@@ -568,6 +583,7 @@ export function ReadingsWorkspaceClient() {
       }
       const env = r.data
       const p = env.payload
+      setRelayConfidence(relayConfidenceFromEnvelope(env))
       if (p?.relayState) setRelayState(p.relayState)
       setLastRelayPayload(p ?? null)
       if (!env.ok) {
@@ -597,7 +613,8 @@ export function ReadingsWorkspaceClient() {
         setRelayError(env.error?.message ?? env.message ?? "Relay OFF failed")
         return
       }
-      setRelayState("off")
+      if (env.payload?.relayState) setRelayState(env.payload.relayState)
+      setRelayConfidence(relayConfidenceFromEnvelope(env))
       await refreshRelayStatusAfterCommand()
     } finally {
       setRelayBusy(false)
@@ -623,7 +640,8 @@ export function ReadingsWorkspaceClient() {
         setRelayError(env.error?.message ?? env.message ?? "Relay ON failed")
         return
       }
-      setRelayState("on")
+      if (env.payload?.relayState) setRelayState(env.payload.relayState)
+      setRelayConfidence(relayConfidenceFromEnvelope(env))
       await refreshRelayStatusAfterCommand()
     } finally {
       setRelayBusy(false)
@@ -633,12 +651,26 @@ export function ReadingsWorkspaceClient() {
     }
   }
 
-  const relayBadge =
-    relayState === "on"
-      ? { label: "ON", variant: "success" as const }
-      : relayState === "off"
-        ? { label: "OFF", variant: "neutral" as const }
-        : { label: "Unknown", variant: "warning" as const }
+  const relayBadge = (() => {
+    if (relayState === "unknown") {
+      return { label: "Unknown", variant: "warning" as const }
+    }
+    if (relayConfidence === "confirmed") {
+      return relayState === "on"
+        ? { label: "ON", variant: "success" as const }
+        : { label: "OFF", variant: "neutral" as const }
+    }
+    return relayState === "on"
+      ? { label: "ON?", variant: "warning" as const }
+      : { label: "OFF?", variant: "warning" as const }
+  })()
+
+  const relayBadgeTitle =
+    relayConfidence === "confirmed"
+      ? "Relay state verified on wire (disconnect-control read)."
+      : relayConfidence === "unconfirmed"
+        ? "Not fully confirmed — payload reflects last response; use Read status."
+        : "Relay state unknown — use Read status."
 
   const triggerRecord =
     listenerStatus?.lastTcpListenerTrigger &&
@@ -733,7 +765,9 @@ export function ReadingsWorkspaceClient() {
 
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs">
             <span className="font-medium text-muted-foreground">Relay</span>
-            <StatusBadge variant={relayBadge.variant}>{relayBadge.label}</StatusBadge>
+            <span title={relayBadgeTitle}>
+              <StatusBadge variant={relayBadge.variant}>{relayBadge.label}</StatusBadge>
+            </span>
             <span className="font-mono text-[11px] text-muted-foreground">
               {meterId.trim() || "—"}
             </span>

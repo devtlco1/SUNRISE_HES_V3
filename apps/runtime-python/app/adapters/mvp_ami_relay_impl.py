@@ -1065,6 +1065,17 @@ def _relay_method_inbound(
     ok_m, em = _gurux_invoke_disconnect_control_method(
         client, transport, gx, dc_obj, method_index
     )
+    post_row: dict[str, Any] = {}
+    st_post = "unknown"
+    raw_post = ""
+    post_read_err: Optional[str] = None
+    if ok_m and gx is not None:
+        post_row = _read_disconnect_control_row(client, transport, gx, ln)
+        post_read_err = post_row.get("error")
+        st_post, raw_post = _relay_state_and_raw_from_row(post_row)
+    elif ok_m:
+        post_read_err = "no_gurux_context_for_post_read"
+
     if gx is not None:
         try:
             client._try_gurux_disconnect(transport, gx)
@@ -1092,23 +1103,73 @@ def _relay_method_inbound(
             verified=False,
         )
 
+    label = "disconnect" if method_index == 1 else "reconnect"
+    if post_read_err:
+        verified = False
+        relay_ui_state = "unknown"
+        detail_code = "RELAY_METHOD_INBOUND_POST_READ_FAILED"
+        msg = (
+            f"Inbound remote {label} method {method_index} on {ln!r} ({remote_endpoint}); "
+            f"post-read could not confirm state ({post_read_err})."
+        )
+    elif st_post == "unknown":
+        verified = False
+        relay_ui_state = "unknown"
+        detail_code = "RELAY_METHOD_INBOUND_STATE_UNVERIFIED"
+        msg = (
+            f"Inbound remote {label} method {method_index} on {ln!r} ({remote_endpoint}); "
+            "post-read normalized state is unknown."
+        )
+    elif st_post != expected_state:
+        verified = False
+        relay_ui_state = st_post  # type: ignore[assignment]
+        detail_code = "RELAY_METHOD_INBOUND_STATE_MISMATCH"
+        msg = (
+            f"Inbound remote {label} method {method_index} on {ln!r} ({remote_endpoint}); "
+            f"post-read shows {st_post!r}, expected {expected_state!r} after method."
+        )
+    else:
+        verified = True
+        relay_ui_state = st_post  # type: ignore[assignment]
+        detail_code = "RELAY_METHOD_INBOUND_OK"
+        msg = (
+            f"Inbound remote {label} method {method_index} on {ln!r} ({remote_endpoint}); "
+            f"post-read confirms {st_post!r}."
+        )
+
+    log.info(
+        "relay_method_inbound_post_verify",
+        extra={
+            "meter_id": request.meterId,
+            "operation": operation,
+            "method_index": method_index,
+            "expected_state": expected_state,
+            "post_relay_state": st_post,
+            "post_read_error": post_read_err,
+            "raw_display": (raw_post or "")[:200],
+            "verified_on_wire": verified,
+            "detail_code": detail_code,
+            "tcp_endpoint": remote_endpoint,
+        },
+    )
+
     payload = RelayControlPayload(
-        relayState=expected_state,  # type: ignore[arg-type]
+        relayState=relay_ui_state,  # type: ignore[arg-type]
         logicalName=ln,
         methodExecuted=method_index,
+        rawDisplay=raw_post or None,
     )
-    label = "disconnect" if method_index == 1 else "reconnect"
     return _relay_ok(
         meter_id=request.meterId,
         operation=operation,
         started=started,
         finished=finished,
-        message=f"Inbound remote {label} method {method_index} on {ln!r} ({remote_endpoint}).",
+        message=msg,
         payload=payload,
         transport_attempted=True,
         association_attempted=True,
-        verified=True,
-        detail_code="RELAY_METHOD_INBOUND_OK",
+        verified=verified,
+        detail_code=detail_code,
     )
 
 

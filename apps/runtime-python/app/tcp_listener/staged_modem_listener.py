@@ -84,6 +84,49 @@ class TcpModemListenerController:
     _last_bind_error: Optional[str] = None
     _session_in_progress: bool = False
     _last_tcp_listener_trigger: Optional[dict[str, Any]] = None
+    # During relay disconnect/reconnect, defer starting auto-identify threads so inbound
+    # staged sockets do not race the in-flight state-changing DLMS sequence.
+    _relay_state_change_depth: int = 0
+    _deferred_auto_hold_ids: deque[str] = field(default_factory=deque)
+    _deferred_auto_hold_ids_set: set[str] = field(default_factory=set)
+    _relay_cycle_deferred_hold_ids: list[str] = field(default_factory=list)
+
+    def relay_state_change_begin(self) -> None:
+        with self._holder_lock:
+            self._relay_state_change_depth += 1
+            if self._relay_state_change_depth == 1:
+                self._relay_cycle_deferred_hold_ids = []
+
+    def relay_state_change_end(self) -> None:
+        to_start: list[str] = []
+        depth_after: int = 0
+        cycle_deferred: list[str] = []
+        with self._holder_lock:
+            self._relay_state_change_depth = max(0, self._relay_state_change_depth - 1)
+            depth_after = self._relay_state_change_depth
+            if depth_after == 0:
+                cycle_deferred = list(self._relay_cycle_deferred_hold_ids)
+                while self._deferred_auto_hold_ids:
+                    hid = self._deferred_auto_hold_ids.popleft()
+                    self._deferred_auto_hold_ids_set.discard(hid)
+                    to_start.append(hid)
+        if cycle_deferred:
+            log.info(
+                "tcp_listener_relay_exclusive_cycle_summary",
+                extra={
+                    "deferred_inbound_hold_count": len(cycle_deferred),
+                    "deferred_inbound_hold_ids": cycle_deferred[:32],
+                    "flush_auto_identify_count": len(to_start),
+                    "relay_state_change_depth_after": depth_after,
+                },
+            )
+        for hid in to_start:
+            threading.Thread(
+                target=run_auto_identify_for_hold_id,
+                args=(hid,),
+                daemon=True,
+                name=f"inbound-auto-deferred-{hid[:8]}",
+            ).start()
 
     def begin_inbound_operator_action(self) -> bool:
         with self._inbound_operator_lock:
@@ -210,13 +253,28 @@ class TcpModemListenerController:
                     self._close_hold_unlocked(old, reason="unbound_queue_overflow")
             log.info("tcp_modem_staged_connection", extra={"remote": f"{rh}:{rp}"})
             _notify_staged_inbound_arrival()
+            defer_auto = False
             if auto_on:
-                threading.Thread(
-                    target=run_auto_identify_for_hold_id,
-                    args=(hold.hold_id,),
-                    daemon=True,
-                    name=f"inbound-auto-{hold.hold_id[:8]}",
-                ).start()
+                with self._holder_lock:
+                    if self._relay_state_change_depth > 0:
+                        defer_auto = True
+                        hid = hold.hold_id
+                        if hid not in self._deferred_auto_hold_ids_set:
+                            self._deferred_auto_hold_ids.append(hid)
+                            self._deferred_auto_hold_ids_set.add(hid)
+                            self._relay_cycle_deferred_hold_ids.append(hid)
+                if defer_auto:
+                    log.info(
+                        "tcp_modem_auto_identify_deferred_during_relay",
+                        extra={"hold_id": hold.hold_id, "remote": f"{rh}:{rp}"},
+                    )
+                else:
+                    threading.Thread(
+                        target=run_auto_identify_for_hold_id,
+                        args=(hold.hold_id,),
+                        daemon=True,
+                        name=f"inbound-auto-{hold.hold_id[:8]}",
+                    ).start()
 
         try:
             if self._server_sock is not None:
@@ -322,6 +380,8 @@ class TcpModemListenerController:
             "awaitingAutoIdentifyCount": awaiting_cnt,
             "routableUnboundCount": routable_cnt,
             "boundInboundCount": bcount,
+            "relayStateChangeDepth": int(self._relay_state_change_depth),
+            "deferredAutoIdentifyPending": len(self._deferred_auto_hold_ids),
         }
 
     def record_tcp_listener_trigger(self, record: dict[str, Any]) -> None:
@@ -490,6 +550,17 @@ def run_auto_identify_for_hold_id(hold_id: str) -> None:
     """Background: read 0.0.96.1.0.255 on inbound socket and auto-bind (MVP-AMI only)."""
     log_a = logging.getLogger(__name__)
     ctl = get_tcp_modem_listener()
+    with ctl._holder_lock:
+        if ctl._relay_state_change_depth > 0:
+            if hold_id not in ctl._deferred_auto_hold_ids_set:
+                ctl._deferred_auto_hold_ids.append(hold_id)
+                ctl._deferred_auto_hold_ids_set.add(hold_id)
+                ctl._relay_cycle_deferred_hold_ids.append(hold_id)
+            log_a.info(
+                "inbound_auto_identify_requeued_during_relay",
+                extra={"hold_id": hold_id},
+            )
+            return
     hold = ctl.snapshot_unbound_hold_for_auto(hold_id)
     if hold is None:
         return
