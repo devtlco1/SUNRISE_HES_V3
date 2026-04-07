@@ -1,8 +1,9 @@
 "use client"
 
 import { AlertCircleIcon, RefreshCwIcon, XIcon } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { flushSync } from "react-dom"
+import type { ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal, flushSync } from "react-dom"
 
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
@@ -72,10 +73,102 @@ function obisRowStatusBadgeVariant(
     case "unsupported":
     case "not_attempted":
     case "skipped":
+    case "cancelled":
       return "warning"
     default:
       return "neutral"
   }
+}
+
+function compactStatusLabel(st: ObisRowReadState["status"]): string {
+  switch (st) {
+    case "not_attempted":
+      return "not attempted"
+    case "skipped":
+      return "skipped"
+    case "cancelled":
+      return "cancelled"
+    case "unsupported":
+      return "unsupported"
+    case "pending":
+      return "pending"
+    case "running":
+      return "running"
+    case "ok":
+      return "ok"
+    case "error":
+      return "error"
+    default:
+      return st
+  }
+}
+
+function ObisErrorStatusHover({
+  disabled,
+  errorText,
+  children,
+}: {
+  disabled: boolean
+  errorText: string
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const anchorRef = useRef<HTMLSpanElement>(null)
+
+  if (disabled) {
+    return <span className="inline-flex">{children}</span>
+  }
+
+  return (
+    <>
+      <span
+        ref={anchorRef}
+        className="relative inline-flex cursor-help"
+        onMouseEnter={() => {
+          const el = anchorRef.current
+          if (!el) return
+          const r = el.getBoundingClientRect()
+          setPos({ x: r.left, y: r.bottom + 6 })
+          setOpen(true)
+        }}
+        onMouseLeave={() => setOpen(false)}
+        title={errorText}
+      >
+        {children}
+      </span>
+      {open
+        ? createPortal(
+            <div
+              className="pointer-events-none fixed z-[300] max-w-sm rounded-md border border-border bg-popover px-2 py-1.5 text-left text-xs leading-snug whitespace-normal break-words text-popover-foreground shadow-md"
+              style={{
+                left: pos.x,
+                top: pos.y,
+                maxHeight: "min(40vh, 280px)",
+                overflowY: "auto",
+              }}
+              role="tooltip"
+            >
+              {errorText}
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  )
+}
+
+function ObisRowStatusCell({ rs }: { rs: ObisRowReadState | undefined }) {
+  if (!rs?.status) return "—"
+  const label = compactStatusLabel(rs.status)
+  const err = (rs.error ?? "").trim()
+  const showHover = rs.status === "error" && err.length > 0
+
+  return (
+    <ObisErrorStatusHover disabled={!showHover} errorText={err}>
+      <StatusBadge variant={obisRowStatusBadgeVariant(rs.status)}>{label}</StatusBadge>
+    </ObisErrorStatusHover>
+  )
 }
 
 function boolish(v: unknown): boolean {
@@ -824,15 +917,9 @@ export function ReadingsWorkspaceClient() {
                   </TableHead>
                   <TableHead className="whitespace-nowrap">OBIS</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="whitespace-nowrap">Type</TableHead>
-                  <TableHead className="text-right">Class</TableHead>
-                  <TableHead className="text-right">Attr</TableHead>
-                  <TableHead>Unit</TableHead>
-                  <TableHead>Pack</TableHead>
+                  <TableHead className="whitespace-nowrap">Pack</TableHead>
                   <TableHead>Result</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Error</TableHead>
-                  <TableHead>Last read</TableHead>
+                  <TableHead className="whitespace-nowrap">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -868,41 +955,17 @@ export function ReadingsWorkspaceClient() {
                       <TableCell className="max-w-[10rem] align-top font-mono text-xs whitespace-normal break-all">
                         {r.obis}
                       </TableCell>
-                      <TableCell className="max-w-[min(14rem,28vw)] align-top text-xs whitespace-normal break-words">
+                      <TableCell className="max-w-[min(16rem,32vw)] align-top text-xs whitespace-normal break-words">
                         {r.description}
                       </TableCell>
-                      <TableCell className="align-top text-xs whitespace-normal break-words">
-                        {r.object_type}
-                      </TableCell>
-                      <TableCell className="text-right align-top font-mono text-xs">
-                        {r.class_id}
-                      </TableCell>
-                      <TableCell className="text-right align-top font-mono text-xs">
-                        {r.attribute}
-                      </TableCell>
-                      <TableCell className="align-top text-xs whitespace-normal break-words">
-                        {r.unit || "—"}
-                      </TableCell>
-                      <TableCell className="align-top text-xs whitespace-normal break-words">
+                      <TableCell className="max-w-[min(8rem,20vw)] align-top text-xs whitespace-normal break-words">
                         {packLabel(r.pack_key)}
                       </TableCell>
-                      <TableCell className="max-w-[min(12rem,24vw)] align-top font-mono text-xs whitespace-normal break-words">
+                      <TableCell className="max-w-[min(11rem,26vw)] align-top font-mono text-xs whitespace-normal break-words">
                         {rs?.result ?? ""}
                       </TableCell>
-                      <TableCell className="align-top text-xs">
-                        {rs?.status ? (
-                          <StatusBadge variant={obisRowStatusBadgeVariant(rs.status)}>
-                            {rs.status}
-                          </StatusBadge>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                      <TableCell className="max-w-[min(12rem,26vw)] align-top text-xs whitespace-normal break-words text-destructive">
-                        {rs?.error ?? ""}
-                      </TableCell>
-                      <TableCell className="max-w-[min(11rem,22vw)] align-top font-mono text-[10px] whitespace-normal break-words text-muted-foreground">
-                        {rs?.lastReadAt ?? "—"}
+                      <TableCell className="w-[1%] align-top whitespace-nowrap text-xs">
+                        <ObisRowStatusCell rs={rs} />
                       </TableCell>
                     </TableRow>
                   )

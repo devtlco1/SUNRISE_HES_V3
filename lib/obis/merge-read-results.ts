@@ -22,8 +22,30 @@ export type ObisRowReadState = {
     | "running"
     | "unsupported"
     | "not_attempted"
+    | "cancelled"
   error?: string
   lastReadAt: string | null
+}
+
+/** Single display string for value + unit (avoids `0 Wh Wh` when value already carries the unit). */
+export function formatObisScalarDisplay(value: string, unit: string): string {
+  const v = value.trim()
+  const u = unit.trim()
+  if (!u) return v
+  if (!v) return u
+  const vLower = v.toLowerCase()
+  const uLower = u.toLowerCase()
+  if (vLower === uLower) return v
+  if (vLower.endsWith(uLower)) {
+    const cut = v.length - u.length
+    if (cut === 0) return v
+    const sep = v[cut - 1]
+    if (sep === " " || sep === undefined) return v
+  }
+  const parts = v.split(/\s+/).filter(Boolean)
+  const last = parts[parts.length - 1]
+  if (last && last.toLowerCase() === uLower) return v
+  return `${v} ${u}`
 }
 
 export function emptyRowState(): ObisRowReadState {
@@ -68,14 +90,14 @@ export function mergeObisSelectionIntoRowState(
     else if (r.status === "unsupported") st = "unsupported"
     else if (r.status === "not_attempted") {
       const er = (r.error ?? "").toLowerCase()
-      st = er.includes("removed_from_queue_by_operator") ? "skipped" : "not_attempted"
+      if (er.includes("removed_from_queue_by_operator")) st = "skipped"
+      else if (er.includes("cancelled by operator")) st = "cancelled"
+      else st = "not_attempted"
     } else st = "error"
 
     const base = (r.value ?? "").trim()
     const u = (r.unit ?? "").trim()
-    let result = base
-    if (base && u) result = `${base} ${u}`
-    else if (!base && u) result = u
+    let result = formatObisScalarDisplay(base, u)
 
     if (r.quality && r.quality !== "good" && r.status === "ok") {
       result = result ? `${result} (${r.quality})` : r.quality
@@ -148,7 +170,7 @@ export function mergeObisJobPollIntoRowState(
     if (phase === "cancelled") {
       next[obis] = {
         result: "",
-        status: "not_attempted",
+        status: "cancelled",
         error: fatal || "Cancelled by operator",
         lastReadAt: null,
       }
@@ -209,7 +231,7 @@ export function mergeObisJobPollIntoRowState(
       if (phase === "queued" || phase === "running") {
         next[obis] = {
           result: "",
-          status: "not_attempted",
+          status: "cancelled",
           error: msg,
           lastReadAt: null,
         }
@@ -239,8 +261,9 @@ export function mergeBasicRegistersIntoRowState(
         lastReadAt: finishedAt,
       }
     } else if (val) {
+      const u = (r?.unit ?? "").trim()
       next[obis] = {
-        result: r?.unit ? `${val} ${r.unit}` : val,
+        result: formatObisScalarDisplay(val, u),
         status: "ok",
         lastReadAt: finishedAt,
       }

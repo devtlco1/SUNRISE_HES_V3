@@ -471,22 +471,65 @@ def _mark_wire_remaining_not_attempted(
         )
 
 
-# Consecutive row errors matching this pattern trigger early batch stop (remaining rows not attempted).
-_SESSION_CORRUPT_CONSEC_LIMIT = 3
-
 _SKIP_QUEUE_REASON = "removed_from_queue_by_operator"
 _CANCEL_BATCH_REASON = "Cancelled by operator"
-_SESSION_FAST_STOP_REASON = "Repeated HDLC/framing or deadline failures — batch stopped early."
+# Remaining wire rows after a clearly dead session / transport (first matching error stops the tail).
+_SESSION_STOPPED_REASON = "Session stopped — transport or framing unusable."
+# Two consecutive wire errors that are neither clearly session-broken nor ordinary row-level COSEM faults.
+_BATCH_STOPPED_AMBIGUOUS_REASON = "Batch stopped — repeated ambiguous errors (session uncertain)."
 
 
-def _error_text_looks_like_session_corruption(text: str) -> bool:
+def _session_broken_message(text: str) -> bool:
+    """True when the TCP/DLMS/HDLC session is almost certainly unusable — stop the wire tail immediately."""
     t = (text or "").lower()
-    return any(
+    if any(
         n in t
         for n in (
             "invalid hdlc frame",
             "expected: 0x3e",
             "read_deadline",
+            "broken pipe",
+            "connection reset",
+            "connection aborted",
+            "bad file descriptor",
+            "not connected",
+            "end of file",
+            "unexpected eof",
+            "errno 32",  # broken pipe (some stacks)
+            "errno 54",  # connection reset (BSD/macOS style)
+            "errno 104",  # connection reset (Linux)
+            "lost synchronization",
+            "out of sync",
+            "framing",
+            "deserialize",
+            "serialization",
+        )
+    ):
+        return True
+    if "association" in t and any(x in t for x in ("fail", "reject", "refused", "error", "abort")):
+        return True
+    if "timeout" in t and any(x in t for x in ("hdlc", "dlms", "socket", "tcp", "iec", "read")):
+        return True
+    return False
+
+
+def _ordinary_row_error_message(text: str) -> bool:
+    """Row-level COSEM / meter faults where continuing other reads is still reasonable."""
+    t = (text or "").lower()
+    return any(
+        n in t
+        for n in (
+            "access denied",
+            "read-write denied",
+            "object unavailable",
+            "object unknown",
+            "unknown object",
+            "undefined object",
+            "hardware fault",
+            "data not ready",
+            "type does not match",
+            "object attribute",
+            "temporary failure",
         )
     )
 
@@ -618,7 +661,7 @@ def _sequential_obis_wire_loop(
                 )
         return None
 
-    consecutive_corrupt = 0
+    consecutive_ambiguous_wire_errors = 0
     for wi in wire_indices:
         item = items[wi]
 
@@ -633,7 +676,7 @@ def _sequential_obis_wire_loop(
                 lastReadAt=last_at,
             )
             done += 1
-            consecutive_corrupt = 0
+            consecutive_ambiguous_wire_errors = 0
             if progress:
                 progress(
                     {
@@ -683,7 +726,7 @@ def _sequential_obis_wire_loop(
                 lastReadAt=last_at,
             )
             done += 1
-            consecutive_corrupt = 0
+            consecutive_ambiguous_wire_errors = 0
             if progress:
                 progress(
                     {
@@ -718,10 +761,6 @@ def _sequential_obis_wire_loop(
             )
             fatal = _obis_read_error_is_fatal(exc)
             err_blob = f"{exc} {slots[wi].error or ''}"
-            if _error_text_looks_like_session_corruption(err_blob):
-                consecutive_corrupt += 1
-            else:
-                consecutive_corrupt = 0
             done += 1
             if progress:
                 patch: Dict[str, Any] = {
@@ -754,13 +793,30 @@ def _sequential_obis_wire_loop(
                                 }
                             )
                 return str(exc)
-            if consecutive_corrupt >= _SESSION_CORRUPT_CONSEC_LIMIT:
+            if _session_broken_message(err_blob):
                 done = _mark_wire_after_index(
                     slots,
                     items,
                     wire_indices,
                     wi,
-                    _SESSION_FAST_STOP_REASON,
+                    _SESSION_STOPPED_REASON,
+                    "not_attempted",
+                    progress,
+                    done,
+                    total_w,
+                )
+                return None
+            if _ordinary_row_error_message(err_blob):
+                consecutive_ambiguous_wire_errors = 0
+            else:
+                consecutive_ambiguous_wire_errors += 1
+            if consecutive_ambiguous_wire_errors >= 2:
+                done = _mark_wire_after_index(
+                    slots,
+                    items,
+                    wire_indices,
+                    wi,
+                    _BATCH_STOPPED_AMBIGUOUS_REASON,
                     "not_attempted",
                     progress,
                     done,
@@ -774,37 +830,6 @@ def _sequential_obis_wire_loop(
         slots[wi] = _obis_selection_row_from_parsed(item, row, last_at)
         done += 1
         cell = slots[wi]
-        if cell is not None and cell.status == "ok":
-            consecutive_corrupt = 0
-        elif cell is not None and cell.status == "error":
-            if _error_text_looks_like_session_corruption(cell.error or ""):
-                consecutive_corrupt += 1
-            else:
-                consecutive_corrupt = 0
-            if consecutive_corrupt >= _SESSION_CORRUPT_CONSEC_LIMIT:
-                if progress:
-                    progress(
-                        {
-                            "rowDoneIndex": wi,
-                            "row": cell.model_dump(mode="json"),
-                            "completedWire": done,
-                            "totalWire": total_w,
-                        }
-                    )
-                done = _mark_wire_after_index(
-                    slots,
-                    items,
-                    wire_indices,
-                    wi,
-                    _SESSION_FAST_STOP_REASON,
-                    "not_attempted",
-                    progress,
-                    done,
-                    total_w,
-                )
-                return None
-        else:
-            consecutive_corrupt = 0
         if progress:
             progress(
                 {
@@ -814,6 +839,44 @@ def _sequential_obis_wire_loop(
                     "totalWire": total_w,
                 }
             )
+        if cell is not None and cell.status == "ok":
+            consecutive_ambiguous_wire_errors = 0
+        elif cell is not None and cell.status == "unsupported":
+            consecutive_ambiguous_wire_errors = 0
+        elif cell is not None and cell.status == "error":
+            et = cell.error or ""
+            if _session_broken_message(et):
+                done = _mark_wire_after_index(
+                    slots,
+                    items,
+                    wire_indices,
+                    wi,
+                    _SESSION_STOPPED_REASON,
+                    "not_attempted",
+                    progress,
+                    done,
+                    total_w,
+                )
+                return None
+            if _ordinary_row_error_message(et):
+                consecutive_ambiguous_wire_errors = 0
+            else:
+                consecutive_ambiguous_wire_errors += 1
+            if consecutive_ambiguous_wire_errors >= 2:
+                done = _mark_wire_after_index(
+                    slots,
+                    items,
+                    wire_indices,
+                    wi,
+                    _BATCH_STOPPED_AMBIGUOUS_REASON,
+                    "not_attempted",
+                    progress,
+                    done,
+                    total_w,
+                )
+                return None
+        else:
+            consecutive_ambiguous_wire_errors = 0
     return None
 
 
