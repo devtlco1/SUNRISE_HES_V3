@@ -211,7 +211,12 @@ export interface ObisSelectionJobRowPollView {
   row?: ObisSelectionRowResult
 }
 
-export type ObisSelectionJobPollStatus = "queued" | "running" | "completed" | "failed"
+export type ObisSelectionJobPollStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
 
 export interface ObisSelectionJobPollView {
   jobId: string

@@ -153,7 +153,11 @@ def _run_job(job_id: str, request: ReadObisSelectionRequest) -> None:
                 )
                 try:
                     envelope = adapter.read_obis_selection_inbound_tcp_sequential(
-                        request, sock, endpoint, progress_callback=progress
+                        request,
+                        sock,
+                        endpoint,
+                        progress_callback=progress,
+                        job_id=job_id,
                     )
                 finally:
                     try:

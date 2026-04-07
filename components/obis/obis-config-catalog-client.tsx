@@ -374,12 +374,20 @@ export function ObisConfigCatalogClient() {
                       <TrashIcon className="size-3.5" />
                     </Button>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{r.obis}</TableCell>
-                  <TableCell className="max-w-[200px] truncate text-xs">{r.description}</TableCell>
-                  <TableCell className="text-xs">{r.object_type}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{r.class_id}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{r.attribute}</TableCell>
-                  <TableCell className="text-xs">{packLabel(r.pack_key)}</TableCell>
+                  <TableCell className="max-w-[10rem] align-top font-mono text-xs whitespace-normal break-all">
+                    {r.obis}
+                  </TableCell>
+                  <TableCell className="max-w-[min(16rem,32vw)] align-top text-xs whitespace-normal break-words">
+                    {r.description}
+                  </TableCell>
+                  <TableCell className="align-top text-xs whitespace-normal break-words">
+                    {r.object_type}
+                  </TableCell>
+                  <TableCell className="text-right align-top font-mono text-xs">{r.class_id}</TableCell>
+                  <TableCell className="text-right align-top font-mono text-xs">{r.attribute}</TableCell>
+                  <TableCell className="align-top text-xs whitespace-normal break-words">
+                    {packLabel(r.pack_key)}
+                  </TableCell>
                   <TableCell className="text-xs">{r.enabled ? "Y" : "N"}</TableCell>
                 </TableRow>
               ))

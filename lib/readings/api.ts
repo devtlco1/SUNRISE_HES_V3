@@ -35,7 +35,14 @@ async function parseJson(res: Response): Promise<unknown> {
 function isObisSelectionJobPollView(v: unknown): v is ObisSelectionJobPollView {
   if (!v || typeof v !== "object") return false
   const o = v as Record<string, unknown>
-  return typeof o.jobId === "string" && typeof o.status === "string" && Array.isArray(o.rows)
+  const st = o.status
+  const okStatus =
+    st === "queued" ||
+    st === "running" ||
+    st === "completed" ||
+    st === "failed" ||
+    st === "cancelled"
+  return typeof o.jobId === "string" && typeof o.status === "string" && okStatus && Array.isArray(o.rows)
 }
 
 function formatReadingsProxyFailure(parsed: unknown, status: number): string {
@@ -244,6 +251,67 @@ export async function postStartTcpListenerObisSelectionJob(
       return { ok: false, error: "Invalid job start response from readings API." }
     }
     return { ok: true, data: { jobId: (parsed as { jobId: string }).jobId } }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postTcpListenerObisJobCancel(
+  jobId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<{ ok: boolean }>> {
+  try {
+    const res = await fetch(
+      `/api/readings/tcp-listener/read-obis-selection/job/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST", cache: "no-store", signal }
+    )
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
+    }
+    if (!parsed || typeof parsed !== "object" || (parsed as { ok: unknown }).ok !== true) {
+      return { ok: false, error: "Cancel rejected or invalid response." }
+    }
+    return { ok: true, data: { ok: true } }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postTcpListenerObisJobSkipRow(
+  jobId: string,
+  index: number,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<{ ok: boolean }>> {
+  try {
+    const res = await fetch(
+      `/api/readings/tcp-listener/read-obis-selection/job/${encodeURIComponent(jobId)}/skip`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index }),
+        cache: "no-store",
+        signal,
+      }
+    )
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
+    }
+    if (!parsed || typeof parsed !== "object" || (parsed as { ok: unknown }).ok !== true) {
+      return { ok: false, error: "Skip rejected or invalid response." }
+    }
+    return { ok: true, data: { ok: true } }
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") throw e
     return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }

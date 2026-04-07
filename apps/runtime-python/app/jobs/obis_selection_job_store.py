@@ -27,6 +27,7 @@ class ObisSelectionJobStatus(str, Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class ObisSelectionJobRowView(BaseModel):
@@ -71,6 +72,8 @@ class _JobInternal:
         "updated_at",
         "created_at",
         "worker_thread",
+        "cancel_requested",
+        "skipped_indices",
     )
 
     def __init__(
@@ -93,6 +96,8 @@ class _JobInternal:
         self.fatal_error: Optional[str] = None
         self.envelope: Optional[Dict[str, Any]] = None
         self.worker_thread: Optional[threading.Thread] = None
+        self.cancel_requested: bool = False
+        self.skipped_indices: set[int] = set()
         now = _iso_z()
         self.updated_at = now
         self.created_at = now
@@ -216,21 +221,72 @@ def apply_progress(job_id: str, patch: Dict[str, Any]) -> None:
         if "rowDoneIndex" in patch and "row" in patch:
             idx = int(patch["rowDoneIndex"])
             row_dict = patch["row"]
+            phase_override = patch.get("rowPhase")
             for rv in j.row_views:
                 if rv.index == idx:
-                    st = row_dict.get("status") or "error"
-                    if st == "not_attempted":
-                        rv.phase = "not_attempted"
-                    elif st == "ok":
-                        rv.phase = "ok"
-                    elif st == "unsupported":
-                        rv.phase = "unsupported"
+                    if isinstance(phase_override, str) and phase_override.strip():
+                        rv.phase = phase_override.strip()
                     else:
-                        rv.phase = "error"
+                        st = row_dict.get("status") or "error"
+                        if st == "not_attempted":
+                            rv.phase = "not_attempted"
+                        elif st == "ok":
+                            rv.phase = "ok"
+                        elif st == "unsupported":
+                            rv.phase = "unsupported"
+                        else:
+                            rv.phase = "error"
                     rv.row = row_dict
                     break
         if patch.get("fatal"):
             j.fatal_error = patch.get("fatalMessage") or "session_error"
+
+
+def request_cancel(job_id: str) -> bool:
+    """Operator cancel: worker stops before the next wire row (current read may finish)."""
+    with _lock:
+        job = _store.get(job_id)
+        if not job or job.status != ObisSelectionJobStatus.running:
+            return False
+        job.cancel_requested = True
+        job.updated_at = _iso_z()
+    return True
+
+
+def skip_queued_row(job_id: str, index: int) -> tuple[bool, str]:
+    """Remove one still-queued wire row from the batch (not started on wire yet)."""
+    with _lock:
+        job = _store.get(job_id)
+        if not job or job.status != ObisSelectionJobStatus.running:
+            return False, "JOB_NOT_RUNNING"
+        if index not in job.wire_indices:
+            return False, "NOT_A_WIRE_ROW"
+        if index in job.skipped_indices:
+            return False, "ALREADY_SKIPPED"
+        for rv in job.row_views:
+            if rv.index == index:
+                if rv.phase != "queued" or rv.row is not None:
+                    return False, "ROW_NOT_QUEUED"
+                break
+        else:
+            return False, "ROW_NOT_FOUND"
+        job.skipped_indices.add(index)
+        job.updated_at = _iso_z()
+    return True, ""
+
+
+def is_wire_index_skipped(job_id: str, wire_index: int) -> bool:
+    with _lock:
+        job = _store.get(job_id)
+        if not job:
+            return False
+        return wire_index in job.skipped_indices
+
+
+def cancel_requested(job_id: str) -> bool:
+    with _lock:
+        job = _store.get(job_id)
+        return bool(job and job.cancel_requested)
 
 
 def complete_job(job_id: str, envelope_dict: Dict[str, Any]) -> None:
@@ -238,11 +294,12 @@ def complete_job(job_id: str, envelope_dict: Dict[str, Any]) -> None:
         j = _store.get(job_id)
         if not j:
             return
-        j.status = (
-            ObisSelectionJobStatus.failed
-            if j.fatal_error
-            else ObisSelectionJobStatus.completed
-        )
+        if j.cancel_requested:
+            j.status = ObisSelectionJobStatus.cancelled
+        elif j.fatal_error:
+            j.status = ObisSelectionJobStatus.failed
+        else:
+            j.status = ObisSelectionJobStatus.completed
         j.envelope = envelope_dict
         j.updated_at = _iso_z()
         j.current_obis = None
@@ -266,8 +323,14 @@ def complete_job(job_id: str, envelope_dict: Dict[str, Any]) -> None:
                         ):
                             break
                         st = r.get("status") or "error"
+                        err_txt = str(r.get("error") or "")
                         if st == "not_attempted":
-                            rv.phase = "not_attempted"
+                            if "removed_from_queue_by_operator" in err_txt:
+                                rv.phase = "skipped"
+                            elif "cancelled by operator" in err_txt.lower():
+                                rv.phase = "cancelled"
+                            else:
+                                rv.phase = "not_attempted"
                         elif st == "ok":
                             rv.phase = "ok"
                         elif st == "unsupported":

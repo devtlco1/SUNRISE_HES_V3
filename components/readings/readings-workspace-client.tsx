@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertCircleIcon, RefreshCwIcon } from "lucide-react"
+import { AlertCircleIcon, RefreshCwIcon, XIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { flushSync } from "react-dom"
 
@@ -22,6 +22,8 @@ import {
   getTcpListenerObisSelectionJobPoll,
   postReadObisSelectionDirect,
   postStartTcpListenerObisSelectionJob,
+  postTcpListenerObisJobCancel,
+  postTcpListenerObisJobSkipRow,
   postRelayDisconnectReadings,
   postRelayReadStatusReadings,
   postRelayReconnectReadings,
@@ -69,6 +71,7 @@ function obisRowStatusBadgeVariant(
       return "info"
     case "unsupported":
     case "not_attempted":
+    case "skipped":
       return "warning"
     default:
       return "neutral"
@@ -120,6 +123,9 @@ export function ReadingsWorkspaceClient() {
     ReadObisSelectionPayload
   > | null>(null)
   const [obisJobProgress, setObisJobProgress] = useState<string | null>(null)
+  const [inboundObisJobId, setInboundObisJobId] = useState<string | null>(null)
+  const [obisJobRowPhases, setObisJobRowPhases] = useState<Record<string, string>>({})
+  const [obisJobCancelling, setObisJobCancelling] = useState(false)
 
   const packKeys = useMemo(() => packKeysForCatalogRows(catalog), [catalog])
 
@@ -272,6 +278,8 @@ export function ReadingsWorkspaceClient() {
 
     setBusy(true)
     setObisJobProgress(null)
+    setInboundObisJobId(null)
+    setObisJobRowPhases({})
     try {
       if (transport === "inbound") {
         const start = await postStartTcpListenerObisSelectionJob(body)
@@ -280,6 +288,7 @@ export function ReadingsWorkspaceClient() {
           return
         }
         const jobId = start.data.jobId
+        setInboundObisJobId(jobId)
         const deadline = Date.now() + OBIS_JOB_MAX_MS
         let last: ObisSelectionJobPollView | null = null
         let pollAborted = false
@@ -292,6 +301,9 @@ export function ReadingsWorkspaceClient() {
           }
           const snap = jr.data
           last = snap
+          setObisJobRowPhases(
+            Object.fromEntries(snap.rows.map((row) => [row.obis, row.phase]))
+          )
           flushSync(() => {
             setRowState((p) => mergeObisJobPollIntoRowState(p, snap))
           })
@@ -304,12 +316,24 @@ export function ReadingsWorkspaceClient() {
             line += " (stale: job may be stuck)"
           }
           setObisJobProgress(line)
-          if (snap.status === "completed" || snap.status === "failed") {
+          if (
+            snap.status === "completed" ||
+            snap.status === "failed" ||
+            snap.status === "cancelled"
+          ) {
             if (snap.envelope) {
               setLastEnv(snap.envelope as RuntimeResponseEnvelope<ReadObisSelectionPayload>)
             }
             const okWire = snap.rows.filter((r) => r.row?.status === "ok").length
-            if (snap.fatalError) {
+            if (snap.status === "cancelled") {
+              setActionError(
+                okWire > 0
+                  ? `Stopped after ${okWire} ok row(s).`
+                  : snap.envelope?.error?.message ??
+                    snap.envelope?.message ??
+                    "Stopped by operator."
+              )
+            } else if (snap.fatalError) {
               setActionError(
                 okWire > 0
                   ? `Session ended after ${okWire} ok row(s). ${snap.fatalError}`
@@ -360,10 +384,38 @@ export function ReadingsWorkspaceClient() {
     } finally {
       setBusy(false)
       setObisJobProgress(null)
+      setInboundObisJobId(null)
+      setObisJobRowPhases({})
+      setObisJobCancelling(false)
       if (transport === "inbound") {
         await loadStatus()
       }
     }
+  }
+
+  async function onStopObisJob() {
+    if (!inboundObisJobId) return
+    setObisJobCancelling(true)
+    try {
+      const r = await postTcpListenerObisJobCancel(inboundObisJobId)
+      if (!r.ok) setActionError(r.error)
+    } finally {
+      setObisJobCancelling(false)
+    }
+  }
+
+  async function onSkipQueuedJobRow(obis: string) {
+    const jid = inboundObisJobId
+    if (!jid) return
+    const jr = await getTcpListenerObisSelectionJobPoll(jid)
+    if (!jr.ok) {
+      setActionError(jr.error)
+      return
+    }
+    const row = jr.data.rows.find((x) => x.obis === obis)
+    if (!row || row.phase !== "queued") return
+    const sk = await postTcpListenerObisJobSkipRow(jid, row.index)
+    if (!sk.ok) setActionError(sk.error)
   }
 
   async function onReadSelected() {
@@ -705,6 +757,17 @@ export function ReadingsWorkspaceClient() {
             <Button type="button" size="sm" variant="outline" onClick={clearSelection}>
               Clear selection
             </Button>
+            {transport === "inbound" && busy && inboundObisJobId ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={obisJobCancelling}
+                onClick={() => void onStopObisJob()}
+              >
+                {obisJobCancelling ? "Stopping…" : "Stop job"}
+              </Button>
+            ) : null}
             <Button type="button" size="sm" variant="outline" disabled title="Planned">
               Export
             </Button>
@@ -719,13 +782,17 @@ export function ReadingsWorkspaceClient() {
           {actionError ? (
             <p className="text-xs text-destructive">{actionError}</p>
           ) : null}
-          {busy ? <p className="text-xs text-muted-foreground">Working…</p> : null}
+          {busy ? (
+            <p className="text-xs text-muted-foreground">
+              {obisJobCancelling ? "Cancelling…" : "Working…"}
+            </p>
+          ) : null}
           {obisJobProgress ? (
             <p className="text-xs text-muted-foreground">{obisJobProgress}</p>
           ) : null}
 
           {lastEnv ? (
-            <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+            <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs whitespace-normal break-words">
               <span className="font-medium">Last envelope</span>{" "}
               <span className="font-mono">{lastEnv.operation}</span> ok=
               {String(lastEnv.ok)} simulated={String(lastEnv.simulated)} detail=
@@ -752,6 +819,9 @@ export function ReadingsWorkspaceClient() {
                       }}
                     />
                   </TableHead>
+                  <TableHead className="w-8 p-1 text-center text-[10px] font-normal text-muted-foreground">
+                    Q
+                  </TableHead>
                   <TableHead className="whitespace-nowrap">OBIS</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="whitespace-nowrap">Type</TableHead>
@@ -762,7 +832,7 @@ export function ReadingsWorkspaceClient() {
                   <TableHead>Result</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Error</TableHead>
-                  <TableHead className="whitespace-nowrap">Last read</TableHead>
+                  <TableHead>Last read</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -770,7 +840,7 @@ export function ReadingsWorkspaceClient() {
                   const rs = rowState[r.obis]
                   return (
                     <TableRow key={r.obis}>
-                      <TableCell>
+                      <TableCell className="align-top">
                         <input
                           type="checkbox"
                           checked={selected.has(r.obis)}
@@ -778,23 +848,48 @@ export function ReadingsWorkspaceClient() {
                           aria-label={`Select ${r.obis}`}
                         />
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{r.obis}</TableCell>
-                      <TableCell className="max-w-[180px] text-xs">
+                      <TableCell className="p-1 align-top text-center">
+                        {transport === "inbound" &&
+                        busy &&
+                        inboundObisJobId &&
+                        obisJobRowPhases[r.obis] === "queued" ? (
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="size-7 text-muted-foreground hover:text-destructive"
+                            aria-label={`Remove ${r.obis} from read queue`}
+                            onClick={() => void onSkipQueuedJobRow(r.obis)}
+                          >
+                            <XIcon className="size-3.5" />
+                          </Button>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="max-w-[10rem] align-top font-mono text-xs whitespace-normal break-all">
+                        {r.obis}
+                      </TableCell>
+                      <TableCell className="max-w-[min(14rem,28vw)] align-top text-xs whitespace-normal break-words">
                         {r.description}
                       </TableCell>
-                      <TableCell className="text-xs">{r.object_type}</TableCell>
-                      <TableCell className="text-right font-mono text-xs">
+                      <TableCell className="align-top text-xs whitespace-normal break-words">
+                        {r.object_type}
+                      </TableCell>
+                      <TableCell className="text-right align-top font-mono text-xs">
                         {r.class_id}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
+                      <TableCell className="text-right align-top font-mono text-xs">
                         {r.attribute}
                       </TableCell>
-                      <TableCell className="text-xs">{r.unit || "—"}</TableCell>
-                      <TableCell className="text-xs">{packLabel(r.pack_key)}</TableCell>
-                      <TableCell className="max-w-[140px] truncate font-mono text-xs">
+                      <TableCell className="align-top text-xs whitespace-normal break-words">
+                        {r.unit || "—"}
+                      </TableCell>
+                      <TableCell className="align-top text-xs whitespace-normal break-words">
+                        {packLabel(r.pack_key)}
+                      </TableCell>
+                      <TableCell className="max-w-[min(12rem,24vw)] align-top font-mono text-xs whitespace-normal break-words">
                         {rs?.result ?? ""}
                       </TableCell>
-                      <TableCell className="text-xs">
+                      <TableCell className="align-top text-xs">
                         {rs?.status ? (
                           <StatusBadge variant={obisRowStatusBadgeVariant(rs.status)}>
                             {rs.status}
@@ -803,10 +898,10 @@ export function ReadingsWorkspaceClient() {
                           "—"
                         )}
                       </TableCell>
-                      <TableCell className="max-w-[120px] truncate text-xs text-destructive">
+                      <TableCell className="max-w-[min(12rem,26vw)] align-top text-xs whitespace-normal break-words text-destructive">
                         {rs?.error ?? ""}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-[10px] text-muted-foreground">
+                      <TableCell className="max-w-[min(11rem,22vw)] align-top font-mono text-[10px] whitespace-normal break-words text-muted-foreground">
                         {rs?.lastReadAt ?? "—"}
                       </TableCell>
                     </TableRow>

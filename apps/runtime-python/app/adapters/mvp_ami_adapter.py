@@ -471,6 +471,111 @@ def _mark_wire_remaining_not_attempted(
         )
 
 
+# Consecutive row errors matching this pattern trigger early batch stop (remaining rows not attempted).
+_SESSION_CORRUPT_CONSEC_LIMIT = 3
+
+_SKIP_QUEUE_REASON = "removed_from_queue_by_operator"
+_CANCEL_BATCH_REASON = "Cancelled by operator"
+_SESSION_FAST_STOP_REASON = "Repeated HDLC/framing or deadline failures — batch stopped early."
+
+
+def _error_text_looks_like_session_corruption(text: str) -> bool:
+    t = (text or "").lower()
+    return any(
+        n in t
+        for n in (
+            "invalid hdlc frame",
+            "expected: 0x3e",
+            "read_deadline",
+        )
+    )
+
+
+def _mark_wire_forward_from_index(
+    slots: List[Optional[ObisSelectionRowResult]],
+    items: List[ObisSelectionItem],
+    wire_indices: List[int],
+    from_wi: int,
+    error_message: str,
+    row_phase: str,
+    progress: Optional[Callable[[Dict[str, Any]], None]],
+    done: int,
+    total_w: int,
+) -> int:
+    """Mark wire rows from from_wi (inclusive) to end of wire order as not_attempted."""
+    try:
+        pos = wire_indices.index(from_wi)
+    except ValueError:
+        return done
+    last_at = _iso_z(datetime.now(timezone.utc))
+    for wj in wire_indices[pos:]:
+        cell = slots[wj]
+        if cell is not None and getattr(cell, "status", None) == "ok":
+            continue
+        it = items[wj]
+        slots[wj] = ObisSelectionRowResult(
+            obis=it.obis,
+            value="",
+            status="not_attempted",
+            error=error_message,
+            packKey=it.packKey,
+            lastReadAt=last_at,
+        )
+        done += 1
+        if progress:
+            progress(
+                {
+                    "rowDoneIndex": wj,
+                    "row": slots[wj].model_dump(mode="json"),
+                    "rowPhase": row_phase,
+                    "completedWire": done,
+                    "totalWire": total_w,
+                }
+            )
+    return done
+
+
+def _mark_wire_after_index(
+    slots: List[Optional[ObisSelectionRowResult]],
+    items: List[ObisSelectionItem],
+    wire_indices: List[int],
+    after_wi: int,
+    error_message: str,
+    row_phase: str,
+    progress: Optional[Callable[[Dict[str, Any]], None]],
+    done: int,
+    total_w: int,
+) -> int:
+    """Mark wire rows strictly after after_wi in wire order."""
+    try:
+        pos = wire_indices.index(after_wi)
+    except ValueError:
+        return done
+    last_at = _iso_z(datetime.now(timezone.utc))
+    for wj in wire_indices[pos + 1 :]:
+        it = items[wj]
+        slots[wj] = ObisSelectionRowResult(
+            obis=it.obis,
+            value="",
+            status="not_attempted",
+            error=error_message,
+            packKey=it.packKey,
+            lastReadAt=last_at,
+        )
+        done += 1
+        if progress:
+            progress(
+                {
+                    "rowDoneIndex": wj,
+                    "row": slots[wj].model_dump(mode="json"),
+                    "rowPhase": row_phase,
+                    "completedWire": done,
+                    "totalWire": total_w,
+                }
+            )
+    return done
+
+
 def _sequential_obis_wire_loop(
     client: Any,
     transport: Any,
@@ -478,6 +583,8 @@ def _sequential_obis_wire_loop(
     slots: List[Optional[ObisSelectionRowResult]],
     wire_indices: List[int],
     progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    abort_check: Optional[Callable[[], Optional[str]]] = None,
+    skip_check: Optional[Callable[[int], bool]] = None,
 ) -> Optional[str]:
     """
     After IEC + DLMS association on transport. Reads each wire index in order.
@@ -511,8 +618,50 @@ def _sequential_obis_wire_loop(
                 )
         return None
 
+    consecutive_corrupt = 0
     for wi in wire_indices:
         item = items[wi]
+
+        if skip_check and skip_check(wi):
+            last_at = _iso_z(datetime.now(timezone.utc))
+            slots[wi] = ObisSelectionRowResult(
+                obis=item.obis,
+                value="",
+                status="not_attempted",
+                error=_SKIP_QUEUE_REASON,
+                packKey=item.packKey,
+                lastReadAt=last_at,
+            )
+            done += 1
+            consecutive_corrupt = 0
+            if progress:
+                progress(
+                    {
+                        "rowDoneIndex": wi,
+                        "row": slots[wi].model_dump(mode="json"),
+                        "rowPhase": "skipped",
+                        "completedWire": done,
+                        "totalWire": total_w,
+                    }
+                )
+            continue
+
+        if abort_check:
+            amsg = abort_check()
+            if amsg:
+                done = _mark_wire_forward_from_index(
+                    slots,
+                    items,
+                    wire_indices,
+                    wi,
+                    amsg,
+                    "cancelled",
+                    progress,
+                    done,
+                    total_w,
+                )
+                return None
+
         if progress:
             progress(
                 {
@@ -534,6 +683,7 @@ def _sequential_obis_wire_loop(
                 lastReadAt=last_at,
             )
             done += 1
+            consecutive_corrupt = 0
             if progress:
                 progress(
                     {
@@ -567,6 +717,11 @@ def _sequential_obis_wire_loop(
                 lastReadAt=last_at,
             )
             fatal = _obis_read_error_is_fatal(exc)
+            err_blob = f"{exc} {slots[wi].error or ''}"
+            if _error_text_looks_like_session_corruption(err_blob):
+                consecutive_corrupt += 1
+            else:
+                consecutive_corrupt = 0
             done += 1
             if progress:
                 patch: Dict[str, Any] = {
@@ -599,17 +754,62 @@ def _sequential_obis_wire_loop(
                                 }
                             )
                 return str(exc)
+            if consecutive_corrupt >= _SESSION_CORRUPT_CONSEC_LIMIT:
+                done = _mark_wire_after_index(
+                    slots,
+                    items,
+                    wire_indices,
+                    wi,
+                    _SESSION_FAST_STOP_REASON,
+                    "not_attempted",
+                    progress,
+                    done,
+                    total_w,
+                )
+                return None
             continue
 
         row = chunk.get(item.obis) if isinstance(chunk, dict) else {}
         last_at = _iso_z(datetime.now(timezone.utc))
         slots[wi] = _obis_selection_row_from_parsed(item, row, last_at)
         done += 1
+        cell = slots[wi]
+        if cell is not None and cell.status == "ok":
+            consecutive_corrupt = 0
+        elif cell is not None and cell.status == "error":
+            if _error_text_looks_like_session_corruption(cell.error or ""):
+                consecutive_corrupt += 1
+            else:
+                consecutive_corrupt = 0
+            if consecutive_corrupt >= _SESSION_CORRUPT_CONSEC_LIMIT:
+                if progress:
+                    progress(
+                        {
+                            "rowDoneIndex": wi,
+                            "row": cell.model_dump(mode="json"),
+                            "completedWire": done,
+                            "totalWire": total_w,
+                        }
+                    )
+                done = _mark_wire_after_index(
+                    slots,
+                    items,
+                    wire_indices,
+                    wi,
+                    _SESSION_FAST_STOP_REASON,
+                    "not_attempted",
+                    progress,
+                    done,
+                    total_w,
+                )
+                return None
+        else:
+            consecutive_corrupt = 0
         if progress:
             progress(
                 {
                     "rowDoneIndex": wi,
-                    "row": slots[wi].model_dump(mode="json"),
+                    "row": slots[wi].model_dump(mode="json"),  # type: ignore[union-attr]
                     "completedWire": done,
                     "totalWire": total_w,
                 }
@@ -627,6 +827,7 @@ def _finalize_obis_selection_filled_slots(
     assoc_ok: bool,
     envelope_transport_mode: str,
     tcp_endpoint: Optional[str],
+    operator_cancel_message: Optional[str] = None,
 ) -> RuntimeResponseEnvelope:
     """Build envelope when slots are already filled (sequential job path)."""
     finished = datetime.now(timezone.utc)
@@ -662,7 +863,41 @@ def _finalize_obis_selection_filled_slots(
         1 for i in wire_indices if slots[i] is not None and slots[i].status == "ok"  # type: ignore[union-attr]
     )
     n_wire = len(wire_indices)
-    transport_extras: dict[str, Any] = {"transportMode": envelope_transport_mode}
+    verified = ok_wire > 0
+
+    if operator_cancel_message:
+        duration_ms = max(1, int((finished - started).total_seconds() * 1000))
+        transport_extras: dict[str, Any] = {"transportMode": envelope_transport_mode, "sequential": True}
+        if tcp_endpoint:
+            transport_extras["tcpEndpoint"] = tcp_endpoint
+        return RuntimeResponseEnvelope(
+            ok=False,
+            simulated=False,
+            operation="readObisSelection",
+            meterId=request.meterId,
+            startedAt=_iso_z(started),
+            finishedAt=last_at,
+            durationMs=duration_ms,
+            message=operator_cancel_message,
+            transportState="disconnected",
+            associationState="associated",
+            payload=ReadObisSelectionPayload(rows=final_rows),
+            error=RuntimeErrorInfo(
+                code="OBIS_SELECTION_CANCELLED_BY_OPERATOR",
+                message=operator_cancel_message,
+                details=transport_extras,
+            ),
+            diagnostics=RuntimeExecutionDiagnostics(
+                outcome="verified_on_wire_success" if verified else "attempted_failed",  # type: ignore[arg-type]
+                capabilityStage="cosem_read",
+                transportAttempted=True,
+                associationAttempted=True,
+                verifiedOnWire=verified,
+                detailCode="OBIS_SELECTION_CANCELLED_BY_OPERATOR",
+            ),
+        )
+
+    transport_extras = {"transportMode": envelope_transport_mode}
     if tcp_endpoint:
         transport_extras["tcpEndpoint"] = tcp_endpoint
 
@@ -711,7 +946,6 @@ def _finalize_obis_selection_filled_slots(
         )
 
     partial = n_wire > 0 and ok_wire < n_wire
-    verified = ok_wire > 0
 
     if envelope_transport_mode == "tcp_inbound":
         detail = (
@@ -1966,6 +2200,7 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
         sock: socket.socket,
         remote_endpoint: str,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        job_id: Optional[str] = None,
     ) -> RuntimeResponseEnvelope:
         """
         One IEC + association, then each OBIS read separately (for job progress / long selections).
@@ -2076,6 +2311,21 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                 tcp_endpoint=remote_endpoint,
             )
 
+        from app.jobs import obis_selection_job_store as _obis_job_store
+
+        abort_check: Optional[Callable[[], Optional[str]]] = None
+        skip_check: Optional[Callable[[int], bool]] = None
+        if job_id:
+
+            def _abort() -> Optional[str]:
+                return _CANCEL_BATCH_REASON if _obis_job_store.cancel_requested(job_id) else None
+
+            def _skip(wi: int) -> bool:
+                return _obis_job_store.is_wire_index_skipped(job_id, wi)
+
+            abort_check = _abort
+            skip_check = _skip
+
         _sequential_obis_wire_loop(
             client,
             transport,
@@ -2083,6 +2333,8 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             slots,
             wire_indices,
             progress_callback,
+            abort_check=abort_check,
+            skip_check=skip_check,
         )
 
         try:
@@ -2090,6 +2342,10 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
                 client._try_gurux_disconnect(transport, gx)
         except Exception:  # noqa: BLE001
             pass
+
+        op_cancel: Optional[str] = None
+        if job_id and _obis_job_store.cancel_requested(job_id):
+            op_cancel = _CANCEL_BATCH_REASON
 
         return _finalize_obis_selection_filled_slots(
             request=request,
@@ -2100,6 +2356,7 @@ class MvpAmiRuntimeAdapter(ProtocolRuntimeAdapter):
             assoc_ok=True,
             envelope_transport_mode="tcp_inbound",
             tcp_endpoint=remote_endpoint,
+            operator_cancel_message=op_cancel,
         )
 
     def read_obis_selection_on_accepted_tcp_socket(

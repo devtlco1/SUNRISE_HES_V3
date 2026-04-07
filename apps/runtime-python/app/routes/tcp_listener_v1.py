@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from app.jobs import obis_selection_job_store as obis_job_store
 from app.routes.runtime_v1 import verify_service_token
@@ -153,6 +154,42 @@ def get_tcp_listener_read_obis_selection_job(job_id: str) -> JSONResponse:
             content={"error": "JOB_NOT_FOUND", "message": job_id},
         )
     return JSONResponse(content=view.model_dump(mode="json"))
+
+
+class ObisJobSkipBody(BaseModel):
+    index: int = Field(ge=0, description="selectedItems index; must still be queued on the wire")
+
+
+@router.post(
+    "/read-obis-selection/job/{job_id}/cancel",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_read_obis_selection_job_cancel(job_id: str) -> JSONResponse:
+    """Request cooperative cancel: worker stops before the next OBIS (current read may finish)."""
+    if obis_job_store.request_cancel(job_id):
+        return JSONResponse(content={"ok": True, "jobId": job_id})
+    return JSONResponse(
+        status_code=404,
+        content={"ok": False, "error": "CANCEL_REJECTED", "message": "Job is not running."},
+    )
+
+
+@router.post(
+    "/read-obis-selection/job/{job_id}/skip",
+    dependencies=[Depends(verify_service_token)],
+)
+def post_tcp_listener_read_obis_selection_job_skip(
+    job_id: str,
+    body: ObisJobSkipBody,
+) -> JSONResponse:
+    """Skip one still-queued wire row (operator X); does not abort the whole job."""
+    ok, code = obis_job_store.skip_queued_row(job_id, body.index)
+    if ok:
+        return JSONResponse(content={"ok": True, "jobId": job_id, "index": body.index})
+    return JSONResponse(
+        status_code=400,
+        content={"ok": False, "error": code, "message": "Skip not allowed for this row or job."},
+    )
 
 
 @router.post(

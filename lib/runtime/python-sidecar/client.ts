@@ -327,6 +327,78 @@ export async function getTcpListenerReadObisSelectionJobFromPythonSidecar(
 }
 
 /**
+ * Server-only: POST cancel on inbound sequential OBIS job.
+ */
+export async function postTcpListenerObisJobCancelToPythonSidecar(
+  jobId: string
+): Promise<{ ok: boolean; jobId?: string }> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {}
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/read-obis-selection/job/${encodeURIComponent(jobId)}/cancel`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text, url)
+  }
+  try {
+    return JSON.parse(text) as { ok: boolean; jobId?: string }
+  } catch {
+    throw new Error("Python sidecar returned non-JSON cancel body")
+  }
+}
+
+/**
+ * Server-only: POST skip-queued-row on inbound sequential OBIS job.
+ */
+export async function postTcpListenerObisJobSkipToPythonSidecar(
+  jobId: string,
+  index: number
+): Promise<{ ok: boolean; jobId?: string; index?: number }> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const url = `${base}/v1/runtime/tcp-listener/read-obis-selection/job/${encodeURIComponent(jobId)}/skip`
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ index }),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text, url)
+  }
+  try {
+    return JSON.parse(text) as { ok: boolean; jobId?: string; index?: number }
+  } catch {
+    throw new Error("Python sidecar returned non-JSON skip body")
+  }
+}
+
+/**
  * Server-only: POST /v1/runtime/read-basic-registers on the Python sidecar.
  */
 export async function postReadBasicRegistersToPythonSidecar(

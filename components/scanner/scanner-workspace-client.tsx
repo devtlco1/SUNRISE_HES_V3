@@ -247,10 +247,10 @@ export function ScannerWorkspaceClient() {
           </TableHeader>
           <TableBody>
             <TableRow>
-              <TableCell className="font-mono text-xs">
+              <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-xs whitespace-normal break-all">
                 {remoteEp ?? "—"}
               </TableCell>
-              <TableCell className="font-mono text-[10px] text-muted-foreground">
+              <TableCell className="max-w-[min(12rem,28vw)] align-top font-mono text-[10px] whitespace-normal break-words text-muted-foreground">
                 {stagedSince ?? "—"}
               </TableCell>
               <TableCell>
@@ -258,7 +258,7 @@ export function ScannerWorkspaceClient() {
                   {stagedPresent ? "open" : "none"}
                 </StatusBadge>
               </TableCell>
-              <TableCell className="max-w-[200px] truncate font-mono text-xs">
+              <TableCell className="max-w-[min(14rem,32vw)] align-top font-mono text-xs whitespace-normal break-words">
                 {identifiedSerial ?? "—"}
                 {identifyState === "error" ? (
                   <span className="ml-1 text-destructive">failed</span>

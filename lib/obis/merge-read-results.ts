@@ -66,8 +66,10 @@ export function mergeObisSelectionIntoRowState(
     let st: ObisRowReadState["status"]
     if (r.status === "ok") st = "ok"
     else if (r.status === "unsupported") st = "unsupported"
-    else if (r.status === "not_attempted") st = "not_attempted"
-    else st = "error"
+    else if (r.status === "not_attempted") {
+      const er = (r.error ?? "").toLowerCase()
+      st = er.includes("removed_from_queue_by_operator") ? "skipped" : "not_attempted"
+    } else st = "error"
 
     const base = (r.value ?? "").trim()
     const u = (r.unit ?? "").trim()
@@ -97,7 +99,8 @@ export function mergeObisJobPollIntoRowState(
   const next = { ...prev }
   const curObis =
     typeof job.currentObis === "string" && job.currentObis.trim() ? job.currentObis.trim() : null
-  const terminal = job.status === "completed" || job.status === "failed"
+  const terminal =
+    job.status === "completed" || job.status === "failed" || job.status === "cancelled"
   const fatal = (job.fatalError ?? "").trim()
 
   for (const rv of job.rows) {
@@ -129,6 +132,24 @@ export function mergeObisJobPollIntoRowState(
       next[obis] = {
         result: "",
         status: "pending",
+        lastReadAt: null,
+      }
+      continue
+    }
+    if (phase === "skipped") {
+      next[obis] = {
+        result: "",
+        status: "skipped",
+        error: "removed_from_queue_by_operator",
+        lastReadAt: null,
+      }
+      continue
+    }
+    if (phase === "cancelled") {
+      next[obis] = {
+        result: "",
+        status: "not_attempted",
+        error: fatal || "Cancelled by operator",
         lastReadAt: null,
       }
       continue
@@ -172,6 +193,24 @@ export function mergeObisJobPollIntoRowState(
           result: "",
           status: "not_attempted",
           error: fatal,
+          lastReadAt: null,
+        }
+      }
+    }
+  }
+
+  if (terminal && job.status === "cancelled") {
+    const msg = fatal || "Cancelled by operator"
+    for (const rv of job.rows) {
+      const obis = rv.obis
+      const cur = next[obis]
+      if (cur?.status === "ok" || cur?.status === "skipped") continue
+      const phase = (rv.phase || "").toLowerCase()
+      if (phase === "queued" || phase === "running") {
+        next[obis] = {
+          result: "",
+          status: "not_attempted",
+          error: msg,
           lastReadAt: null,
         }
       }
