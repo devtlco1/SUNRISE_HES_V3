@@ -2,7 +2,7 @@
 
 import { ConfigurationCsvToolbar } from "@/components/configuration/configuration-csv-toolbar"
 import { PageHeader } from "@/components/shared/page-header"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Sheet,
@@ -19,7 +19,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { configurationHubHref } from "@/lib/configuration/modules"
 import {
   operationalSheetBodyScroll,
   operationalSheetContentNarrow,
@@ -32,7 +31,6 @@ import type {
   MeterRelayStatus,
 } from "@/types/meter"
 import { cn } from "@/lib/utils"
-import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
 const phaseOptions: { v: MeterPhaseType; label: string }[] = [
@@ -205,20 +203,7 @@ export function MeterProfilesPageClient() {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Meter Profiles"
-        actions={
-          <Link
-            href={configurationHubHref}
-            className={cn(
-              buttonVariants({ variant: "outline", size: "sm" }),
-              "h-8"
-            )}
-          >
-            Configuration
-          </Link>
-        }
-      />
+      <PageHeader title="Meter Profiles" />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button type="button" size="sm" className="h-8" onClick={openCreate}>

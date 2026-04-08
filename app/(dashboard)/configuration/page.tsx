@@ -1,5 +1,6 @@
-import { ConfigurationHub } from "@/components/configuration/configuration-hub"
+import { redirect } from "next/navigation"
 
+/** Hub URL is not a working destination; sidebar opens child routes directly. */
 export default function ConfigurationPage() {
-  return <ConfigurationHub />
+  redirect("/configuration/meter-profiles")
 }

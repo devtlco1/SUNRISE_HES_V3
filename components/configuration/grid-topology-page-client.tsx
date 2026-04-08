@@ -2,7 +2,7 @@
 
 import { ConfigurationCsvToolbar } from "@/components/configuration/configuration-csv-toolbar"
 import { PageHeader } from "@/components/shared/page-header"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Sheet,
@@ -20,7 +20,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { allocateConfigId } from "@/lib/configuration/config-id"
-import { configurationHubHref } from "@/lib/configuration/modules"
 import {
   operationalSheetBodyScroll,
   operationalSheetContentNarrow,
@@ -32,8 +31,6 @@ import type {
   TransformerRow,
   ZoneRow,
 } from "@/types/configuration"
-import { cn } from "@/lib/utils"
-import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
 type EditKind = "feeder" | "transformer" | "zone"
@@ -299,20 +296,7 @@ export function GridTopologyPageClient() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Grid Topology"
-        actions={
-          <Link
-            href={configurationHubHref}
-            className={cn(
-              buttonVariants({ variant: "outline", size: "sm" }),
-              "h-8"
-            )}
-          >
-            Configuration
-          </Link>
-        }
-      />
+      <PageHeader title="Grid Topology" />
       {saveErr ? <p className="text-xs text-destructive">{saveErr}</p> : null}
 
       <section className="space-y-3">

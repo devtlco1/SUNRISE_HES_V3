@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/sheet"
 import { MainNavList } from "@/components/layout/main-nav-list"
 import {
-  configurationHubHref,
   configurationModuleHref,
   configurationModules,
 } from "@/lib/configuration/modules"
@@ -36,7 +35,6 @@ const pathTitle: Record<string, string> = {
   "/scanner": "Scanner",
   "/readings": "Readings",
   "/obis-config": "OBIS catalog",
-  [configurationHubHref]: "Configuration",
   ...Object.fromEntries(
     configurationModules.map((m) => [configurationModuleHref(m), m.title])
   ),
