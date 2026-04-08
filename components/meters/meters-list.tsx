@@ -1,21 +1,31 @@
 "use client"
 
 import { MoreHorizontalIcon, SearchIcon } from "lucide-react"
-import { useEffect, useMemo, useState, useCallback } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react"
 
 import { TableBodySkeleton } from "@/components/data-table/table-body-skeleton"
 import { TableEmpty } from "@/components/data-table/table-empty"
 import { TablePagination } from "@/components/data-table/table-pagination"
 import { TableShell } from "@/components/data-table/table-shell"
 import { TableToolbar } from "@/components/data-table/table-toolbar"
-import { MeterDetailsSheet } from "@/components/meters/meter-details-sheet"
+import {
+  MeterDetailsSheet,
+  type MeterSheetIntent,
+} from "@/components/meters/meter-details-sheet"
 import { FilterBar } from "@/components/shared/filter-bar"
 import { FilterSelect } from "@/components/shared/filter-select"
 import { SectionCard } from "@/components/shared/section-card"
 import { StatusBadge } from "@/components/shared/status-badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -36,48 +46,92 @@ import {
   fetchMeters,
 } from "@/lib/meters/api"
 import {
-  operationalListPageStackClass,
-  operationalMonoIdTriggerClass,
-  operationalRowActionTriggerClass,
-} from "@/lib/ui/operational"
-import {
   formatAlarmState,
   formatCommStatus,
   formatPhaseType,
   formatRelayStatus,
 } from "@/lib/meters/format"
+import { cn } from "@/lib/utils"
+import {
+  operationalListPageStackClass,
+  operationalMonoIdTriggerClass,
+  operationalRowActionTriggerClass,
+} from "@/lib/ui/operational"
 import type { MeterListRow } from "@/types/meter"
 
 const ALL = "all"
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 
-function MeterTableHeaderRow() {
-  return (
-    <TableRow className="hover:bg-transparent">
-      <TableHead className="w-[140px]">Serial</TableHead>
-      <TableHead className="w-[160px] text-muted-foreground">Internal ID</TableHead>
-      <TableHead className="min-w-[200px]">
-        Location / Feeder
-      </TableHead>
-      <TableHead className="min-w-[160px]">
-        Manufacturer / Model
-      </TableHead>
-      <TableHead className="w-[110px]">Comm</TableHead>
-      <TableHead className="w-[110px]">Relay</TableHead>
-      <TableHead className="w-[128px]">Last reading</TableHead>
-      <TableHead className="w-[128px]">Last comm</TableHead>
-      <TableHead className="w-[100px]">Alarm</TableHead>
-      <TableHead className="w-[72px] text-right">Actions</TableHead>
-    </TableRow>
-  )
+const COL_STORAGE_KEY = "sunrise-meters-columns-v1"
+
+export type MetersColumnKey =
+  | "serial"
+  | "internalId"
+  | "location"
+  | "mfr"
+  | "comm"
+  | "relay"
+  | "lastReading"
+  | "lastComm"
+  | "alarm"
+  | "actions"
+
+const COL_LABELS: Record<MetersColumnKey, string> = {
+  serial: "Serial",
+  internalId: "Internal ID",
+  location: "Location / Feeder",
+  mfr: "Manufacturer / Model",
+  comm: "Comm",
+  relay: "Relay",
+  lastReading: "Last reading",
+  lastComm: "Last comm",
+  alarm: "Alarm",
+  actions: "Actions",
+}
+
+function defaultColumns(): Record<MetersColumnKey, boolean> {
+  return {
+    serial: true,
+    internalId: true,
+    location: true,
+    mfr: true,
+    comm: true,
+    relay: true,
+    lastReading: true,
+    lastComm: true,
+    alarm: true,
+    actions: true,
+  }
+}
+
+function loadColumnVisibility(): Record<MetersColumnKey, boolean> {
+  if (typeof window === "undefined") return defaultColumns()
+  try {
+    const raw = localStorage.getItem(COL_STORAGE_KEY)
+    if (!raw) return defaultColumns()
+    const o = JSON.parse(raw) as Partial<Record<MetersColumnKey, boolean>>
+    const base = defaultColumns()
+    for (const k of Object.keys(base) as MetersColumnKey[]) {
+      if (typeof o[k] === "boolean") base[k] = o[k]!
+    }
+    base.actions = true
+    return base
+  } catch {
+    return defaultColumns()
+  }
+}
+
+function disp(s: string): string {
+  const t = s?.trim()
+  return t ? t : "—"
 }
 
 type MetersListProps = {
-  /**
-   * When provided, skips `/api/meters` (e.g. `NEXT_PUBLIC_METERS_USE_MOCK` or tests).
-   * Pass `[]` to exercise an empty catalog without the API.
-   */
   rows?: MeterListRow[]
+  onRegisterActions?: (api: {
+    openAdd: () => void
+    refresh: () => void
+  }) => void
 }
 
 function matchesSearch(row: MeterListRow, q: string) {
@@ -98,12 +152,27 @@ function matchesSearch(row: MeterListRow, q: string) {
     .includes(n)
 }
 
-export function MetersList({ rows: rowsProp }: MetersListProps) {
+export function MetersList({ rows: rowsProp, onRegisterActions }: MetersListProps) {
   const staticMode = rowsProp !== undefined
   const [fetchedRows, setFetchedRows] = useState<MeterListRow[]>([])
   const [loadKey, setLoadKey] = useState(0)
   const [loading, setLoading] = useState(rowsProp === undefined)
   const [error, setError] = useState<string | null>(null)
+
+  const [cols, setCols] = useState<Record<MetersColumnKey, boolean>>(defaultColumns)
+
+  useEffect(() => {
+    setCols(loadColumnVisibility())
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(cols))
+    } catch {
+      /* ignore */
+    }
+  }, [cols])
 
   const sourceRows = rowsProp !== undefined ? rowsProp : fetchedRows
 
@@ -115,7 +184,27 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [sheetIntent, setSheetIntent] = useState<MeterSheetIntent>("detail")
+  const [sheetFormInitially, setSheetFormInitially] = useState(false)
   const [selectedMeter, setSelectedMeter] = useState<MeterListRow | null>(null)
+
+  const reload = useCallback(() => {
+    if (staticMode) return
+    setLoading(true)
+    setError(null)
+    setLoadKey((k) => k + 1)
+  }, [staticMode])
+
+  const openAdd = useCallback(() => {
+    setSelectedMeter(null)
+    setSheetIntent("add")
+    setSheetFormInitially(false)
+    setSheetOpen(true)
+  }, [])
+
+  useLayoutEffect(() => {
+    onRegisterActions?.({ openAdd, refresh: reload })
+  }, [onRegisterActions, openAdd, reload])
 
   useEffect(() => {
     if (staticMode) return
@@ -148,13 +237,6 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
       ac.abort()
     }
   }, [staticMode, loadKey])
-
-  function reload() {
-    if (staticMode) return
-    setLoading(true)
-    setError(null)
-    setLoadKey((k) => k + 1)
-  }
 
   const resetPage = useCallback(() => setPage(1), [])
 
@@ -192,6 +274,18 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
   const sliceStart = (currentPage - 1) * pageSize
   const pageRows = filtered.slice(sliceStart, sliceStart + pageSize)
 
+  const visibleColCount =
+    (cols.serial ? 1 : 0) +
+    (cols.internalId ? 1 : 0) +
+    (cols.location ? 1 : 0) +
+    (cols.mfr ? 1 : 0) +
+    (cols.comm ? 1 : 0) +
+    (cols.relay ? 1 : 0) +
+    (cols.lastReading ? 1 : 0) +
+    (cols.lastComm ? 1 : 0) +
+    (cols.alarm ? 1 : 0) +
+    (cols.actions ? 1 : 0)
+
   const filtersActive =
     search.trim() !== "" ||
     commFilter !== ALL ||
@@ -210,18 +304,29 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
 
   function openDetails(meter: MeterListRow) {
     setSelectedMeter(meter)
+    setSheetIntent("detail")
+    setSheetFormInitially(false)
+    setSheetOpen(true)
+  }
+
+  function openEdit(meter: MeterListRow) {
+    setSelectedMeter(meter)
+    setSheetIntent("detail")
+    setSheetFormInitially(true)
     setSheetOpen(true)
   }
 
   function onSheetOpenChange(open: boolean) {
     setSheetOpen(open)
-    if (!open) setSelectedMeter(null)
+    if (!open) {
+      setSelectedMeter(null)
+      setSheetFormInitially(false)
+    }
   }
 
   const fetchFailed = !staticMode && !loading && error !== null
   const emptyCatalog = !fetchFailed && sourceRows.length === 0
-  const noResults =
-    !fetchFailed && !emptyCatalog && filtered.length === 0
+  const noResults = !fetchFailed && !emptyCatalog && filtered.length === 0
 
   return (
     <div className={operationalListPageStackClass}>
@@ -332,9 +437,33 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
                 >
                   Refresh
                 </Button>
-                <Button type="button" variant="secondary" size="sm" disabled>
-                  Columns
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
+                  >
+                    Columns
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-52">
+                    <DropdownMenuLabel className="text-xs">
+                      Visible columns
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {(Object.keys(COL_LABELS) as MetersColumnKey[]).map((k) => (
+                      <DropdownMenuCheckboxItem
+                        key={k}
+                        className="text-xs"
+                        checked={cols[k]}
+                        disabled={k === "actions"}
+                        onCheckedChange={(checked) => {
+                          if (k === "actions") return
+                          setCols((c) => ({ ...c, [k]: checked === true }))
+                        }}
+                      >
+                        {COL_LABELS[k]}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </>
             }
           />
@@ -344,9 +473,51 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
               <div className="min-w-[1040px]">
                 <Table>
                   <TableHeader>
-                    <MeterTableHeaderRow />
+                    <TableRow className="hover:bg-transparent">
+                      {cols.serial ? (
+                        <TableHead className="w-[140px]">Serial</TableHead>
+                      ) : null}
+                      {cols.internalId ? (
+                        <TableHead className="w-[160px] text-muted-foreground">
+                          Internal ID
+                        </TableHead>
+                      ) : null}
+                      {cols.location ? (
+                        <TableHead className="min-w-[200px]">
+                          Location / Feeder
+                        </TableHead>
+                      ) : null}
+                      {cols.mfr ? (
+                        <TableHead className="min-w-[160px]">
+                          Manufacturer / Model
+                        </TableHead>
+                      ) : null}
+                      {cols.comm ? (
+                        <TableHead className="w-[110px]">Comm</TableHead>
+                      ) : null}
+                      {cols.relay ? (
+                        <TableHead className="w-[110px]">Relay</TableHead>
+                      ) : null}
+                      {cols.lastReading ? (
+                        <TableHead className="w-[128px]">Last reading</TableHead>
+                      ) : null}
+                      {cols.lastComm ? (
+                        <TableHead className="w-[128px]">Last comm</TableHead>
+                      ) : null}
+                      {cols.alarm ? (
+                        <TableHead className="w-[100px]">Alarm</TableHead>
+                      ) : null}
+                      {cols.actions ? (
+                        <TableHead className="w-[72px] text-right">
+                          Actions
+                        </TableHead>
+                      ) : null}
+                    </TableRow>
                   </TableHeader>
-                  <TableBodySkeleton rows={6} columns={10} />
+                  <TableBodySkeleton
+                    rows={6}
+                    columns={Math.max(1, visibleColCount)}
+                  />
                 </Table>
               </div>
             </div>
@@ -355,7 +526,46 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
               <div className="min-w-[1040px]">
                 <Table>
                   <TableHeader>
-                    <MeterTableHeaderRow />
+                    <TableRow className="hover:bg-transparent">
+                      {cols.serial ? (
+                        <TableHead className="w-[140px]">Serial</TableHead>
+                      ) : null}
+                      {cols.internalId ? (
+                        <TableHead className="w-[160px] text-muted-foreground">
+                          Internal ID
+                        </TableHead>
+                      ) : null}
+                      {cols.location ? (
+                        <TableHead className="min-w-[200px]">
+                          Location / Feeder
+                        </TableHead>
+                      ) : null}
+                      {cols.mfr ? (
+                        <TableHead className="min-w-[160px]">
+                          Manufacturer / Model
+                        </TableHead>
+                      ) : null}
+                      {cols.comm ? (
+                        <TableHead className="w-[110px]">Comm</TableHead>
+                      ) : null}
+                      {cols.relay ? (
+                        <TableHead className="w-[110px]">Relay</TableHead>
+                      ) : null}
+                      {cols.lastReading ? (
+                        <TableHead className="w-[128px]">Last reading</TableHead>
+                      ) : null}
+                      {cols.lastComm ? (
+                        <TableHead className="w-[128px]">Last comm</TableHead>
+                      ) : null}
+                      {cols.alarm ? (
+                        <TableHead className="w-[100px]">Alarm</TableHead>
+                      ) : null}
+                      {cols.actions ? (
+                        <TableHead className="w-[72px] text-right">
+                          Actions
+                        </TableHead>
+                      ) : null}
+                    </TableRow>
                   </TableHeader>
                   <TableBody>
                     {pageRows.map((row) => {
@@ -364,91 +574,119 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
                       const alarm = formatAlarmState(row.alarmState)
                       return (
                         <TableRow key={row.id}>
-                          <TableCell className="align-top">
-                            <button
-                              type="button"
-                              onClick={() => openDetails(row)}
-                              className={operationalMonoIdTriggerClass}
-                            >
-                              {row.serialNumber}
-                            </button>
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <span className="font-mono text-xs text-muted-foreground">
-                              {row.id}
-                            </span>
-                            <div className="mt-0.5 text-xs text-muted-foreground">
-                              {formatPhaseType(row.phaseType)}
-                            </div>
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <div className="max-w-[220px] truncate text-foreground">
-                              {row.customerName}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {row.feeder} · {row.zone}
-                            </div>
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <div className="text-foreground">{row.manufacturer}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {row.model}
-                            </div>
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <StatusBadge variant={comm.variant}>
-                              {comm.label}
-                            </StatusBadge>
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <StatusBadge variant={relay.variant}>
-                              {relay.label}
-                            </StatusBadge>
-                          </TableCell>
-                          <TableCell className="align-top tabular-nums text-muted-foreground">
-                            {row.lastReadingAt}
-                          </TableCell>
-                          <TableCell className="align-top tabular-nums text-muted-foreground">
-                            {row.lastCommunicationAt}
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <StatusBadge variant={alarm.variant}>
-                              {alarm.label}
-                            </StatusBadge>
-                          </TableCell>
-                          <TableCell className="align-top text-right">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger
-                                className={operationalRowActionTriggerClass}
-                                aria-label={`Actions for ${row.serialNumber}`}
+                          {cols.serial ? (
+                            <TableCell className="align-top">
+                              <button
+                                type="button"
+                                onClick={() => openDetails(row)}
+                                className={operationalMonoIdTriggerClass}
                               >
-                                <MoreHorizontalIcon className="size-4" />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-48">
-                                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                                  {row.serialNumber}
-                                </DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onClick={() => openDetails(row)}
+                                {disp(row.serialNumber)}
+                              </button>
+                            </TableCell>
+                          ) : null}
+                          {cols.internalId ? (
+                            <TableCell className="align-top">
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {disp(row.id)}
+                              </span>
+                              <div className="mt-0.5 text-xs text-muted-foreground">
+                                {formatPhaseType(row.phaseType)}
+                              </div>
+                            </TableCell>
+                          ) : null}
+                          {cols.location ? (
+                            <TableCell className="align-top">
+                              <div className="max-w-[220px] truncate text-foreground">
+                                {disp(row.customerName)}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {disp(row.feeder)} · {disp(row.zone)}
+                              </div>
+                            </TableCell>
+                          ) : null}
+                          {cols.mfr ? (
+                            <TableCell className="align-top">
+                              <div className="text-foreground">
+                                {disp(row.manufacturer)}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {disp(row.model)}
+                              </div>
+                            </TableCell>
+                          ) : null}
+                          {cols.comm ? (
+                            <TableCell className="align-top">
+                              <StatusBadge variant={comm.variant}>
+                                {comm.label}
+                              </StatusBadge>
+                            </TableCell>
+                          ) : null}
+                          {cols.relay ? (
+                            <TableCell className="align-top">
+                              <StatusBadge variant={relay.variant}>
+                                {relay.label}
+                              </StatusBadge>
+                            </TableCell>
+                          ) : null}
+                          {cols.lastReading ? (
+                            <TableCell className="align-top tabular-nums text-muted-foreground">
+                              {disp(row.lastReadingAt)}
+                            </TableCell>
+                          ) : null}
+                          {cols.lastComm ? (
+                            <TableCell className="align-top tabular-nums text-muted-foreground">
+                              {disp(row.lastCommunicationAt)}
+                            </TableCell>
+                          ) : null}
+                          {cols.alarm ? (
+                            <TableCell className="align-top">
+                              <StatusBadge variant={alarm.variant}>
+                                {alarm.label}
+                              </StatusBadge>
+                            </TableCell>
+                          ) : null}
+                          {cols.actions ? (
+                            <TableCell className="align-top text-right">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger
+                                  className={operationalRowActionTriggerClass}
+                                  aria-label={`Actions for ${row.serialNumber}`}
                                 >
-                                  View details
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  View readings
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  View connectivity
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  Open commands
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  View alarms
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
+                                  <MoreHorizontalIcon className="size-4" />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48">
+                                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                                    {row.serialNumber}
+                                  </DropdownMenuLabel>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() => openDetails(row)}
+                                  >
+                                    View details
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={staticMode}
+                                    onClick={() => openEdit(row)}
+                                  >
+                                    Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem disabled>
+                                    View readings
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem disabled>
+                                    View connectivity
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem disabled>
+                                    Open commands
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem disabled>
+                                    View alarms
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          ) : null}
                         </TableRow>
                       )
                     })}
@@ -522,6 +760,10 @@ export function MetersList({ rows: rowsProp }: MetersListProps) {
         meter={selectedMeter}
         open={sheetOpen}
         onOpenChange={onSheetOpenChange}
+        intent={sheetIntent}
+        formInitially={sheetFormInitially}
+        staticMode={staticMode}
+        onAfterMutation={reload}
       />
     </div>
   )

@@ -19,10 +19,6 @@ function messageForErrorCode(code: string | undefined): string {
   return LOAD_FAILED
 }
 
-/**
- * Client-side fetch of read-only meters from the local App Router API.
- * Search and filters stay in the UI; this returns the full row set.
- */
 export async function fetchMeters(signal?: AbortSignal): Promise<FetchMetersResult> {
   try {
     const res = await fetch("/api/meters", {
@@ -51,6 +47,85 @@ export async function fetchMeters(signal?: AbortSignal): Promise<FetchMetersResu
     if (e instanceof Error && e.name === "AbortError") {
       throw e
     }
+    return { ok: false, error: METERS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function postMeterFull(
+  row: Partial<MeterListRow> & { serialNumber: string },
+  signal?: AbortSignal
+): Promise<{ ok: true; row: MeterListRow } | { ok: false; error: string }> {
+  try {
+    const res = await fetch("/api/meters", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(row),
+      signal,
+      cache: "no-store",
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      const err =
+        typeof data?.error === "string" ? data.error : "Save failed"
+      return { ok: false, error: err }
+    }
+    const normalized = normalizeMeterRows([data])
+    if (normalized.length !== 1) return { ok: false, error: "Invalid response" }
+    return { ok: true, row: normalized[0]! }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: METERS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function putMeter(
+  row: MeterListRow,
+  signal?: AbortSignal
+): Promise<{ ok: true; row: MeterListRow } | { ok: false; error: string }> {
+  try {
+    const res = await fetch("/api/meters", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(row),
+      signal,
+      cache: "no-store",
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      const err =
+        typeof data?.error === "string" ? data.error : "Update failed"
+      return { ok: false, error: err }
+    }
+    const normalized = normalizeMeterRows([data])
+    if (normalized.length !== 1) return { ok: false, error: "Invalid response" }
+    return { ok: true, row: normalized[0]! }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: METERS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function deleteMeter(
+  params: { id: string } | { serialNumber: string },
+  signal?: AbortSignal
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await fetch("/api/meters", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+      signal,
+      cache: "no-store",
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      const err =
+        typeof data?.error === "string" ? data.error : "Delete failed"
+      return { ok: false, error: err }
+    }
+    return { ok: true }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
     return { ok: false, error: METERS_FETCH_NETWORK_ERROR }
   }
 }
