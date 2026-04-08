@@ -9,7 +9,14 @@ import {
   XIcon,
 } from "lucide-react"
 import type { ReactNode } from "react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { createPortal, flushSync } from "react-dom"
 import { usePathname } from "next/navigation"
 
@@ -27,6 +34,11 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
+  buildReadingsResultsCsv,
+  downloadUtf8CsvFile,
+  sanitizeCsvFilenamePart,
+} from "@/lib/readings/csv-export"
+import {
   fetchTcpListenerStatus,
   getTcpListenerObisSelectionJobPoll,
   postReadObisSelectionDirect,
@@ -40,6 +52,10 @@ import {
   tcpListenerStrictRouteAvailableForSerial,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
+import {
+  loadReadingsWorkspace,
+  saveReadingsWorkspace,
+} from "@/lib/readings/workspace-persist"
 import { fetchObisCatalog } from "@/lib/obis/catalog-client"
 import {
   familyTabsPresent,
@@ -311,6 +327,11 @@ export function ReadingsWorkspaceClient() {
   const [obisJobRowPhases, setObisJobRowPhases] = useState<Record<string, string>>({})
   const [obisJobCancelling, setObisJobCancelling] = useState(false)
 
+  const [workspaceHydrated, setWorkspaceHydrated] = useState(false)
+  const prevFamilyPackRef = useRef<{ family: ObisFamilyTab; pack: string } | null>(
+    null
+  )
+
   const inFlightTargetRef = useRef<string>("")
 
   const meterKey = meterId.trim()
@@ -372,9 +393,98 @@ export function ReadingsWorkspaceClient() {
     [catalogRows]
   )
 
+  useLayoutEffect(() => {
+    const loaded = loadReadingsWorkspace()
+    if (loaded) {
+      prevFamilyPackRef.current = {
+        family: loaded.familyTab,
+        pack: loaded.pack,
+      }
+      setMeterId(loaded.meterId)
+      setFamilyTab(loaded.familyTab)
+      setPack(loaded.pack)
+      setTransport(loaded.transport)
+      setSelected(new Set(loaded.selectedObis))
+      setPerMeter(
+        Object.fromEntries(
+          Object.entries(loaded.perMeter).map(([k, v]) => [
+            k,
+            {
+              ...emptyPerMeterState(),
+              ...v,
+              obisJobProgress: null,
+            },
+          ])
+        )
+      )
+      setDiagnosticsOpen(loaded.diagnosticsOpen)
+      setExpandedLogIds(new Set(loaded.expandedLogIds))
+      setActionLog(loaded.actionLog.slice(0, 200))
+    } else {
+      prevFamilyPackRef.current = null
+    }
+    setWorkspaceHydrated(true)
+  }, [])
+
   useEffect(() => {
-    setSelected(new Set())
+    const prev = prevFamilyPackRef.current
+    if (prev === null) {
+      prevFamilyPackRef.current = { family: familyTab, pack }
+      return
+    }
+    if (prev.family !== familyTab || prev.pack !== pack) {
+      setSelected(new Set())
+    }
+    prevFamilyPackRef.current = { family: familyTab, pack }
   }, [familyTab, pack])
+
+  useEffect(() => {
+    if (!workspaceHydrated) return
+    const t = window.setTimeout(() => {
+      saveReadingsWorkspace({
+        meterId,
+        familyTab,
+        pack,
+        transport,
+        selectedObis: [...selected],
+        perMeter: Object.fromEntries(
+          Object.entries(perMeter)
+            .map(([k, v]) => {
+              const key = k.trim()
+              if (!key) return null
+              return [
+                key,
+                {
+                  relayState: v.relayState,
+                  relayConfidence: v.relayConfidence,
+                  lastRelayPayload: v.lastRelayPayload,
+                  relayError: v.relayError,
+                  actionError: v.actionError,
+                  lastEnv: v.lastEnv,
+                  rowState: v.rowState,
+                },
+              ] as const
+            })
+            .filter((x): x is NonNullable<typeof x> => x !== null)
+        ),
+        diagnosticsOpen,
+        expandedLogIds: [...expandedLogIds],
+        actionLog,
+      })
+    }, 280)
+    return () => window.clearTimeout(t)
+  }, [
+    workspaceHydrated,
+    meterId,
+    familyTab,
+    pack,
+    transport,
+    selected,
+    perMeter,
+    diagnosticsOpen,
+    expandedLogIds,
+    actionLog,
+  ])
 
   const pathname = usePathname()
 
@@ -1088,6 +1198,38 @@ export function ReadingsWorkspaceClient() {
   const lastEnv = currentMeterState.lastEnv
   const obisJobProgress = currentMeterState.obisJobProgress
 
+  const canExportReadingsCsv = useMemo(() => {
+    if (!meterKey || catalogRows.length === 0) return false
+    return catalogRows.some((r) => {
+      const rs = currentMeterState.rowState[r.obis]
+      if (!rs) return false
+      if (rs.result.trim()) return true
+      if (rs.lastReadAt) return true
+      if (rs.error && rs.error.trim()) return true
+      if (rs.status !== "not_attempted" && rs.status !== "skipped") return true
+      return false
+    })
+  }, [meterKey, catalogRows, currentMeterState.rowState])
+
+  const exportReadingsCsv = useCallback(() => {
+    if (!meterKey || catalogRows.length === 0) return
+    const rows = catalogRows.map((catalog) => ({
+      catalog,
+      rowState: currentMeterState.rowState[catalog.obis],
+    }))
+    const csv = buildReadingsResultsCsv({
+      meterSerial: meterKey,
+      familyTabLabel: familyTabLabel(familyTab),
+      sectionLabel: sectionLabelForPack(catalog, pack),
+      rows,
+    })
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "")
+    downloadUtf8CsvFile(
+      `readings_${sanitizeCsvFilenamePart(meterKey)}_${stamp}.csv`,
+      csv
+    )
+  }, [meterKey, catalogRows, currentMeterState.rowState, familyTab, catalog, pack])
+
   function toggleLogExpanded(id: string) {
     setExpandedLogIds((prev) => {
       const n = new Set(prev)
@@ -1313,7 +1455,23 @@ export function ReadingsWorkspaceClient() {
           <Button type="button" size="sm" variant="outline" className="h-8" onClick={clearSelection}>
             Clear
           </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8" disabled title="Planned">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={!canExportReadingsCsv}
+            title={
+              canExportReadingsCsv
+                ? "Download displayed results as CSV"
+                : !meterKey
+                  ? "Select a meter to export"
+                  : catalogRows.length === 0
+                    ? "No rows in this catalog view"
+                    : "No reading data in the table yet — run a read first"
+            }
+            onClick={() => exportReadingsCsv()}
+          >
             Export
           </Button>
         </div>
