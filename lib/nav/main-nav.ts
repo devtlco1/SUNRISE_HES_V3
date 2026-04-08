@@ -7,6 +7,7 @@ import {
   ListTreeIcon,
   RadioTowerIcon,
   ScanLineIcon,
+  Settings2Icon,
   SquareTerminalIcon,
   UsersIcon,
 } from "lucide-react"
@@ -22,6 +23,7 @@ export const mainNavItems: MainNavItem[] = [
   { href: "/scanner", label: "Scanner", icon: ScanLineIcon },
   { href: "/readings", label: "Readings", icon: ActivityIcon },
   { href: "/obis-config", label: "OBIS catalog", icon: ListTreeIcon },
+  { href: "/configuration", label: "Configuration", icon: Settings2Icon },
   { href: "/meters", label: "Meters", icon: GaugeIcon },
   { href: "/connectivity", label: "Connectivity", icon: RadioTowerIcon },
   { href: "/commands", label: "Commands", icon: SquareTerminalIcon },

@@ -24,6 +24,11 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import {
+  configurationHubHref,
+  configurationModuleHref,
+  configurationModules,
+} from "@/lib/configuration/modules"
 import { mainNavItems } from "@/lib/nav/main-nav"
 import { cn } from "@/lib/utils"
 
@@ -32,6 +37,10 @@ const pathTitle: Record<string, string> = {
   "/scanner": "Scanner",
   "/readings": "Readings",
   "/obis-config": "OBIS catalog",
+  [configurationHubHref]: "Configuration",
+  ...Object.fromEntries(
+    configurationModules.map((m) => [configurationModuleHref(m), m.title])
+  ),
   "/meters": "Meters",
   "/connectivity": "Connectivity",
   "/commands": "Commands",
@@ -42,10 +51,18 @@ const pathTitle: Record<string, string> = {
 function titleFromPath(pathname: string) {
   const direct = pathTitle[pathname]
   if (direct) return direct
-  const entry = Object.entries(pathTitle).find(
-    ([key]) => key !== "/dashboard" && pathname.startsWith(`${key}/`)
-  )
-  return entry?.[1] ?? "Operations"
+  let best: string | undefined
+  let bestLen = 0
+  for (const [prefix, title] of Object.entries(pathTitle)) {
+    if (prefix === "/dashboard") continue
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+      if (prefix.length > bestLen) {
+        bestLen = prefix.length
+        best = title
+      }
+    }
+  }
+  return best ?? "Operations"
 }
 
 export function AppTopbar({ className }: { className?: string }) {
