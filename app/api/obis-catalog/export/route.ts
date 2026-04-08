@@ -1,3 +1,4 @@
+import { catalogRowsToCsv } from "@/lib/obis/catalog-csv"
 import { readObisCatalog } from "@/lib/obis/catalog-store"
 import { NextResponse } from "next/server"
 
@@ -7,12 +8,12 @@ export const dynamic = "force-dynamic"
 export async function GET() {
   try {
     const rows = await readObisCatalog()
-    const body = `${JSON.stringify(rows, null, 2)}\n`
+    const body = catalogRowsToCsv(rows, true)
     return new NextResponse(body, {
       status: 200,
       headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="obis-catalog.json"',
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="obis-catalog-export.csv"',
         "Cache-Control": "no-store",
       },
     })

@@ -5,6 +5,9 @@
 
 export type ObisPackKey = string
 
+/** Top-level OBIS config / readings tab: Basic, Energy, Profile. */
+export type ObisFamilyTab = "basic" | "energy" | "profile"
+
 export interface ObisCatalogEntry {
   obis: string
   description: string
@@ -15,7 +18,12 @@ export interface ObisCatalogEntry {
   unit: string
   result_format: string
   status: "active" | "catalog_only"
+  /** Stable subsection key (groups rows; often matches a known section slug). */
   pack_key: ObisPackKey
+  /** Operator tab: basic | energy | profile */
+  family_tab: ObisFamilyTab
+  /** Spreadsheet / human section (e.g. BASIC SETTING, HISTORY ENERGY). */
+  section_group: string
   enabled: boolean
   sort_order: number
   notes?: string

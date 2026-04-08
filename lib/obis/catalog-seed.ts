@@ -3,8 +3,10 @@
  * Device-specific tuning stays in MVP-AMI / sidecar config for on-wire reads.
  */
 
-import type { ObisCatalogEntry, ObisPackKey } from "./types"
-import { OBIS_PACK_ORDER } from "./types"
+import { inferFamilySectionFromLegacyPack } from "@/lib/obis/family-section"
+
+import type { ObisCatalogEntry, ObisFamilyTab, ObisPackKey } from "./types"
+import { OBIS_PACK_ORDER, packLabel } from "./types"
 
 export { OBIS_PACK_LABELS, OBIS_PACK_ORDER, packLabel } from "./types"
 
@@ -25,9 +27,12 @@ function e(
       | "status"
       | "enabled"
       | "notes"
+      | "family_tab"
+      | "section_group"
     >
   > = {}
 ): ObisCatalogEntry {
+  const inf = inferFamilySectionFromLegacyPack(pack_key)
   return {
     obis,
     description,
@@ -39,6 +44,8 @@ function e(
     result_format: fields.result_format ?? "scalar",
     status: fields.status ?? "catalog_only",
     pack_key,
+    family_tab: fields.family_tab ?? inf.family_tab,
+    section_group: fields.section_group ?? inf.section_group,
     enabled: fields.enabled ?? true,
     sort_order,
     notes: fields.notes,
@@ -215,6 +222,45 @@ export function packKeysForCatalogRows(rows: ObisCatalogEntry[]): ObisPackKey[] 
     .filter((k) => !OBIS_PACK_ORDER.includes(k))
     .sort()
   return [...ordered, ...extra]
+}
+
+/** Tab order with only families that appear in rows. */
+export function familyTabsPresent(rows: ObisCatalogEntry[]): ObisFamilyTab[] {
+  const seen = new Set(rows.map((r) => r.family_tab))
+  return (["basic", "energy", "profile"] as const).filter((t) => seen.has(t))
+}
+
+/** Distinct pack_key values for a family, sorted by section label. */
+export function packKeysForFamily(rows: ObisCatalogEntry[], family: ObisFamilyTab): ObisPackKey[] {
+  const keys = new Set<string>()
+  for (const r of rows) {
+    if (r.family_tab === family) keys.add(r.pack_key)
+  }
+  return [...keys].sort((a, b) => {
+    const la =
+      rows.find((x) => x.pack_key === a)?.section_group ?? a
+    const lb =
+      rows.find((x) => x.pack_key === b)?.section_group ?? b
+    return la.localeCompare(lb)
+  })
+}
+
+export function getCatalogRowsForFamilyAndPackFromRows(
+  rows: ObisCatalogEntry[],
+  family: ObisFamilyTab,
+  pack: ObisPackKey
+): ObisCatalogEntry[] {
+  return rows
+    .filter((r) => r.family_tab === family && r.pack_key === pack)
+    .sort((a, b) => a.sort_order - b.sort_order)
+}
+
+export function sectionLabelForPack(
+  rows: ObisCatalogEntry[],
+  pack_key: ObisPackKey
+): string {
+  const r = rows.find((x) => x.pack_key === pack_key)
+  return (r?.section_group ?? "").trim() || packLabel(pack_key)
 }
 
 export function getCatalogEntry(obis: string): ObisCatalogEntry | undefined {

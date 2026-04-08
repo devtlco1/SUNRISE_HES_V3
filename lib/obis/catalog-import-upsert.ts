@@ -29,31 +29,12 @@ export function importRowRecordToCatalogInput(raw: unknown): unknown {
     result_format: r.result_format ?? r.resultFormat,
     status: r.status,
     pack_key: r.pack_key ?? r.packKey,
+    family_tab: r.family_tab ?? r.familyTab,
+    section_group: r.section_group ?? r.sectionGroup,
     enabled: r.enabled,
     sort_order: r.sort_order ?? r.sortOrder,
     notes: r.notes,
   }
-}
-
-/** Downloadable template uses camelCase; import accepts camelCase or snake_case. */
-export function obisCatalogTemplateDownloadRows(): Record<string, unknown>[] {
-  return [
-    {
-      obis: "1.0.32.7.0.255",
-      description: "Example: L1 voltage",
-      objectType: "Register",
-      classId: 3,
-      attribute: 2,
-      scalerUnitAttribute: 3,
-      unit: "V",
-      resultFormat: "scalar",
-      status: "catalog_only",
-      packKey: "instantaneous",
-      enabled: true,
-      sortOrder: 10,
-      notes: "",
-    },
-  ]
 }
 
 /** Merge validated import rows into `existing` by OBIS key (upsert). */

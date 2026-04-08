@@ -7,6 +7,7 @@ import { readFile } from "fs/promises"
 import path from "path"
 import { parse as parseYaml } from "yaml"
 
+import { inferFamilySectionFromLegacyPack } from "@/lib/obis/family-section"
 import { INVALID_OBIS_SHAPE_NOTE, isValidCosemObisLogicalName } from "@/lib/obis/obis-logical-name"
 import type { ObisCatalogEntry, ObisPackKey } from "@/lib/obis/types"
 
@@ -125,6 +126,7 @@ function yamlItemToEntries(
     const notesWithShape = shapeOk
       ? notes
       : [notes, INVALID_OBIS_SHAPE_NOTE].filter(Boolean).join(" · ")
+    const loc = inferFamilySectionFromLegacyPack(pack_key)
     out.push({
       obis,
       description: desc,
@@ -133,6 +135,8 @@ function yamlItemToEntries(
       result_format: "scalar",
       status: "catalog_only",
       pack_key,
+      family_tab: loc.family_tab,
+      section_group: loc.section_group,
       enabled: shapeOk,
       sort_order: 0,
       notes: notesWithShape,

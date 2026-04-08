@@ -39,17 +39,21 @@ import {
   tcpListenerStrictRouteAvailableForSerial,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
+import { fetchObisCatalog } from "@/lib/obis/catalog-client"
 import {
-  getCatalogRowsForPackFromRows,
-  packKeysForCatalogRows,
+  familyTabsPresent,
+  getCatalogRowsForFamilyAndPackFromRows,
+  packKeysForFamily,
+  sectionLabelForPack,
 } from "@/lib/obis/catalog-seed"
+import { familyTabLabel } from "@/lib/obis/family-section"
 import {
   mergeObisJobPollIntoRowState,
   mergeObisSelectionIntoRowState,
   type ObisRowReadState,
 } from "@/lib/obis/merge-read-results"
 import { obisSelectionRowSupportedV1Catalog } from "@/lib/obis/obis-selection-v1-client"
-import { packLabel, type ObisCatalogEntry } from "@/lib/obis/types"
+import type { ObisCatalogEntry, ObisFamilyTab } from "@/lib/obis/types"
 import type { MeterListRow } from "@/types/meter"
 import type {
   ObisSelectionItemInput,
@@ -281,6 +285,7 @@ function catalogEntryToSelectionItem(r: ObisCatalogEntry): ObisSelectionItemInpu
 export function ReadingsWorkspaceClient() {
   const [catalog, setCatalog] = useState<ObisCatalogEntry[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
+  const [familyTab, setFamilyTab] = useState<ObisFamilyTab>("basic")
   const [pack, setPack] = useState<string>("basic_setting")
   const [transport, setTransport] = useState<TransportMode>("inbound")
   const [meterId, setMeterId] = useState("")
@@ -349,11 +354,16 @@ export function ReadingsWorkspaceClient() {
     setActionLog((prev) => [row, ...prev].slice(0, 200))
   }, [])
 
-  const packKeys = useMemo(() => packKeysForCatalogRows(catalog), [catalog])
+  const families = useMemo(() => familyTabsPresent(catalog), [catalog])
+
+  const packKeys = useMemo(
+    () => packKeysForFamily(catalog, familyTab),
+    [catalog, familyTab]
+  )
 
   const catalogRows = useMemo(
-    () => getCatalogRowsForPackFromRows(catalog, pack),
-    [catalog, pack]
+    () => getCatalogRowsForFamilyAndPackFromRows(catalog, familyTab, pack),
+    [catalog, familyTab, pack]
   )
 
   const v1SupportedRowsInPack = useMemo(
@@ -363,27 +373,26 @@ export function ReadingsWorkspaceClient() {
 
   useEffect(() => {
     setSelected(new Set())
-  }, [pack])
+  }, [familyTab, pack])
 
   useEffect(() => {
     const ac = new AbortController()
-    fetch("/api/obis-catalog", { signal: ac.signal, cache: "no-store" })
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setCatalog(data as ObisCatalogEntry[])
-          setCatalogError(null)
-        } else {
-          setCatalog([])
-          setCatalogError("OBIS catalog unavailable")
-        }
-      })
-      .catch(() => {
+    fetchObisCatalog(ac.signal).then((r) => {
+      if (r.ok) {
+        setCatalog(r.rows)
+        setCatalogError(null)
+      } else {
         setCatalog([])
-        setCatalogError("OBIS catalog load failed")
-      })
+        setCatalogError(r.error)
+      }
+    })
     return () => ac.abort()
   }, [])
+
+  useEffect(() => {
+    if (families.length === 0) return
+    if (!families.includes(familyTab)) setFamilyTab(families[0]!)
+  }, [families, familyTab])
 
   useEffect(() => {
     if (packKeys.length === 0) return
@@ -1219,7 +1228,7 @@ export function ReadingsWorkspaceClient() {
       <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            OBIS pack
+            OBIS catalog
           </p>
           <a
             href="/obis-config"
@@ -1227,6 +1236,23 @@ export function ReadingsWorkspaceClient() {
           >
             Edit catalog
           </a>
+        </div>
+        <div className="mb-2 flex flex-wrap gap-1">
+          {families.map((ft) => (
+            <button
+              key={ft}
+              type="button"
+              onClick={() => setFamilyTab(ft)}
+              className={cn(
+                "rounded-md px-2 py-1 text-xs",
+                familyTab === ft
+                  ? "bg-primary/15 font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted/60"
+              )}
+            >
+              {familyTabLabel(ft)}
+            </button>
+          ))}
         </div>
         <div className="flex flex-wrap gap-1">
           {packKeys.map((key) => (
@@ -1241,7 +1267,7 @@ export function ReadingsWorkspaceClient() {
                   : "text-muted-foreground hover:bg-muted/60"
               )}
             >
-              {packLabel(key)}
+              {sectionLabelForPack(catalog, key)}
             </button>
           ))}
         </div>
@@ -1346,7 +1372,7 @@ export function ReadingsWorkspaceClient() {
                         {r.description}
                       </TableCell>
                       <TableCell className="max-w-[min(8rem,20vw)] align-top text-xs whitespace-normal break-words">
-                        {packLabel(r.pack_key)}
+                        {sectionLabelForPack(catalog, r.pack_key)}
                       </TableCell>
                       <TableCell className="max-w-[min(11rem,26vw)] align-top font-mono text-xs whitespace-normal break-words">
                         {rs?.result ?? ""}

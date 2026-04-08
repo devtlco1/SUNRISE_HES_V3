@@ -8,7 +8,7 @@ import { readFile } from "fs/promises"
 import path from "path"
 
 import { readObisCatalog, writeObisCatalog } from "../lib/obis/catalog-store"
-import { mergeExcelWorkbookBufferIntoCatalog } from "../lib/obis/excel-catalog-merge"
+import { mergeSpreadsheetBufferIntoCatalog } from "../lib/obis/excel-catalog-merge"
 import { normalizeObisCatalogRows } from "../lib/obis/normalize-catalog"
 
 async function main() {
@@ -22,7 +22,11 @@ async function main() {
   const xlsxPath = path.resolve(cwd, process.argv[2] ?? defaultPath)
   const buf = await readFile(xlsxPath)
   const existing = await readObisCatalog()
-  const { rows, summary } = mergeExcelWorkbookBufferIntoCatalog(existing, buf)
+  const { rows, summary } = mergeSpreadsheetBufferIntoCatalog(
+    existing,
+    buf,
+    path.basename(xlsxPath)
+  )
   const normalized = normalizeObisCatalogRows(rows)
   await writeObisCatalog(normalized)
   console.log(JSON.stringify({ xlsxPath, summary, rowCount: normalized.length }, null, 2))

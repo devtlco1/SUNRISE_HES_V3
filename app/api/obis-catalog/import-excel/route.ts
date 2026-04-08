@@ -1,5 +1,5 @@
 import { readObisCatalog, writeObisCatalog } from "@/lib/obis/catalog-store"
-import { mergeExcelWorkbookBufferIntoCatalog } from "@/lib/obis/excel-catalog-merge"
+import { mergeSpreadsheetBufferIntoCatalog } from "@/lib/obis/excel-catalog-merge"
 import { normalizeObisCatalogRows } from "@/lib/obis/normalize-catalog"
 import { NextResponse } from "next/server"
 
@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic"
 
 export async function POST(req: Request) {
   let buffer: Buffer
+  let filename = "upload.bin"
   const ct = req.headers.get("content-type") ?? ""
   if (ct.includes("multipart/form-data")) {
     const form = await req.formData()
@@ -16,6 +17,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "EXPECTED_FILE_FIELD" }, { status: 400 })
     }
     buffer = Buffer.from(await file.arrayBuffer())
+    if (typeof (file as File).name === "string" && (file as File).name) {
+      filename = (file as File).name
+    }
   } else {
     try {
       buffer = Buffer.from(await req.arrayBuffer())
@@ -24,23 +28,28 @@ export async function POST(req: Request) {
     }
   }
 
-  if (buffer.length < 64) {
+  if (buffer.length < 8) {
     return NextResponse.json({ error: "FILE_TOO_SMALL" }, { status: 400 })
   }
 
   const existing = await readObisCatalog()
   let merged
   try {
-    merged = mergeExcelWorkbookBufferIntoCatalog(existing, buffer)
+    merged = mergeSpreadsheetBufferIntoCatalog(existing, buffer, filename)
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "EXCEL_PARSE_FAILED"
-    return NextResponse.json({ error: "EXCEL_PARSE_FAILED", message: msg }, { status: 400 })
+    const msg = e instanceof Error ? e.message : "SPREADSHEET_PARSE_FAILED"
+    return NextResponse.json({ error: "SPREADSHEET_PARSE_FAILED", message: msg }, { status: 400 })
   }
 
   const normalized = normalizeObisCatalogRows(merged.rows)
   if (normalized.length === 0) {
     return NextResponse.json(
-      { ok: false, error: "NO_VALID_ROWS_AFTER_MERGE", summary: merged.summary },
+      {
+        ok: false,
+        error: "NO_VALID_ROWS_AFTER_MERGE",
+        summary: merged.summary,
+        message: merged.summary.parseWarnings.join("; ") || undefined,
+      },
       { status: 400 }
     )
   }

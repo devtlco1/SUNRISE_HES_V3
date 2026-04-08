@@ -1,15 +1,16 @@
 /**
- * Smart merge: Excel = trusted meter-supported OBIS list; existing JSON = app metadata (pack, sort, notes).
+ * Merge spreadsheet rows (CSV / XLSX) into persisted OBIS catalog.
+ * Excel = trusted meter-supported OBIS list; preserves / updates family_tab, section_group, pack_key.
  */
 
+import { resolveFamilySectionPack } from "@/lib/obis/family-section"
 import { normalizeObisCatalogEntry } from "@/lib/obis/normalize-catalog"
-import type { ObisCatalogEntry, ObisPackKey } from "@/lib/obis/types"
-import { OBIS_PACK_ORDER } from "@/lib/obis/types"
-
 import {
-  parseMeterObisExcelWorkbook,
-  type ParsedExcelObisRow,
-} from "./excel-catalog-parser"
+  parseObisCatalogSpreadsheetBuffer,
+  type ParsedSpreadsheetObisRow,
+} from "@/lib/obis/spreadsheet-catalog-parser"
+import type { ObisCatalogEntry, ObisFamilyTab, ObisPackKey } from "@/lib/obis/types"
+import { OBIS_PACK_ORDER } from "@/lib/obis/types"
 
 export const CANONICAL_SERIAL_OBIS = "0.0.96.1.0.255"
 export const AUX_IDENTITY_OBIS = "0.0.96.1.1.255"
@@ -26,20 +27,7 @@ export type ExcelCatalogMergeSummary = {
   attributeMismatchWarnings: number
   sheetName: string
   rawRowCount: number
-}
-
-const BASIC_SETTING_TO_PACK: Record<string, ObisPackKey> = {
-  "INSTANTANEOUS VALUE": "instantaneous",
-  "MAXIMUM MDI": "demand",
-  "ENERGY REGISTER": "energy",
-  "CURRENT MDU": "demand",
-  "HISTORY ENERGY": "energy",
-  "BILING PERIOD ENERGY": "energy",
-}
-
-function packFromBasicSetting(label: string): ObisPackKey {
-  const k = label.trim().toUpperCase()
-  return BASIC_SETTING_TO_PACK[k] ?? "basic_setting"
+  parseWarnings: string[]
 }
 
 function inferClassAndObjectType(obis: string): { class_id: number; object_type: string } {
@@ -51,12 +39,20 @@ function inferClassAndObjectType(obis: string): { class_id: number; object_type:
   return { class_id: 3, object_type: "Register" }
 }
 
+const FAMILY_ORDER: Record<ObisFamilyTab, number> = {
+  basic: 0,
+  energy: 1,
+  profile: 2,
+}
+
 function sortCatalogRows(rows: ObisCatalogEntry[]): ObisCatalogEntry[] {
   const packIdx = (k: string) => {
     const i = OBIS_PACK_ORDER.indexOf(k)
     return i >= 0 ? i : 999
   }
   return [...rows].sort((a, b) => {
+    const df = FAMILY_ORDER[a.family_tab] - FAMILY_ORDER[b.family_tab]
+    if (df !== 0) return df
     const dp = packIdx(a.pack_key) - packIdx(b.pack_key)
     if (dp !== 0) return dp
     if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
@@ -76,12 +72,12 @@ function mergeIdentityNotes(
   obis: string,
   prevNotes: string | undefined,
   rw: string,
-  excelSection: string
+  sectionLabel: string
 ): string | undefined {
   const rwPart = `Excel R/W: ${rw}`
   const sectionPart =
-    excelSection.trim() && excelSection.trim().toUpperCase() !== "OPTIONS"
-      ? `Excel section: ${excelSection.trim()}`
+    sectionLabel.trim() && sectionLabel.trim().toUpperCase() !== "OPTIONS"
+      ? `Excel section: ${sectionLabel.trim()}`
       : ""
   const extra = [sectionPart, rwPart].filter(Boolean).join(" · ")
   const base = (prevNotes ?? "").trim()
@@ -105,33 +101,24 @@ function mergeIdentityNotes(
   }
 
   const withRw = appendRwNote(prevNotes, rw)
-  if (
-    excelSection.trim() &&
-    excelSection.trim().toUpperCase() !== "OPTIONS"
-  ) {
-    const sec = `Excel section: ${excelSection.trim()}`
+  if (sectionLabel.trim() && sectionLabel.trim().toUpperCase() !== "OPTIONS") {
+    const sec = `Excel section: ${sectionLabel.trim()}`
     if ((withRw ?? "").includes(sec)) return withRw || undefined
     return withRw ? `${withRw} · ${sec}` : sec
   }
   return withRw || undefined
 }
 
-/**
- * Merge parsed Excel rows into the persisted catalog.
- * - Match primarily by OBIS (catalog is one row per OBIS today).
- * - Preserve pack_key, sort_order, enabled, status, result_format, scaler_unit_attribute, class_id, object_type on update
- *     except when inserting new rows (full infer) or when attribute mismatch is noted.
- * - Description + unit come from Excel on update.
- */
-export function mergeExcelObisIntoCatalog(
+export function mergeSpreadsheetObisIntoCatalog(
   existing: ObisCatalogEntry[],
   parseSummary: {
     sheetName: string
     rawRowCount: number
-    rows: ParsedExcelObisRow[]
+    rows: ParsedSpreadsheetObisRow[]
     skippedInvalidObis: number
     duplicateInSheetCollapsed: number
     duplicateDescriptionMismatches: number
+    parseWarnings: string[]
   }
 ): { rows: ObisCatalogEntry[]; summary: ExcelCatalogMergeSummary } {
   const byObis = new Map<string, ObisCatalogEntry>()
@@ -153,31 +140,44 @@ export function mergeExcelObisIntoCatalog(
   for (const ex of parseSummary.rows) {
     const obis = ex.obis.trim()
     const cur = byObis.get(obis)
-    const excelPack = packFromBasicSetting(ex.basicSetting)
+    const resolved = resolveFamilySectionPack({
+      familyRaw: ex.family_raw,
+      sectionRaw: ex.section_raw,
+      legacyBasicSettingColumn: ex.legacy_basic_setting,
+    })
+    const family_tab = resolved.family_tab
+    const section_group = resolved.section_group
+    const pack_key = resolved.pack_key as ObisPackKey
 
     if (cur) {
-      let notes = mergeIdentityNotes(obis, cur.notes, ex.rw, ex.basicSetting)
+      let notes = mergeIdentityNotes(obis, cur.notes, ex.rw, section_group)
       if (cur.attribute !== ex.attribute) {
         attributeMismatchWarnings += 1
-        const warn = `Catalog attribute=${cur.attribute}; Excel ATTRIBUTES=${ex.attribute} (catalog kept for safety)`
+        const warn = `Catalog attribute=${cur.attribute}; sheet ATTRIBUTES=${ex.attribute} (catalog kept for safety)`
         notes = notes ? `${notes} · ${warn}` : warn
       }
       const next: ObisCatalogEntry = {
         ...cur,
         description: ex.description || cur.description,
         unit: ex.unit,
+        family_tab,
+        section_group,
+        pack_key,
         notes: notes || undefined,
       }
       const changed =
         next.description !== cur.description ||
         next.unit !== cur.unit ||
+        next.family_tab !== cur.family_tab ||
+        next.section_group !== cur.section_group ||
+        next.pack_key !== cur.pack_key ||
         (next.notes ?? "") !== (cur.notes ?? "")
       byObis.set(obis, next)
       if (changed) updated += 1
       else unchanged += 1
     } else {
       const inf = inferClassAndObjectType(obis)
-      const pack = excelPack
+      const pack = pack_key
       const nextSort = (maxSortByPack.get(pack) ?? 0) + 1
       maxSortByPack.set(pack, nextSort)
       const raw = {
@@ -191,9 +191,11 @@ export function mergeExcelObisIntoCatalog(
         result_format: "scalar",
         status: "active" as const,
         pack_key: pack,
+        family_tab,
+        section_group,
         enabled: true,
         sort_order: nextSort,
-        notes: `Meter-supported Excel import. ${ex.basicSetting ? `Section: ${ex.basicSetting}. ` : ""}R/W=${ex.rw}`,
+        notes: `Spreadsheet import. ${section_group}. R/W=${ex.rw}`,
       }
       const norm = normalizeObisCatalogEntry(raw)
       if (norm) {
@@ -219,14 +221,24 @@ export function mergeExcelObisIntoCatalog(
       attributeMismatchWarnings,
       sheetName: parseSummary.sheetName,
       rawRowCount: parseSummary.rawRowCount,
+      parseWarnings: parseSummary.parseWarnings,
     },
   }
 }
 
+export function mergeSpreadsheetBufferIntoCatalog(
+  existing: ObisCatalogEntry[],
+  workbookBuffer: Buffer,
+  filename: string
+): { rows: ObisCatalogEntry[]; summary: ExcelCatalogMergeSummary } {
+  const parsed = parseObisCatalogSpreadsheetBuffer(workbookBuffer, filename)
+  return mergeSpreadsheetObisIntoCatalog(existing, parsed)
+}
+
+/** @deprecated use mergeSpreadsheetBufferIntoCatalog */
 export function mergeExcelWorkbookBufferIntoCatalog(
   existing: ObisCatalogEntry[],
   workbookBuffer: Buffer
 ): { rows: ObisCatalogEntry[]; summary: ExcelCatalogMergeSummary } {
-  const parsed = parseMeterObisExcelWorkbook(workbookBuffer)
-  return mergeExcelObisIntoCatalog(existing, parsed)
+  return mergeSpreadsheetBufferIntoCatalog(existing, workbookBuffer, "upload.xlsx")
 }

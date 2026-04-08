@@ -1,10 +1,16 @@
 "use client"
 
-import { DownloadIcon, PencilIcon, PlusIcon, SaveIcon, TrashIcon, UploadIcon } from "lucide-react"
+import { ChevronDownIcon, DownloadIcon, PencilIcon, PlusIcon, SaveIcon, TrashIcon, UploadIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { PageHeader } from "@/components/shared/page-header"
 import { Button, buttonVariants } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   Sheet,
@@ -21,10 +27,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import type { CatalogImportSummary } from "@/lib/obis/catalog-import-upsert"
+import { fetchObisCatalog } from "@/lib/obis/catalog-client"
 import type { ExcelCatalogMergeSummary } from "@/lib/obis/excel-catalog-merge"
-import { packLabel } from "@/lib/obis/types"
-import type { ObisCatalogEntry } from "@/lib/obis/types"
+import { FAMILY_TAB_ORDER, familyTabLabel } from "@/lib/obis/family-section"
+import { packKeysForFamily, sectionLabelForPack } from "@/lib/obis/catalog-seed"
+import type { ObisCatalogEntry, ObisFamilyTab } from "@/lib/obis/types"
 import { cn } from "@/lib/utils"
 
 const emptyRow = (): ObisCatalogEntry => ({
@@ -38,6 +45,8 @@ const emptyRow = (): ObisCatalogEntry => ({
   result_format: "scalar",
   status: "catalog_only",
   pack_key: "basic_setting",
+  family_tab: "basic",
+  section_group: "BASIC SETTING",
   enabled: true,
   sort_order: 0,
   notes: "",
@@ -51,9 +60,9 @@ export function ObisConfigCatalogClient() {
   const [saving, setSaving] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importInfo, setImportInfo] = useState<string | null>(null)
-  const importFileRef = useRef<HTMLInputElement>(null)
-  const importExcelRef = useRef<HTMLInputElement>(null)
-  const [packFilter, setPackFilter] = useState<string | "all">("all")
+  const importSpreadsheetRef = useRef<HTMLInputElement>(null)
+  const [familyFilter, setFamilyFilter] = useState<ObisFamilyTab | "all">("all")
+  const [sectionFilter, setSectionFilter] = useState<string | "all">("all")
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ObisCatalogEntry | null>(null)
   const [originalObis, setOriginalObis] = useState<string | null>(null)
@@ -62,14 +71,13 @@ export function ObisConfigCatalogClient() {
     setError(null)
     setLoading(true)
     try {
-      const r = await fetch("/api/obis-catalog", { cache: "no-store" })
-      const data = await r.json()
-      if (!r.ok || !Array.isArray(data)) {
-        setError("Load failed")
+      const r = await fetchObisCatalog()
+      if (!r.ok) {
+        setError(r.error)
         setRows([])
         return
       }
-      setRows(data as ObisCatalogEntry[])
+      setRows(r.rows)
     } catch {
       setError("Load failed")
       setRows([])
@@ -82,15 +90,23 @@ export function ObisConfigCatalogClient() {
     void load()
   }, [load])
 
-  const packKeys = useMemo(() => {
-    const u = new Set(rows.map((r) => r.pack_key))
-    return [...u].sort()
-  }, [rows])
+  const sectionKeysForFilter = useMemo(() => {
+    if (familyFilter === "all") {
+      const u = new Set(rows.map((r) => r.pack_key))
+      return [...u].sort((a, b) =>
+        sectionLabelForPack(rows, a).localeCompare(sectionLabelForPack(rows, b))
+      )
+    }
+    return packKeysForFamily(rows, familyFilter)
+  }, [rows, familyFilter])
 
   const filtered = useMemo(() => {
-    if (packFilter === "all") return rows
-    return rows.filter((r) => r.pack_key === packFilter)
-  }, [rows, packFilter])
+    return rows.filter((r) => {
+      if (familyFilter !== "all" && r.family_tab !== familyFilter) return false
+      if (sectionFilter !== "all" && r.pack_key !== sectionFilter) return false
+      return true
+    })
+  }, [rows, familyFilter, sectionFilter])
 
   function openAdd() {
     setOriginalObis(null)
@@ -170,76 +186,11 @@ export function ObisConfigCatalogClient() {
     }
   }
 
-  function openImportPicker() {
-    importFileRef.current?.click()
+  function openSpreadsheetPicker() {
+    importSpreadsheetRef.current?.click()
   }
 
-  function openExcelImportPicker() {
-    importExcelRef.current?.click()
-  }
-
-  async function onImportFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ""
-    if (!file) return
-    setImporting(true)
-    setImportInfo(null)
-    setSaveError(null)
-    try {
-      const text = await file.text()
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(text) as unknown
-      } catch {
-        setImportInfo("Invalid JSON file.")
-        return
-      }
-      const r = await fetch("/api/obis-catalog/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed),
-      })
-      const data = (await r.json()) as {
-        ok?: boolean
-        error?: string
-        summary?: CatalogImportSummary
-      }
-      if (!r.ok || !data.ok) {
-        const s = data.summary
-        const extra =
-          s && s.validationErrors?.length
-            ? ` ${s.validationErrors
-                .slice(0, 4)
-                .map((x) => `[${x.index}] ${x.message}`)
-                .join("; ")}`
-            : ""
-        setImportInfo((data.error ?? "Import failed") + extra)
-        return
-      }
-      const s = data.summary
-      if (s) {
-        const errSample =
-          s.validationErrors.length > 0
-            ? ` Errors: ${s.validationErrors
-                .slice(0, 3)
-                .map((x) => `#${x.index} ${x.message}`)
-                .join("; ")}`
-            : ""
-        setImportInfo(
-          `Applied: inserted ${s.inserted}, updated ${s.updated}, disabled ${s.disabled}, rejected ${s.rejected}.${errSample}`
-        )
-      } else {
-        setImportInfo("Import applied.")
-      }
-      await load()
-    } catch {
-      setImportInfo("Import failed")
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  async function onExcelImportSelected(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onSpreadsheetSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ""
     if (!file) return
@@ -261,24 +212,31 @@ export function ObisConfigCatalogClient() {
         message?: string
       }
       if (!r.ok || !data.ok) {
+        const warn =
+          data.summary?.parseWarnings?.length && data.summary.parseWarnings.length > 0
+            ? ` ${data.summary.parseWarnings.join("; ")}`
+            : ""
         setImportInfo(
-          [data.error, data.message].filter(Boolean).join(": ") || "Excel import failed"
+          ([data.error, data.message].filter(Boolean).join(": ") || "Import failed") + warn
         )
         return
       }
       const s = data.summary
       if (s) {
+        const pw =
+          s.parseWarnings?.length && s.parseWarnings.length > 0
+            ? ` Warnings: ${s.parseWarnings.slice(0, 5).join("; ")}`
+            : ""
         setImportInfo(
-          `Excel merge: ${s.inserted} inserted, ${s.updated} updated, ${s.unchanged} unchanged, ` +
-            `${s.skippedInvalidObis} invalid OBIS skipped, ${s.duplicateInSheetCollapsed} sheet duplicates collapsed ` +
-            `(${s.duplicateDescriptionMismatches} desc conflicts). Rows: ${data.rowCount ?? "—"}.`
+          `Imported: ${s.inserted} new, ${s.updated} updated, ${s.unchanged} unchanged. ` +
+            `Rows in file: ${data.rowCount ?? "—"}.${pw}`
         )
       } else {
-        setImportInfo("Excel import applied.")
+        setImportInfo("Import applied.")
       }
       await load()
     } catch {
-      setImportInfo("Excel import failed")
+      setImportInfo("Import failed")
     } finally {
       setImporting(false)
     }
@@ -288,34 +246,18 @@ export function ObisConfigCatalogClient() {
     <div className="space-y-4">
       <PageHeader
         title="OBIS catalog"
-        subtitle="data/obis-catalog.json — JSON import upserts by OBIS; Excel merge refreshes meter-supported rows (OBIS, DESCRIPTION, ATTRIBUTES, R/W, UNIT) while preserving pack/sort and identity notes."
         actions={
           <div className="flex flex-wrap gap-2">
             <input
-              ref={importFileRef}
+              ref={importSpreadsheetRef}
               type="file"
-              accept=".json,application/json"
+              accept=".csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
               className="hidden"
-              onChange={(e) => void onImportFileSelected(e)}
-            />
-            <input
-              ref={importExcelRef}
-              type="file"
-              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              onChange={(e) => void onExcelImportSelected(e)}
+              onChange={(e) => void onSpreadsheetSelected(e)}
             />
             <Button type="button" size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
               Reload
             </Button>
-            <a
-              href="/api/obis-catalog/template"
-              download
-              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-            >
-              <DownloadIcon className="mr-1 size-3.5" />
-              Template
-            </a>
             <a
               href="/api/obis-catalog/export"
               download
@@ -324,26 +266,42 @@ export function ObisConfigCatalogClient() {
               <DownloadIcon className="mr-1 size-3.5" />
               Export
             </a>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={importing || loading}
-              onClick={openImportPicker}
-            >
-              <UploadIcon className="mr-1 size-3.5" />
-              Import JSON
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={importing || loading}
-              onClick={openExcelImportPicker}
-            >
-              <UploadIcon className="mr-1 size-3.5" />
-              Import Excel
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className={cn(
+                  buttonVariants({ variant: "secondary", size: "sm" }),
+                  "gap-1"
+                )}
+                disabled={importing || loading}
+              >
+                <UploadIcon className="size-3.5" />
+                Import
+                <ChevronDownIcon className="size-3.5 opacity-70" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={openSpreadsheetPicker}>Upload file</DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={async () => {
+                    try {
+                      const r = await fetch("/api/obis-catalog/template")
+                      const blob = await r.blob()
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement("a")
+                      a.href = url
+                      a.download = "obis-catalog-template.csv"
+                      document.body.appendChild(a)
+                      a.click()
+                      a.remove()
+                      URL.revokeObjectURL(url)
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                >
+                  Download template
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button type="button" size="sm" onClick={openAdd}>
               <PlusIcon className="mr-1 size-3.5" />
               Add
@@ -367,25 +325,57 @@ export function ObisConfigCatalogClient() {
       <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
-          onClick={() => setPackFilter("all")}
+          onClick={() => {
+            setFamilyFilter("all")
+            setSectionFilter("all")
+          }}
           className={cn(
             "rounded border px-2 py-1 text-xs",
-            packFilter === "all" ? "border-primary bg-primary/10" : "border-border"
+            familyFilter === "all" ? "border-primary bg-primary/10" : "border-border"
           )}
         >
           All
         </button>
-        {packKeys.map((k) => (
+        {FAMILY_TAB_ORDER.map((ft) => (
+          <button
+            key={ft}
+            type="button"
+            onClick={() => {
+              setFamilyFilter(ft)
+              setSectionFilter("all")
+            }}
+            className={cn(
+              "rounded border px-2 py-1 text-xs",
+              familyFilter === ft ? "border-primary bg-primary/10" : "border-border"
+            )}
+          >
+            {familyTabLabel(ft)}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => setSectionFilter("all")}
+          className={cn(
+            "rounded border px-2 py-1 text-xs",
+            sectionFilter === "all" ? "border-primary bg-primary/10" : "border-border"
+          )}
+        >
+          All sections
+        </button>
+        {sectionKeysForFilter.map((k) => (
           <button
             key={k}
             type="button"
-            onClick={() => setPackFilter(k)}
+            onClick={() => setSectionFilter(k)}
             className={cn(
               "rounded border px-2 py-1 text-xs",
-              packFilter === k ? "border-primary bg-primary/10" : "border-border"
+              sectionFilter === k ? "border-primary bg-primary/10" : "border-border"
             )}
           >
-            {packLabel(k)}
+            {sectionLabelForPack(rows, k)}
           </button>
         ))}
       </div>
@@ -394,33 +384,54 @@ export function ObisConfigCatalogClient() {
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-[100px]">Actions</TableHead>
               <TableHead>OBIS</TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Type</TableHead>
               <TableHead className="text-right">Cl</TableHead>
               <TableHead className="text-right">At</TableHead>
+              <TableHead>Family</TableHead>
+              <TableHead>Section</TableHead>
               <TableHead>Pack</TableHead>
               <TableHead>En</TableHead>
+              <TableHead className="w-[100px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-muted-foreground">
+                <TableCell colSpan={10} className="text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-muted-foreground">
+                <TableCell colSpan={10} className="text-muted-foreground">
                   No rows
                 </TableCell>
               </TableRow>
             ) : (
               filtered.map((r) => (
                 <TableRow key={r.obis}>
-                  <TableCell className="space-x-1 whitespace-nowrap">
+                  <TableCell className="max-w-[10rem] align-top font-mono text-xs whitespace-normal break-all">
+                    {r.obis}
+                  </TableCell>
+                  <TableCell className="max-w-[min(16rem,32vw)] align-top text-xs whitespace-normal break-words">
+                    {r.description}
+                  </TableCell>
+                  <TableCell className="align-top text-xs whitespace-normal break-words">
+                    {r.object_type}
+                  </TableCell>
+                  <TableCell className="text-right align-top font-mono text-xs">{r.class_id}</TableCell>
+                  <TableCell className="text-right align-top font-mono text-xs">{r.attribute}</TableCell>
+                  <TableCell className="align-top text-xs">{familyTabLabel(r.family_tab)}</TableCell>
+                  <TableCell className="max-w-[min(12rem,28vw)] align-top text-xs whitespace-normal break-words">
+                    {r.section_group}
+                  </TableCell>
+                  <TableCell className="align-top font-mono text-[10px] whitespace-normal break-all">
+                    {r.pack_key}
+                  </TableCell>
+                  <TableCell className="text-xs">{r.enabled ? "Y" : "N"}</TableCell>
+                  <TableCell className="space-x-1 whitespace-nowrap text-right">
                     <Button
                       type="button"
                       size="icon"
@@ -442,21 +453,6 @@ export function ObisConfigCatalogClient() {
                       <TrashIcon className="size-3.5" />
                     </Button>
                   </TableCell>
-                  <TableCell className="max-w-[10rem] align-top font-mono text-xs whitespace-normal break-all">
-                    {r.obis}
-                  </TableCell>
-                  <TableCell className="max-w-[min(16rem,32vw)] align-top text-xs whitespace-normal break-words">
-                    {r.description}
-                  </TableCell>
-                  <TableCell className="align-top text-xs whitespace-normal break-words">
-                    {r.object_type}
-                  </TableCell>
-                  <TableCell className="text-right align-top font-mono text-xs">{r.class_id}</TableCell>
-                  <TableCell className="text-right align-top font-mono text-xs">{r.attribute}</TableCell>
-                  <TableCell className="align-top text-xs whitespace-normal break-words">
-                    {packLabel(r.pack_key)}
-                  </TableCell>
-                  <TableCell className="text-xs">{r.enabled ? "Y" : "N"}</TableCell>
                 </TableRow>
               ))
             )}
@@ -491,6 +487,39 @@ export function ObisConfigCatalogClient() {
                   className="mt-1"
                   value={editing.description}
                   onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+                />
+              </div>
+              <div>
+                <label htmlFor="fam" className="text-xs font-medium">
+                  Family tab
+                </label>
+                <select
+                  id="fam"
+                  className="mt-1 flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  value={editing.family_tab}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      family_tab: e.target.value as ObisFamilyTab,
+                    })
+                  }
+                >
+                  {FAMILY_TAB_ORDER.map((ft) => (
+                    <option key={ft} value={ft}>
+                      {familyTabLabel(ft)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="sec" className="text-xs font-medium">
+                  Section / group
+                </label>
+                <Input
+                  id="sec"
+                  className="mt-1"
+                  value={editing.section_group}
+                  onChange={(e) => setEditing({ ...editing, section_group: e.target.value })}
                 />
               </div>
               <div>
