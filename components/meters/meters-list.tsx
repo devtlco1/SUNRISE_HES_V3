@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/table"
 import {
   METERS_FETCH_NETWORK_ERROR,
+  deleteMeter,
   fetchMeters,
 } from "@/lib/meters/api"
 import {
@@ -314,6 +315,23 @@ export function MetersList({ rows: rowsProp, onRegisterActions }: MetersListProp
     setSheetIntent("detail")
     setSheetFormInitially(true)
     setSheetOpen(true)
+  }
+
+  async function onDeleteRow(meter: MeterListRow) {
+    if (staticMode) return
+    if (
+      !confirm(
+        `Delete meter ${meter.serialNumber} (${meter.id}) from the registry?`
+      )
+    ) {
+      return
+    }
+    const r = await deleteMeter({ id: meter.id })
+    if (!r.ok) {
+      window.alert(r.error)
+      return
+    }
+    reload()
   }
 
   function onSheetOpenChange(open: boolean) {
@@ -682,6 +700,14 @@ export function MetersList({ rows: rowsProp, onRegisterActions }: MetersListProp
                                   </DropdownMenuItem>
                                   <DropdownMenuItem disabled>
                                     View alarms
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    disabled={staticMode}
+                                    onClick={() => void onDeleteRow(row)}
+                                  >
+                                    Delete
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
