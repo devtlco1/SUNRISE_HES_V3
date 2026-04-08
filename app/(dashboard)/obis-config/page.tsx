@@ -4,7 +4,8 @@ import { ObisConfigCatalogClient } from "@/components/obis/obis-config-catalog-c
 
 export const metadata: Metadata = {
   title: "OBIS catalog",
-  description: "OBIS definitions and read packs for operator readings.",
+  description:
+    "Vendor PRM catalog (PRM_CODE_OBIS ⋈ PRM_CODE_OBJECT). Grouped by ClassName, SubClassName, SortNo.",
 }
 
 export default function ObisConfigPage() {

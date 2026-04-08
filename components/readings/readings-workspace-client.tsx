@@ -63,6 +63,11 @@ import {
 } from "@/lib/readings/workspace-persist"
 import { fetchObisCatalog } from "@/lib/obis/catalog-client"
 import {
+  catalogRowKindShortLabel,
+  catalogRowKindTitle,
+  inferCatalogRowKind,
+} from "@/lib/obis/catalog-row-kind"
+import {
   catalogPackKey,
   classNamesPresent,
   getCatalogRowsForClassAndSubclassFromRows,
@@ -417,7 +422,7 @@ export function ReadingsWorkspaceClient() {
     [catalog, className, subclassKey]
   )
 
-  const v1SupportedRowsInPack = useMemo(
+  const v1SupportedRowsInView = useMemo(
     () => catalogRows.filter((r) => r.enabled && obisSelectionRowSupportedV1Catalog(r)),
     [catalogRows]
   )
@@ -884,7 +889,7 @@ export function ReadingsWorkspaceClient() {
     })
   }
 
-  function selectAllInPack() {
+  function selectAllVisible() {
     setSelected(new Set(catalogRows.filter((r) => r.enabled).map((r) => r.object_code)))
   }
 
@@ -1026,13 +1031,13 @@ export function ReadingsWorkspaceClient() {
 
   async function onReadCategory() {
     const mid = meterId.trim() || "unknown-meter"
-    if (v1SupportedRowsInPack.length === 0) {
+    if (v1SupportedRowsInView.length === 0) {
       patchMeter(mid, {
         actionError: "No v1-readable rows in this category (Data/Clock/Register, attr 2).",
       })
       return
     }
-    const items = v1SupportedRowsInPack.map(catalogEntryToSelectionItem)
+    const items = v1SupportedRowsInView.map(catalogEntryToSelectionItem)
     await executeReadObisSelection(items)
   }
 
@@ -1596,11 +1601,16 @@ export function ReadingsWorkspaceClient() {
             </button>
           ))}
         </div>
+        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+          Groups are <span className="font-medium text-foreground">PRM ClassName / SubClassName</span> (vendor DB),
+          not legacy app tabs. Profile/billing captures show Kind <span className="font-mono">Cap</span> — table
+          rendering is future work.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1.5">
-          <Button type="button" size="sm" variant="outline" className="h-8" onClick={selectAllInPack}>
+          <Button type="button" size="sm" variant="outline" className="h-8" onClick={selectAllVisible}>
             Select all
           </Button>
           <Button type="button" size="sm" variant="outline" className="h-8" onClick={clearSelection}>
@@ -1661,7 +1671,7 @@ export function ReadingsWorkspaceClient() {
                         catalogRows.every((r) => selected.has(r.object_code))
                       }
                       onChange={(e) => {
-                        if (e.target.checked) selectAllInPack()
+                        if (e.target.checked) selectAllVisible()
                         else clearSelection()
                       }}
                     />
@@ -1672,6 +1682,9 @@ export function ReadingsWorkspaceClient() {
                   <TableHead className="whitespace-nowrap">OBIS</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="whitespace-nowrap">Subclass</TableHead>
+                  <TableHead className="w-8 p-1 text-center text-[10px] font-normal text-muted-foreground">
+                    Kind
+                  </TableHead>
                   <TableHead>Result</TableHead>
                   <TableHead className="whitespace-nowrap">Status</TableHead>
                 </TableRow>
@@ -1679,6 +1692,7 @@ export function ReadingsWorkspaceClient() {
               <TableBody>
                 {catalogRows.map((r) => {
                   const rs = rowStateForCatalogRow(currentMeterState.rowState, r)
+                  const kind = inferCatalogRowKind(r)
                   return (
                     <TableRow key={r.object_code}>
                       <TableCell className="align-top">
@@ -1714,6 +1728,11 @@ export function ReadingsWorkspaceClient() {
                       </TableCell>
                       <TableCell className="max-w-[min(8rem,20vw)] align-top text-xs whitespace-normal break-words">
                         {(r.subclass_name ?? "").trim() || "—"}
+                      </TableCell>
+                      <TableCell className="p-1 text-center align-top font-mono text-[10px] text-muted-foreground">
+                        <span title={catalogRowKindTitle(kind)}>
+                          {catalogRowKindShortLabel(kind)}
+                        </span>
                       </TableCell>
                       <TableCell className="max-w-[min(11rem,26vw)] align-top font-mono text-xs whitespace-normal break-words">
                         {rs?.result ?? ""}

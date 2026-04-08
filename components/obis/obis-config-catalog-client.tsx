@@ -29,6 +29,11 @@ import {
 } from "@/components/ui/table"
 import { fetchObisCatalog } from "@/lib/obis/catalog-client"
 import {
+  catalogRowKindShortLabel,
+  catalogRowKindTitle,
+  inferCatalogRowKind,
+} from "@/lib/obis/catalog-row-kind"
+import {
   classNamesPresent,
   subclassKey,
   subclassKeysForClass,
@@ -353,6 +358,13 @@ export function ObisConfigCatalogClient() {
         </p>
       ) : null}
 
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        Chips list exact <span className="font-medium text-foreground">PRM ClassName</span> /{" "}
+        <span className="font-medium text-foreground">SubClassName</span> values from the vendor DB (names like
+        Basic or Energy are PRM classes, not the old three-tab UI). Order uses{" "}
+        <span className="font-medium text-foreground">SortNo</span>. There are no Family/Section/Pack columns.
+      </p>
+
       <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
@@ -427,6 +439,9 @@ export function ObisConfigCatalogClient() {
               <TableHead>Class</TableHead>
               <TableHead>Subclass</TableHead>
               <TableHead className="text-right">Sort</TableHead>
+              <TableHead className="w-8 text-center text-[10px] font-normal" title="Read shape hint">
+                Kind
+              </TableHead>
               <TableHead>Type</TableHead>
               <TableHead className="text-right">Cl</TableHead>
               <TableHead className="text-right">At</TableHead>
@@ -437,18 +452,20 @@ export function ObisConfigCatalogClient() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-muted-foreground">
+                <TableCell colSpan={12} className="text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-muted-foreground">
+                <TableCell colSpan={12} className="text-muted-foreground">
                   No rows
                 </TableCell>
               </TableRow>
             ) : (
-              filtered.map((r) => (
+              filtered.map((r) => {
+                const kind = inferCatalogRowKind(r)
+                return (
                 <TableRow key={r.object_code}>
                   <TableCell className="max-w-[11rem] align-top font-mono text-[10px] whitespace-normal break-all">
                     {r.object_code}
@@ -464,6 +481,11 @@ export function ObisConfigCatalogClient() {
                     {(r.subclass_name ?? "").trim() || "—"}
                   </TableCell>
                   <TableCell className="text-right align-top font-mono text-xs">{r.sort_no}</TableCell>
+                  <TableCell className="p-1 text-center align-top font-mono text-[10px] text-muted-foreground">
+                    <span title={catalogRowKindTitle(kind)}>
+                      {catalogRowKindShortLabel(kind)}
+                    </span>
+                  </TableCell>
                   <TableCell className="align-top text-xs whitespace-normal break-words">{r.object_type}</TableCell>
                   <TableCell className="text-right align-top font-mono text-xs">{r.class_id}</TableCell>
                   <TableCell className="text-right align-top font-mono text-xs">{r.attribute}</TableCell>
@@ -491,7 +513,7 @@ export function ObisConfigCatalogClient() {
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))
+              )})
             )}
           </TableBody>
         </Table>

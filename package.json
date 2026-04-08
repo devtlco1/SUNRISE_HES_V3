@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "obis:apply-excel": "tsx scripts/apply-excel-obis-catalog.ts",
-    "obis:catalog:generate": "tsx scripts/generate-obis-catalog-from-prm.ts data1.sql"
+    "obis:catalog:generate": "tsx scripts/generate-obis-catalog-from-prm.ts data1.sql",
+    "obis:catalog:verify": "tsx scripts/verify-obis-catalog-prm.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
