@@ -106,6 +106,26 @@ function aggregateStatus(
   }
 }
 
+/** Attach first meter failure text so operators see a concrete reason, not only counts. */
+function enrichErrorSummary(
+  base: string | null,
+  perMeter: OperatorCommandMeterResult[]
+): string | null {
+  const first = perMeter.find((p) => p.state === "failed")
+  if (!first) return base
+  const hint = `${first.serialNumber}: ${first.summary}`
+    .replace(/\s+/g, " ")
+    .slice(0, 200)
+  const detail =
+    first.errorDetail && !hint.includes(first.errorDetail.slice(0, 30))
+      ? ` (${first.errorDetail.replace(/\s+/g, " ").slice(0, 120)})`
+      : ""
+  const full = `${hint}${detail}`.slice(0, 320)
+  if (!base) return full
+  if (base.includes(first.serialNumber)) return `${base}`.slice(0, 500)
+  return `${base} · ${full}`.slice(0, 500)
+}
+
 type Plan =
   | { kind: "read_obis"; items: ObisSelectionItemInput[] }
   | { kind: "runtime"; action: OperatorActionType }
@@ -219,6 +239,7 @@ async function runOperatorCommandExecution(runId: string): Promise<void> {
     const okN = perMeter.filter((p) => p.state === "success").length
     const failN = perMeter.length - okN
     const { status, resultSummary, errorSummary } = aggregateStatus(okN, failN)
+    const errorSummaryRich = enrichErrorSummary(errorSummary, perMeter)
     const done = new Date().toISOString()
 
     await withOperatorRunsLock(async (runs) => {
@@ -232,7 +253,7 @@ async function runOperatorCommandExecution(runId: string): Promise<void> {
         finishedAt: done,
         perMeterResults: perMeter,
         resultSummary,
-        errorSummary,
+        errorSummary: errorSummaryRich,
         executionNote: `${r.executionNote} | ${COMMAND_ENGINE_LIMITS_NOTE}`.trim(),
       }
       return { next, result: undefined }

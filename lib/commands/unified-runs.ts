@@ -43,7 +43,30 @@ function meterOutcomeBrief(row: OperatorCommandRun): string | null {
   return `${ok}/${pr.length} meters ok`
 }
 
-export function operatorRunToUnified(row: OperatorCommandRun): UnifiedCommandRunRow {
+export function failureHintFromOperatorRun(
+  row: OperatorCommandRun
+): string | null {
+  const fails = row.perMeterResults?.filter((p) => p.state === "failed") ?? []
+  if (fails.length > 0) {
+    const f = fails[0]!
+    const base = `${f.serialNumber}: ${f.summary}`
+      .replace(/\s+/g, " ")
+      .slice(0, 200)
+    const extra =
+      f.errorDetail && !base.includes(f.errorDetail.slice(0, 24))
+        ? ` — ${f.errorDetail.replace(/\s+/g, " ").slice(0, 120)}`
+        : ""
+    return `${base}${extra}`.slice(0, 280)
+  }
+  if (row.errorSummary && (row.status === "failed" || row.status === "cancelled")) {
+    return row.errorSummary.slice(0, 280)
+  }
+  return null
+}
+
+export function operatorRunToUnified(
+  row: OperatorCommandRun
+): UnifiedCommandRunRow {
   return {
     id: row.id,
     source: "operator",
@@ -65,6 +88,7 @@ export function operatorRunToUnified(row: OperatorCommandRun): UnifiedCommandRun
     errorSummary: row.errorSummary,
     notes: row.executionNote || null,
     meterOutcomeBrief: meterOutcomeBrief(row),
+    failureHint: failureHintFromOperatorRun(row),
   }
 }
 
@@ -93,6 +117,7 @@ export function legacyJobToUnified(row: CommandJobRow): UnifiedCommandRunRow {
         : null,
     notes: row.operatorNote ?? null,
     meterOutcomeBrief: null,
+    failureHint: null,
   }
 }
 

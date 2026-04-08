@@ -20,7 +20,10 @@ import {
 } from "@/lib/commands/operator-normalize"
 import { withOperatorRunsLock } from "@/lib/commands/operator-persistence"
 import { resolveCommandExecutionContext } from "@/lib/commands/resolve-command-context"
-import { mergeAndSortUnifiedRuns } from "@/lib/commands/unified-runs"
+import {
+  mergeAndSortUnifiedRuns,
+  operatorRunToUnified,
+} from "@/lib/commands/unified-runs"
 import type { OperatorActionType, OperatorTargetType } from "@/types/command-operator"
 import { NextResponse } from "next/server"
 
@@ -40,7 +43,12 @@ function nonEmptyId(v: unknown): string | null {
   return t === "" ? null : t
 }
 
-export async function GET() {
+function parseRunDate(s: string): number {
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? t : 0
+}
+
+export async function GET(req: Request) {
   const opRaw = await readOperatorRunsRaw()
   if (!opRaw.ok) {
     return NextResponse.json({ error: opRaw.error }, { status: 500 })
@@ -52,6 +60,33 @@ export async function GET() {
 
   const legacy = await loadLegacyCommandJobs()
   const legacyRows = legacy.ok ? legacy.rows : []
+
+  const url = new URL(req.url)
+  const scope = url.searchParams.get("scope") ?? "all"
+
+  if (scope === "operator") {
+    const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1)
+    const rawSize = parseInt(url.searchParams.get("pageSize") ?? "25", 10)
+    const pageSize = Math.min(100, Math.max(1, Number.isFinite(rawSize) ? rawSize : 25))
+    const sorted = [...operatorRuns].sort(
+      (a, b) => parseRunDate(b.createdAt) - parseRunDate(a.createdAt)
+    )
+    const total = sorted.length
+    const start = (page - 1) * pageSize
+    const slice = sorted.slice(start, start + pageSize)
+    const operatorRows = slice.map(operatorRunToUnified)
+    return NextResponse.json(
+      {
+        scope: "operator",
+        operatorRows,
+        operatorTotal: total,
+        page,
+        pageSize,
+        legacyAvailable: legacy.ok,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    )
+  }
 
   const rows = mergeAndSortUnifiedRuns(operatorRuns, legacyRows)
 

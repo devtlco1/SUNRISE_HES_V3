@@ -147,6 +147,8 @@ export type UnifiedCommandRunRow = {
   errorSummary: string | null
   notes: string | null
   meterOutcomeBrief: string | null
+  /** First failed meter + detail; engine failures use errorSummary only. */
+  failureHint: string | null
 }
 
 /** Legacy overview API / stats helper (optional dashboard use). */

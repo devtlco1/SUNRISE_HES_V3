@@ -136,7 +136,7 @@ export function CommandsUnifiedRunsClient() {
                   <TableHead>Started</TableHead>
                   <TableHead>Finished</TableHead>
                   <TableHead>Result</TableHead>
-                  <TableHead>Error</TableHead>
+                  <TableHead>Failure hint</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -195,10 +195,10 @@ export function CommandsUnifiedRunsClient() {
                       {r.resultSummary}
                     </TableCell>
                     <TableCell
-                      className="max-w-[140px] truncate text-xs text-destructive"
-                      title={r.errorSummary ?? ""}
+                      className="max-w-[200px] truncate text-xs text-destructive"
+                      title={r.failureHint ?? r.errorSummary ?? ""}
                     >
-                      {r.errorSummary ?? "—"}
+                      {r.failureHint ?? r.errorSummary ?? "—"}
                     </TableCell>
                   </TableRow>
                 ))}
