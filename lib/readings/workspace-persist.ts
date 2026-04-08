@@ -3,17 +3,17 @@
  * Does not imply an active runtime session; restored data is a display snapshot only.
  */
 
+import { VENDOR_SUBCLASS_NONE_KEY } from "@/lib/obis/catalog-vendor-group"
 import type { ObisRowReadState } from "@/lib/obis/merge-read-results"
-import type { ObisFamilyTab } from "@/lib/obis/types"
 import type {
   ReadObisSelectionPayload,
   RelayControlPayload,
   RuntimeResponseEnvelope,
 } from "@/types/runtime"
 
-export const READINGS_WORKSPACE_STORAGE_KEY = "sunrise-readings-workspace-v1"
-/** v2: snapshots no longer carry in-flight row phases (pending/running) — those come from live job polling only. */
-export const READINGS_WORKSPACE_VERSION = 2
+export const READINGS_WORKSPACE_STORAGE_KEY = "sunrise-readings-workspace-v3"
+/** v3: vendor PRM grouping (class_name + subclass key); selection keys are object_code. */
+export const READINGS_WORKSPACE_VERSION = 3
 
 export type ReadingsTransportMode = "inbound" | "direct"
 
@@ -40,18 +40,14 @@ export type PersistedPerMeterReadingsState = {
 export type PersistedReadingsWorkspace = {
   v: number
   meterId: string
-  familyTab: ObisFamilyTab
-  pack: string
+  className: string
+  subclassKey: string
   transport: ReadingsTransportMode
-  selectedObis: string[]
+  selectedObjectCodes: string[]
   perMeter: Record<string, PersistedPerMeterReadingsState>
   diagnosticsOpen: boolean
   expandedLogIds: string[]
   actionLog: PersistedActionLogEntry[]
-}
-
-function isFamilyTab(x: unknown): x is ObisFamilyTab {
-  return x === "basic" || x === "energy" || x === "profile"
 }
 
 function isTransport(x: unknown): x is ReadingsTransportMode {
@@ -73,10 +69,10 @@ export function sanitizeVolatileObisRowStateForSnapshot(
   rowState: Record<string, ObisRowReadState>
 ): Record<string, ObisRowReadState> {
   const next: Record<string, ObisRowReadState> = {}
-  for (const [obis, cell] of Object.entries(rowState)) {
+  for (const [key, cell] of Object.entries(rowState)) {
     if (!cell) continue
     if (cell.status === "pending" || cell.status === "running") {
-      next[obis] = {
+      next[key] = {
         result: "",
         status: "not_attempted",
         error: "workspace_snapshot",
@@ -84,7 +80,7 @@ export function sanitizeVolatileObisRowStateForSnapshot(
       }
       continue
     }
-    next[obis] = cell
+    next[key] = cell
   }
   return next
 }
@@ -102,10 +98,10 @@ function trimForStorage(
   return {
     v: READINGS_WORKSPACE_VERSION,
     meterId: data.meterId,
-    familyTab: data.familyTab,
-    pack: data.pack,
+    className: data.className,
+    subclassKey: data.subclassKey,
     transport: data.transport,
-    selectedObis: data.selectedObis.slice(0, 5000),
+    selectedObjectCodes: data.selectedObjectCodes.slice(0, 5000),
     perMeter: perMeterSanitized,
     diagnosticsOpen: data.diagnosticsOpen,
     expandedLogIds: data.expandedLogIds.slice(0, 500),
@@ -119,18 +115,20 @@ export function loadReadingsWorkspace(): PersistedReadingsWorkspace | null {
     const raw = sessionStorage.getItem(READINGS_WORKSPACE_STORAGE_KEY)
     if (!raw) return null
     const p = JSON.parse(raw) as Partial<PersistedReadingsWorkspace>
-    if (p.v !== READINGS_WORKSPACE_VERSION && p.v !== 1) return null
+    if (p.v !== READINGS_WORKSPACE_VERSION) return null
     if (typeof p.meterId !== "string") return null
-    if (!isFamilyTab(p.familyTab)) return null
-    if (typeof p.pack !== "string" || p.pack.length > 200) return null
+    if (typeof p.className !== "string" || p.className.length > 200) return null
+    if (typeof p.subclassKey !== "string" || p.subclassKey.length > 200) return null
     if (!isTransport(p.transport)) return null
-    if (!Array.isArray(p.selectedObis)) return null
+    if (!Array.isArray(p.selectedObjectCodes)) return null
     if (!p.perMeter || typeof p.perMeter !== "object") return null
     if (typeof p.diagnosticsOpen !== "boolean") return null
     if (!Array.isArray(p.expandedLogIds)) return null
     if (!Array.isArray(p.actionLog)) return null
 
-    const selectedObis = p.selectedObis.filter((x): x is string => typeof x === "string")
+    const selectedObjectCodes = p.selectedObjectCodes.filter(
+      (x): x is string => typeof x === "string"
+    )
     const expandedLogIds = p.expandedLogIds.filter((x): x is string => typeof x === "string")
 
     const perMeter: Record<string, PersistedPerMeterReadingsState> = {}
@@ -188,10 +186,10 @@ export function loadReadingsWorkspace(): PersistedReadingsWorkspace | null {
     return {
       v: READINGS_WORKSPACE_VERSION,
       meterId: p.meterId.trim(),
-      familyTab: p.familyTab,
-      pack: p.pack,
+      className: p.className,
+      subclassKey: p.subclassKey || VENDOR_SUBCLASS_NONE_KEY,
       transport: p.transport,
-      selectedObis,
+      selectedObjectCodes,
       perMeter,
       diagnosticsOpen: p.diagnosticsOpen,
       expandedLogIds,

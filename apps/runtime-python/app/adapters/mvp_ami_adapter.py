@@ -53,6 +53,14 @@ from app.schemas.requests import (
     ReadObisSelectionRequest,
 )
 
+
+def _obis_selection_object_code(item: ObisSelectionItem) -> Optional[str]:
+    raw = getattr(item, "objectCode", None)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s or None
+
 log = logging.getLogger(__name__)
 
 
@@ -206,6 +214,7 @@ def _obis_selection_row_from_parsed(
     if ok_read:
         return ObisSelectionRowResult(
             obis=item.obis,
+            objectCode=_obis_selection_object_code(item),
             value=reading.value,
             unit=u,
             quality=reading.quality or "good",
@@ -216,6 +225,7 @@ def _obis_selection_row_from_parsed(
         )
     return ObisSelectionRowResult(
         obis=item.obis,
+        objectCode=_obis_selection_object_code(item),
         value=reading.value,
         unit=u,
         quality=reading.quality,
@@ -421,6 +431,7 @@ def _prepare_obis_selection_slots(
         if not ok:
             slots[i] = ObisSelectionRowResult(
                 obis=item.obis,
+                objectCode=_obis_selection_object_code(item),
                 status="unsupported",
                 error=reason,
                 packKey=item.packKey,
@@ -431,6 +442,7 @@ def _prepare_obis_selection_slots(
         if not ln_ok:
             slots[i] = ObisSelectionRowResult(
                 obis=item.obis,
+                objectCode=_obis_selection_object_code(item),
                 value="",
                 status="error",
                 error=OBIS_SHAPE_INVALID_MESSAGE,
@@ -478,6 +490,7 @@ def _mark_wire_remaining_not_attempted(
         it = items[wj]
         slots[wj] = ObisSelectionRowResult(
             obis=it.obis,
+            objectCode=_obis_selection_object_code(it),
             value="",
             status="not_attempted",
             error="Not attempted (transport/session ended after earlier failure)",
@@ -604,6 +617,7 @@ def _mark_wire_forward_from_index(
         it = items[wj]
         slots[wj] = ObisSelectionRowResult(
             obis=it.obis,
+            objectCode=_obis_selection_object_code(it),
             value="",
             status="not_attempted",
             error=error_message,
@@ -645,6 +659,7 @@ def _mark_wire_after_index(
         it = items[wj]
         slots[wj] = ObisSelectionRowResult(
             obis=it.obis,
+            objectCode=_obis_selection_object_code(it),
             value="",
             status="not_attempted",
             error=error_message,
@@ -697,6 +712,7 @@ def _sequential_obis_wire_loop(
             item = items[wi]
             slots[wi] = ObisSelectionRowResult(
                 obis=item.obis,
+                objectCode=_obis_selection_object_code(item),
                 value="",
                 status="error",
                 error="MVP-AMI internal error: gurux client not available",
@@ -726,6 +742,7 @@ def _sequential_obis_wire_loop(
             last_at = _iso_z(datetime.now(timezone.utc))
             slots[wi] = ObisSelectionRowResult(
                 obis=item.obis,
+                objectCode=_obis_selection_object_code(item),
                 value="",
                 status="not_attempted",
                 error=_SKIP_QUEUE_REASON,
@@ -776,6 +793,7 @@ def _sequential_obis_wire_loop(
             last_at = _iso_z(datetime.now(timezone.utc))
             slots[wi] = ObisSelectionRowResult(
                 obis=item.obis,
+                objectCode=_obis_selection_object_code(item),
                 value="",
                 status="error",
                 error=OBIS_SHAPE_INVALID_MESSAGE,
@@ -826,6 +844,7 @@ def _sequential_obis_wire_loop(
                 last_at = _iso_z(datetime.now(timezone.utc))
                 slots[wi] = ObisSelectionRowResult(
                     obis=item.obis,
+                    objectCode=_obis_selection_object_code(item),
                     value="",
                     status="error",
                     error=f"read raised: {exc}"[:500],
@@ -1199,6 +1218,7 @@ def _finalize_obis_selection_from_meter_result(
                     msg = early.error.message
                 slots[i] = ObisSelectionRowResult(
                     obis=item.obis,
+                    objectCode=_obis_selection_object_code(item),
                     status="error",
                     error=msg[:500],
                     packKey=item.packKey,

@@ -131,6 +131,7 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
                 rows.append(
                     ObisSelectionRowResult(
                         obis=item.obis,
+                        objectCode=item.objectCode,
                         status="unsupported",
                         error=reason,
                         packKey=item.packKey,
@@ -141,6 +142,7 @@ class StubRuntimeAdapter(ProtocolRuntimeAdapter):
                 rows.append(
                     ObisSelectionRowResult(
                         obis=item.obis,
+                        objectCode=item.objectCode,
                         value=f"STUB-{item.obis}",
                         unit=item.unit or None,
                         quality="simulated",

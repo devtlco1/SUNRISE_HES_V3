@@ -96,6 +96,10 @@ class ObisSelectionRowResult(BaseModel):
     """One row in read-obis-selection response (operator table merge)."""
 
     obis: str
+    objectCode: Optional[str] = Field(
+        default=None,
+        description="When set, UI keys row state by catalog object code (disambiguates duplicate OBIS).",
+    )
     value: str = ""
     unit: Optional[str] = None
     quality: Optional[str] = None

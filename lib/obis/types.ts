@@ -1,55 +1,47 @@
 /**
- * Operator OBIS catalog (seeded + persisted). Runtime reads remain on the Python sidecar.
- * `pack_key` is an open string so operators can add custom categories in OBIS config.
+ * Operator OBIS catalog persisted in `data/obis-catalog.json`.
+ * Classification is vendor PRM_CODE_OBJECT (ClassName / SubClassName / SortNo) joined to PRM_CODE_OBIS.
  */
 
-export type ObisPackKey = string
-
-/** Top-level OBIS config / readings tab: Basic, Energy, Profile. */
-export type ObisFamilyTab = "basic" | "energy" | "profile"
-
 export interface ObisCatalogEntry {
+  /** PRM_CODE_OBIS.ObjectCode / PRM_CODE_OBJECT.Code (may include 7th attribute segment). */
+  object_code: string
+  /** Six-group COSEM logical name derived from `object_code`. */
   obis: string
+  /** Operator-facing label (typically PRM `Name`). */
   description: string
+  object_name: string
+  class_name: string
+  subclass_name: string
+  sort_no: number
+  protocol: string
+  obis_hex: string
+  data_type: string
+  analytic_type: string
+  unit: string
+  scaler: number
+  read_batch_status: string
+  read_single_status: string
+  collect_plan_status: string
+  collect_plan_type_status: string
+  setting_status: string
+  display_status: string
+  xslt: string
+  phase: string
+  device_type: string
+  object_status: string
+  cim_code: string
+  crt_on: string
+  mdf_on: string
+  /** COSEM read shape for Python read-obis-selection (inferred from PRM + OBIS). */
   object_type: string
   class_id: number
   attribute: number
   scaler_unit_attribute: number
-  unit: string
   result_format: string
   status: "active" | "catalog_only"
-  /** Stable subsection key (groups rows; often matches a known section slug). */
-  pack_key: ObisPackKey
-  /** Operator tab: basic | energy | profile */
-  family_tab: ObisFamilyTab
-  /** Spreadsheet / human section (e.g. BASIC SETTING, HISTORY ENERGY). */
-  section_group: string
   enabled: boolean
+  /** Display order within class/subclass (from SortNo). */
   sort_order: number
   notes?: string
-}
-
-/** Default pack keys (order for navigation when present in catalog). */
-export const OBIS_PACK_ORDER: ObisPackKey[] = [
-  "basic_setting",
-  "energy",
-  "instantaneous",
-  "power",
-  "demand",
-  "event_logs",
-  "load_profile",
-]
-
-export const OBIS_PACK_LABELS: Record<string, string> = {
-  basic_setting: "Basic setting",
-  energy: "Energy",
-  instantaneous: "Instantaneous",
-  power: "Power",
-  demand: "Demand",
-  event_logs: "Event Logs",
-  load_profile: "Load Profile",
-}
-
-export function packLabel(key: string): string {
-  return OBIS_PACK_LABELS[key] ?? key
 }

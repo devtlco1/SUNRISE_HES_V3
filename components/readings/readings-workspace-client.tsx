@@ -63,19 +63,21 @@ import {
 } from "@/lib/readings/workspace-persist"
 import { fetchObisCatalog } from "@/lib/obis/catalog-client"
 import {
-  familyTabsPresent,
-  getCatalogRowsForFamilyAndPackFromRows,
-  packKeysForFamily,
-  sectionLabelForPack,
-} from "@/lib/obis/catalog-seed"
-import { familyTabLabel } from "@/lib/obis/family-section"
+  catalogPackKey,
+  classNamesPresent,
+  getCatalogRowsForClassAndSubclassFromRows,
+  subclassKeysForClass,
+  subclassLabelFromKey,
+  VENDOR_SUBCLASS_NONE_KEY,
+} from "@/lib/obis/catalog-vendor-group"
 import {
   mergeObisJobPollIntoRowState,
   mergeObisSelectionIntoRowState,
+  obisJobPollRowStateKey,
   type ObisRowReadState,
 } from "@/lib/obis/merge-read-results"
 import { obisSelectionRowSupportedV1Catalog } from "@/lib/obis/obis-selection-v1-client"
-import type { ObisCatalogEntry, ObisFamilyTab } from "@/lib/obis/types"
+import type { ObisCatalogEntry } from "@/lib/obis/types"
 import type { MeterListRow } from "@/types/meter"
 import type {
   ObisSelectionItemInput,
@@ -271,7 +273,6 @@ function catalogEntryToSelectionItem(r: ObisCatalogEntry): ObisSelectionItemInpu
   const rx = r as ObisCatalogEntry & {
     objectType?: string
     classId?: number
-    packKey?: string
     scalerUnitAttribute?: number
   }
   const objectType =
@@ -291,24 +292,31 @@ function catalogEntryToSelectionItem(r: ObisCatalogEntry): ObisSelectionItemInpu
     typeof rawSu === "number" && Number.isFinite(rawSu)
       ? Math.trunc(rawSu)
       : undefined
-  const packKey = (rx.packKey ?? r.pack_key) || undefined
   return {
     obis: r.obis,
+    objectCode: r.object_code,
     description: r.description,
     objectType,
     classId: Number.isFinite(classId) ? classId : r.class_id,
     ...(attribute !== undefined ? { attribute } : {}),
     ...(scalerUnitAttribute !== undefined ? { scalerUnitAttribute } : {}),
     unit: r.unit || undefined,
-    packKey,
+    packKey: catalogPackKey(r),
   }
+}
+
+function rowStateForCatalogRow(
+  rowState: Record<string, ObisRowReadState>,
+  r: ObisCatalogEntry
+): ObisRowReadState | undefined {
+  return rowState[r.object_code] ?? rowState[r.obis]
 }
 
 export function ReadingsWorkspaceClient() {
   const [catalog, setCatalog] = useState<ObisCatalogEntry[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
-  const [familyTab, setFamilyTab] = useState<ObisFamilyTab>("basic")
-  const [pack, setPack] = useState<string>("basic_setting")
+  const [className, setClassName] = useState("")
+  const [subclassKey, setSubclassKey] = useState<string>(VENDOR_SUBCLASS_NONE_KEY)
   const [transport, setTransport] = useState<TransportMode>("inbound")
   const [meterId, setMeterId] = useState("")
   const [meters, setMeters] = useState<MeterListRow[]>([])
@@ -333,7 +341,7 @@ export function ReadingsWorkspaceClient() {
   const [obisJobCancelling, setObisJobCancelling] = useState(false)
 
   const [workspaceHydrated, setWorkspaceHydrated] = useState(false)
-  const prevFamilyPackRef = useRef<{ family: ObisFamilyTab; pack: string } | null>(
+  const prevClassSubclassRef = useRef<{ className: string; subclassKey: string } | null>(
     null
   )
 
@@ -394,16 +402,19 @@ export function ReadingsWorkspaceClient() {
     setActionLog((prev) => [row, ...prev].slice(0, 200))
   }, [])
 
-  const families = useMemo(() => familyTabsPresent(catalog), [catalog])
+  const classNames = useMemo(() => classNamesPresent(catalog), [catalog])
 
-  const packKeys = useMemo(
-    () => packKeysForFamily(catalog, familyTab),
-    [catalog, familyTab]
+  const subclassKeys = useMemo(
+    () => (className ? subclassKeysForClass(catalog, className) : []),
+    [catalog, className]
   )
 
   const catalogRows = useMemo(
-    () => getCatalogRowsForFamilyAndPackFromRows(catalog, familyTab, pack),
-    [catalog, familyTab, pack]
+    () =>
+      className
+        ? getCatalogRowsForClassAndSubclassFromRows(catalog, className, subclassKey)
+        : [],
+    [catalog, className, subclassKey]
   )
 
   const v1SupportedRowsInPack = useMemo(
@@ -414,15 +425,15 @@ export function ReadingsWorkspaceClient() {
   useLayoutEffect(() => {
     const loaded = loadReadingsWorkspace()
     if (loaded) {
-      prevFamilyPackRef.current = {
-        family: loaded.familyTab,
-        pack: loaded.pack,
+      prevClassSubclassRef.current = {
+        className: loaded.className,
+        subclassKey: loaded.subclassKey,
       }
       setMeterId(loaded.meterId)
-      setFamilyTab(loaded.familyTab)
-      setPack(loaded.pack)
+      setClassName(loaded.className)
+      setSubclassKey(loaded.subclassKey || VENDOR_SUBCLASS_NONE_KEY)
       setTransport(loaded.transport)
-      setSelected(new Set(loaded.selectedObis))
+      setSelected(new Set(loaded.selectedObjectCodes))
       setPerMeter(
         Object.fromEntries(
           Object.entries(loaded.perMeter).map(([k, v]) => [
@@ -439,32 +450,32 @@ export function ReadingsWorkspaceClient() {
       setExpandedLogIds(new Set(loaded.expandedLogIds))
       setActionLog(loaded.actionLog.slice(0, 200))
     } else {
-      prevFamilyPackRef.current = null
+      prevClassSubclassRef.current = null
     }
     setWorkspaceHydrated(true)
   }, [])
 
   useEffect(() => {
-    const prev = prevFamilyPackRef.current
+    const prev = prevClassSubclassRef.current
     if (prev === null) {
-      prevFamilyPackRef.current = { family: familyTab, pack }
+      prevClassSubclassRef.current = { className, subclassKey }
       return
     }
-    if (prev.family !== familyTab || prev.pack !== pack) {
+    if (prev.className !== className || prev.subclassKey !== subclassKey) {
       setSelected(new Set())
     }
-    prevFamilyPackRef.current = { family: familyTab, pack }
-  }, [familyTab, pack])
+    prevClassSubclassRef.current = { className, subclassKey }
+  }, [className, subclassKey])
 
   useEffect(() => {
     if (!workspaceHydrated) return
     const t = window.setTimeout(() => {
       saveReadingsWorkspace({
         meterId,
-        familyTab,
-        pack,
+        className,
+        subclassKey,
         transport,
-        selectedObis: [...selected],
+        selectedObjectCodes: [...selected],
         perMeter: Object.fromEntries(
           Object.entries(perMeter)
             .map(([k, v]) => {
@@ -494,8 +505,8 @@ export function ReadingsWorkspaceClient() {
   }, [
     workspaceHydrated,
     meterId,
-    familyTab,
-    pack,
+    className,
+    subclassKey,
     transport,
     selected,
     perMeter,
@@ -550,14 +561,14 @@ export function ReadingsWorkspaceClient() {
   }, [pathname])
 
   useEffect(() => {
-    if (families.length === 0) return
-    if (!families.includes(familyTab)) setFamilyTab(families[0]!)
-  }, [families, familyTab])
+    if (classNames.length === 0) return
+    if (!classNames.includes(className)) setClassName(classNames[0]!)
+  }, [classNames, className])
 
   useEffect(() => {
-    if (packKeys.length === 0) return
-    if (!packKeys.includes(pack)) setPack(packKeys[0]!)
-  }, [packKeys, pack])
+    if (subclassKeys.length === 0) return
+    if (!subclassKeys.includes(subclassKey)) setSubclassKey(subclassKeys[0]!)
+  }, [subclassKeys, subclassKey])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -631,7 +642,9 @@ export function ReadingsWorkspaceClient() {
       if (activeJob && activeJob.meterId.trim() === mid) {
         setInboundObisJobId(activeJob.jobId)
         setObisJobRowPhases(
-          Object.fromEntries(activeJob.rows.map((row) => [row.obis, row.phase]))
+          Object.fromEntries(
+            activeJob.rows.map((row) => [obisJobPollRowStateKey(row), row.phase])
+          )
         )
         flushSync(() => {
           patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, activeJob))
@@ -650,7 +663,7 @@ export function ReadingsWorkspaceClient() {
         if (terminalHydratedKeyByMeterRef.current.get(mid) === tk) return
         terminalHydratedKeyByMeterRef.current.set(mid, tk)
         setObisJobRowPhases(
-          Object.fromEntries(snap.rows.map((row) => [row.obis, row.phase]))
+          Object.fromEntries(snap.rows.map((row) => [obisJobPollRowStateKey(row), row.phase]))
         )
         flushSync(() => {
           patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, snap))
@@ -717,7 +730,9 @@ export function ReadingsWorkspaceClient() {
           }
           last = snap
           setObisJobRowPhases(
-            Object.fromEntries(snap.rows.map((row) => [row.obis, row.phase]))
+            Object.fromEntries(
+              snap.rows.map((row) => [obisJobPollRowStateKey(row), row.phase])
+            )
           )
           flushSync(() => {
             patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, snap))
@@ -860,17 +875,17 @@ export function ReadingsWorkspaceClient() {
   const canRelayDirect = transport === "direct" && !actionLocked && Boolean(meterId.trim())
   const canRelayAction = canRelayInbound || canRelayDirect
 
-  function toggleObis(obis: string) {
+  function toggleObis(objectCode: string) {
     setSelected((s) => {
       const n = new Set(s)
-      if (n.has(obis)) n.delete(obis)
-      else n.add(obis)
+      if (n.has(objectCode)) n.delete(objectCode)
+      else n.add(objectCode)
       return n
     })
   }
 
   function selectAllInPack() {
-    setSelected(new Set(catalogRows.filter((r) => r.enabled).map((r) => r.obis)))
+    setSelected(new Set(catalogRows.filter((r) => r.enabled).map((r) => r.object_code)))
   }
 
   function clearSelection() {
@@ -983,7 +998,7 @@ export function ReadingsWorkspaceClient() {
     }
   }
 
-  async function onSkipQueuedJobRow(obis: string) {
+  async function onSkipQueuedJobRow(rowKey: string) {
     const jid = inboundObisJobId
     if (!jid) return
     const mid = meterId.trim() || "unknown-meter"
@@ -992,7 +1007,7 @@ export function ReadingsWorkspaceClient() {
       patchMeter(mid, { actionError: jr.error })
       return
     }
-    const row = jr.data.rows.find((x) => x.obis === obis)
+    const row = jr.data.rows.find((x) => obisJobPollRowStateKey(x) === rowKey)
     if (!row || row.phase !== "queued") return
     const sk = await postTcpListenerObisJobSkipRow(jid, row.index)
     if (!sk.ok) patchMeter(mid, { actionError: sk.error })
@@ -1004,7 +1019,7 @@ export function ReadingsWorkspaceClient() {
       patchMeter(mid, { actionError: "Select at least one OBIS row." })
       return
     }
-    const rows = catalogRows.filter((r) => selected.has(r.obis))
+    const rows = catalogRows.filter((r) => selected.has(r.object_code))
     const items = rows.map(catalogEntryToSelectionItem)
     await executeReadObisSelection(items)
   }
@@ -1327,7 +1342,7 @@ export function ReadingsWorkspaceClient() {
   const canExportReadingsCsv = useMemo(() => {
     if (!meterKey || catalogRows.length === 0) return false
     return catalogRows.some((r) => {
-      const rs = currentMeterState.rowState[r.obis]
+      const rs = rowStateForCatalogRow(currentMeterState.rowState, r)
       if (!rs) return false
       if (rs.result.trim()) return true
       if (rs.lastReadAt) return true
@@ -1339,14 +1354,14 @@ export function ReadingsWorkspaceClient() {
 
   const exportReadingsCsv = useCallback(() => {
     if (!canExportReadingsCsv || !meterKey || catalogRows.length === 0) return
-    const rows = catalogRows.map((catalog) => ({
-      catalog,
-      rowState: currentMeterState.rowState[catalog.obis],
+    const rows = catalogRows.map((catalogRow) => ({
+      catalog: catalogRow,
+      rowState: rowStateForCatalogRow(currentMeterState.rowState, catalogRow),
     }))
     const csv = buildReadingsResultsCsv({
       meterSerial: meterKey,
-      familyTabLabel: familyTabLabel(familyTab),
-      sectionLabel: sectionLabelForPack(catalog, pack),
+      className,
+      subclassLabel: subclassLabelFromKey(subclassKey),
       rows,
     })
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "")
@@ -1359,9 +1374,8 @@ export function ReadingsWorkspaceClient() {
     meterKey,
     catalogRows,
     currentMeterState.rowState,
-    familyTab,
-    catalog,
-    pack,
+    className,
+    subclassKey,
   ])
 
   function toggleLogExpanded(id: string) {
@@ -1546,36 +1560,39 @@ export function ReadingsWorkspaceClient() {
           </a>
         </div>
         <div className="mb-2 flex flex-wrap gap-1">
-          {families.map((ft) => (
+          {classNames.map((cnm) => (
             <button
-              key={ft}
+              key={cnm}
               type="button"
-              onClick={() => setFamilyTab(ft)}
+              onClick={() => {
+                setClassName(cnm)
+                setSubclassKey(VENDOR_SUBCLASS_NONE_KEY)
+              }}
               className={cn(
                 "rounded-md px-2 py-1 text-xs",
-                familyTab === ft
+                className === cnm
                   ? "bg-primary/15 font-medium text-foreground"
                   : "text-muted-foreground hover:bg-muted/60"
               )}
             >
-              {familyTabLabel(ft)}
+              {cnm}
             </button>
           ))}
         </div>
         <div className="flex flex-wrap gap-1">
-          {packKeys.map((key) => (
+          {subclassKeys.map((key) => (
             <button
               key={key}
               type="button"
-              onClick={() => setPack(key)}
+              onClick={() => setSubclassKey(key)}
               className={cn(
                 "rounded-md px-2 py-1 text-xs",
-                pack === key
+                subclassKey === key
                   ? "bg-primary/15 font-medium text-foreground"
                   : "text-muted-foreground hover:bg-muted/60"
               )}
             >
-              {sectionLabelForPack(catalog, key)}
+              {subclassLabelFromKey(key)}
             </button>
           ))}
         </div>
@@ -1641,7 +1658,7 @@ export function ReadingsWorkspaceClient() {
                       aria-label="Select all visible"
                       checked={
                         catalogRows.length > 0 &&
-                        catalogRows.every((r) => selected.has(r.obis))
+                        catalogRows.every((r) => selected.has(r.object_code))
                       }
                       onChange={(e) => {
                         if (e.target.checked) selectAllInPack()
@@ -1654,36 +1671,36 @@ export function ReadingsWorkspaceClient() {
                   </TableHead>
                   <TableHead className="whitespace-nowrap">OBIS</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="whitespace-nowrap">Pack</TableHead>
+                  <TableHead className="whitespace-nowrap">Subclass</TableHead>
                   <TableHead>Result</TableHead>
                   <TableHead className="whitespace-nowrap">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {catalogRows.map((r) => {
-                  const rs = currentMeterState.rowState[r.obis]
+                  const rs = rowStateForCatalogRow(currentMeterState.rowState, r)
                   return (
-                    <TableRow key={r.obis}>
+                    <TableRow key={r.object_code}>
                       <TableCell className="align-top">
                         <input
                           type="checkbox"
-                          checked={selected.has(r.obis)}
-                          onChange={() => toggleObis(r.obis)}
-                          aria-label={`Select ${r.obis}`}
+                          checked={selected.has(r.object_code)}
+                          onChange={() => toggleObis(r.object_code)}
+                          aria-label={`Select ${r.object_code}`}
                         />
                       </TableCell>
                       <TableCell className="p-1 align-top text-center">
                         {transport === "inbound" &&
                         busy &&
                         inboundObisJobId &&
-                        obisJobRowPhases[r.obis] === "queued" ? (
+                        obisJobRowPhases[r.object_code] === "queued" ? (
                           <Button
                             type="button"
                             size="icon"
                             variant="ghost"
                             className="size-7 text-muted-foreground hover:text-destructive"
-                            aria-label={`Remove ${r.obis} from read queue`}
-                            onClick={() => void onSkipQueuedJobRow(r.obis)}
+                            aria-label={`Remove ${r.object_code} from read queue`}
+                            onClick={() => void onSkipQueuedJobRow(r.object_code)}
                           >
                             <XIcon className="size-3.5" />
                           </Button>
@@ -1696,7 +1713,7 @@ export function ReadingsWorkspaceClient() {
                         {r.description}
                       </TableCell>
                       <TableCell className="max-w-[min(8rem,20vw)] align-top text-xs whitespace-normal break-words">
-                        {sectionLabelForPack(catalog, r.pack_key)}
+                        {(r.subclass_name ?? "").trim() || "—"}
                       </TableCell>
                       <TableCell className="max-w-[min(11rem,26vw)] align-top font-mono text-xs whitespace-normal break-words">
                         {rs?.result ?? ""}

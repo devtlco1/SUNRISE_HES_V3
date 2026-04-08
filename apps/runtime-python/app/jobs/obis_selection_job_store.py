@@ -36,6 +36,7 @@ class ObisSelectionJobRowView(BaseModel):
 
     index: int
     obis: str
+    objectCode: Optional[str] = None
     phase: str  # queued | running | ok | error | unsupported | not_attempted
     row: Optional[Dict[str, Any]] = None
 
@@ -143,6 +144,7 @@ def create_tcp_inbound_job(request: ReadObisSelectionRequest) -> str:
                 ObisSelectionJobRowView(
                     index=i,
                     obis=item.obis,
+                    objectCode=item.objectCode,
                     phase=phase,
                     row=r.model_dump(mode="json"),
                 )
@@ -152,6 +154,7 @@ def create_tcp_inbound_job(request: ReadObisSelectionRequest) -> str:
                 ObisSelectionJobRowView(
                     index=i,
                     obis=item.obis,
+                    objectCode=item.objectCode,
                     phase="queued",
                 )
             )

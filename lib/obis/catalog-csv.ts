@@ -1,29 +1,37 @@
 /**
- * CSV export/import helpers for OBIS catalog (operator spreadsheet workflow).
+ * CSV export/import helpers for vendor-shaped OBIS catalog.
  */
 
 import type { ObisCatalogEntry } from "@/lib/obis/types"
 
-export const OBIS_CATALOG_CSV_HEADERS_MIN = [
-  "FAMILY_TAB",
-  "SECTION_GROUP",
-  "OBIS",
-  "DESCRIPTION",
-  "ATTRIBUTES",
-  "R/W",
-  "UNIT",
-] as const
-
 export const OBIS_CATALOG_CSV_HEADERS_FULL = [
-  ...OBIS_CATALOG_CSV_HEADERS_MIN,
+  "OBJECT_CODE",
+  "OBIS",
+  "CLASS_NAME",
+  "SUBCLASS_NAME",
+  "OBJECT_NAME",
+  "SORT_NO",
+  "PROTOCOL",
+  "OBIS_HEX",
+  "DATA_TYPE",
+  "ANALYTIC_TYPE",
+  "UNIT",
+  "SCALER",
+  "READ_BATCH_STATUS",
+  "READ_SINGLE_STATUS",
+  "COLLECT_PLAN_STATUS",
+  "COLLECT_PLAN_TYPE_STATUS",
+  "SETTING_STATUS",
+  "DISPLAY_STATUS",
+  "PHASE",
+  "DEVICE_TYPE",
   "OBJECT_TYPE",
   "CLASS_ID",
+  "ATTRIBUTE",
   "SCALER_UNIT_ATTRIBUTE",
   "RESULT_FORMAT",
   "STATUS",
-  "PACK_KEY",
   "ENABLED",
-  "SORT_ORDER",
   "NOTES",
 ] as const
 
@@ -32,86 +40,78 @@ function csvEscape(cell: string): string {
   return cell
 }
 
-export function catalogRowsToCsv(rows: ObisCatalogEntry[], full = true): string {
-  const headers = full
-    ? [...OBIS_CATALOG_CSV_HEADERS_FULL]
-    : [...OBIS_CATALOG_CSV_HEADERS_MIN]
+export function catalogRowsToCsv(rows: ObisCatalogEntry[], _full = true): string {
+  const headers = [...OBIS_CATALOG_CSV_HEADERS_FULL]
   const lines = [headers.join(",")]
   for (const r of rows) {
-    const base = [
-      r.family_tab,
-      r.section_group,
+    const cells = [
+      r.object_code,
       r.obis,
-      r.description,
-      String(r.attribute),
-      "",
+      r.class_name,
+      r.subclass_name,
+      r.object_name,
+      String(r.sort_no),
+      r.protocol,
+      r.obis_hex,
+      r.data_type,
+      r.analytic_type,
       r.unit,
-    ]
-    if (!full) {
-      lines.push(base.map(csvEscape).join(","))
-      continue
-    }
-    const rest = [
+      String(r.scaler),
+      r.read_batch_status,
+      r.read_single_status,
+      r.collect_plan_status,
+      r.collect_plan_type_status,
+      r.setting_status,
+      r.display_status,
+      r.phase,
+      r.device_type,
       r.object_type,
       String(r.class_id),
+      String(r.attribute),
       String(r.scaler_unit_attribute),
       r.result_format,
       r.status,
-      r.pack_key,
       r.enabled ? "true" : "false",
-      String(r.sort_order),
       r.notes ?? "",
     ]
-    lines.push([...base, ...rest].map(csvEscape).join(","))
+    lines.push(cells.map(csvEscape).join(","))
   }
   return `${lines.join("\n")}\n`
 }
 
-/** Operator template: two example rows, full columns. */
 export function obisCatalogCsvTemplate(): string {
   const h = [...OBIS_CATALOG_CSV_HEADERS_FULL]
   const r1 = [
-    "basic",
-    "BASIC SETTING",
+    "0.0.1.0.0.255.2",
     "0.0.1.0.0.255",
-    "Date and time (clock)",
+    "Basic",
+    "",
+    "DATA_TIME",
+    "0",
     "2",
-    "RW",
-    "local",
-    "Clock",
+    "00080000010000FF02",
+    "25",
+    "DATETIME",
+    "",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
     "1",
+    "0",
+    "1",
+    "2",
+    "clock",
+    "1",
+    "2",
     "3",
     "scalar",
     "catalog_only",
-    "basic_setting",
     "true",
-    "1",
     "",
   ]
-  const r2 = [
-    "energy",
-    "ENERGY REGISTER",
-    "1.0.1.8.0.255",
-    "Active energy import (+A)",
-    "2",
-    "R",
-    "kWh",
-    "Register",
-    "3",
-    "3",
-    "scalar",
-    "active",
-    "energy",
-    "true",
-    "10",
-    "",
-  ]
-  return [
-    h.join(","),
-    r1.map(csvEscape).join(","),
-    r2.map(csvEscape).join(","),
-    "",
-  ].join("\n")
+  return [h.join(","), r1.map(csvEscape).join(","), ""].join("\n")
 }
 
 function parseCsvLine(line: string): string[] {
@@ -158,9 +158,10 @@ export function parseCsvToRecords(csvText: string): {
   const headers = parseCsvLine(lines[0]!).map((h) => h.replace(/\s+/g, " ").trim())
   const norm = (s: string) => s.replace(/\s+/g, " ").trim().toUpperCase()
   const normHeaders = headers.map(norm)
+  const ocIdx = normHeaders.indexOf("OBJECT_CODE")
   const obisIdx = normHeaders.indexOf("OBIS")
-  if (obisIdx < 0) {
-    errors.push('Required column "OBIS" is missing in the header row.')
+  if (ocIdx < 0 && obisIdx < 0) {
+    errors.push('CSV must include "OBJECT_CODE" and/or "OBIS" in the header row.')
     return { headers, rows: [], errors }
   }
 
@@ -173,9 +174,10 @@ export function parseCsvToRecords(csvText: string): {
       if (!key) continue
       row[key] = (cells[i] ?? "").trim()
     }
+    const object_code = (row.OBJECT_CODE ?? row.object_code ?? "").trim()
     const obis = (row.OBIS ?? row.obis ?? "").trim()
-    if (!obis) {
-      errors.push(`Row ${li + 1}: OBIS is empty (skipped).`)
+    if (!object_code && !obis) {
+      errors.push(`Row ${li + 1}: OBJECT_CODE and OBIS empty (skipped).`)
       continue
     }
     rows.push(row)

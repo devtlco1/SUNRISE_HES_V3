@@ -43,14 +43,15 @@ export type ReadingsCsvRowInput = {
 
 export function buildReadingsResultsCsv(params: {
   meterSerial: string
-  familyTabLabel: string
-  sectionLabel: string
+  className: string
+  subclassLabel: string
   rows: ReadingsCsvRowInput[]
 }): string {
   const header = [
     "Meter serial",
-    "Family tab",
-    "Section",
+    "Class (PRM)",
+    "Subclass",
+    "Object code",
     "OBIS",
     "Description",
     "Attribute",
@@ -68,11 +69,13 @@ export function buildReadingsResultsCsv(params: {
     const status = rs ? readStatusLabel(rs.status) : "not_attempted"
     const err = rs?.error ?? ""
     const ts = rs?.lastReadAt ?? ""
+    const sub = (r.subclass_name ?? "").trim()
     lines.push(
       [
         params.meterSerial,
-        params.familyTabLabel,
-        params.sectionLabel,
+        params.className,
+        sub,
+        r.object_code,
         r.obis,
         r.description,
         attribute,

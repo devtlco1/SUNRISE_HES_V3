@@ -1,15 +1,15 @@
 /**
  * Convert `data/obis-catalogs/st34-hw08-user-manual-3ph.yaml` into `ObisCatalogEntry[]`
- * for merge into `data/obis-catalog.json`.
+ * for merge into `data/obis-catalog.json` (vendor-shaped rows; class_name = YAML group title).
  */
 
 import { readFile } from "fs/promises"
 import path from "path"
 import { parse as parseYaml } from "yaml"
 
-import { inferFamilySectionFromLegacyPack } from "@/lib/obis/family-section"
+import { normalizeObisCatalogEntry } from "@/lib/obis/normalize-catalog"
 import { INVALID_OBIS_SHAPE_NOTE, isValidCosemObisLogicalName } from "@/lib/obis/obis-logical-name"
-import type { ObisCatalogEntry, ObisPackKey } from "@/lib/obis/types"
+import type { ObisCatalogEntry } from "@/lib/obis/types"
 
 export const ST34_HW08_YAML_REL_PATH = path.join(
   "data",
@@ -38,16 +38,6 @@ type YamlRoot = {
 }
 
 const TARIFF_INDICES = [1, 2, 3, 4] as const
-
-function packKeyForYamlGroup(group: string): ObisPackKey {
-  const g = group.trim().toLowerCase()
-  if (g.includes("metering")) return "energy"
-  if (g.includes("net energy")) return "energy"
-  if (g.includes("instantaneous")) return "instantaneous"
-  if (g.includes("max") && g.includes("min")) return "instantaneous"
-  if (g.includes("average")) return "load_profile"
-  return "energy"
-}
 
 function expandObisPattern(obis: string): string[] {
   if (obis.includes(".x.")) {
@@ -102,7 +92,7 @@ function buildNotes(
 
 function yamlItemToEntries(
   item: YamlItem,
-  pack_key: ObisPackKey,
+  class_name: string,
   meterModel: string,
   source: string,
 ): ObisCatalogEntry[] {
@@ -126,21 +116,42 @@ function yamlItemToEntries(
     const notesWithShape = shapeOk
       ? notes
       : [notes, INVALID_OBIS_SHAPE_NOTE].filter(Boolean).join(" · ")
-    const loc = inferFamilySectionFromLegacyPack(pack_key)
-    out.push({
+    const object_code = `${obis}.2`
+    const normalized = normalizeObisCatalogEntry({
+      object_code,
       obis,
       description: desc,
-      ...meta,
+      object_name: desc,
+      class_name,
+      subclass_name: "",
+      sort_no: 0,
+      protocol: "2",
+      obis_hex: "",
+      data_type: "",
+      analytic_type: "",
       unit,
+      scaler: item.scaler ?? 0,
+      read_batch_status: "",
+      read_single_status: "",
+      collect_plan_status: "",
+      collect_plan_type_status: "",
+      setting_status: "",
+      display_status: "",
+      xslt: "",
+      phase: "",
+      device_type: "",
+      object_status: "",
+      cim_code: "",
+      crt_on: "",
+      mdf_on: "",
+      ...meta,
       result_format: "scalar",
       status: "catalog_only",
-      pack_key,
-      family_tab: loc.family_tab,
-      section_group: loc.section_group,
       enabled: shapeOk,
       sort_order: 0,
       notes: notesWithShape,
     })
+    if (normalized) out.push(normalized)
     i += 1
   }
   return out
@@ -157,11 +168,11 @@ export function st34Hw08YamlTextToCatalogEntries(yamlText: string): ObisCatalogE
 
   const rows: ObisCatalogEntry[] = []
   for (const block of catalog) {
-    const groupName = typeof block?.group === "string" ? block.group : "unknown"
-    const pack_key = packKeyForYamlGroup(groupName)
+    const groupName = typeof block?.group === "string" ? block.group.trim() : "Manual"
+    const class_name = groupName || "Manual"
     const items = Array.isArray(block?.items) ? block.items : []
     for (const item of items) {
-      rows.push(...yamlItemToEntries(item, pack_key, meterModel, source))
+      rows.push(...yamlItemToEntries(item, class_name, meterModel, source))
     }
   }
   return rows

@@ -28,10 +28,14 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { fetchObisCatalog } from "@/lib/obis/catalog-client"
+import {
+  classNamesPresent,
+  subclassKey,
+  subclassKeysForClass,
+  subclassLabelFromKey,
+} from "@/lib/obis/catalog-vendor-group"
 import type { ExcelCatalogMergeSummary } from "@/lib/obis/excel-catalog-merge"
-import { FAMILY_TAB_ORDER, familyTabLabel } from "@/lib/obis/family-section"
-import { packKeysForFamily, sectionLabelForPack } from "@/lib/obis/catalog-seed"
-import type { ObisCatalogEntry, ObisFamilyTab } from "@/lib/obis/types"
+import type { ObisCatalogEntry } from "@/lib/obis/types"
 import { cn } from "@/lib/utils"
 
 function notifyObisCatalogSaved() {
@@ -40,18 +44,38 @@ function notifyObisCatalogSaved() {
 }
 
 const emptyRow = (): ObisCatalogEntry => ({
+  object_code: "",
   obis: "",
   description: "",
+  object_name: "",
+  class_name: "Unmapped",
+  subclass_name: "",
+  sort_no: 0,
+  protocol: "2",
+  obis_hex: "",
+  data_type: "",
+  analytic_type: "",
+  unit: "",
+  scaler: 0,
+  read_batch_status: "",
+  read_single_status: "",
+  collect_plan_status: "",
+  collect_plan_type_status: "",
+  setting_status: "",
+  display_status: "",
+  xslt: "",
+  phase: "",
+  device_type: "",
+  object_status: "",
+  cim_code: "",
+  crt_on: "",
+  mdf_on: "",
   object_type: "Data",
   class_id: 1,
   attribute: 2,
   scaler_unit_attribute: 3,
-  unit: "",
   result_format: "scalar",
   status: "catalog_only",
-  pack_key: "basic_setting",
-  family_tab: "basic",
-  section_group: "BASIC SETTING",
   enabled: true,
   sort_order: 0,
   notes: "",
@@ -66,11 +90,11 @@ export function ObisConfigCatalogClient() {
   const [importing, setImporting] = useState(false)
   const [importInfo, setImportInfo] = useState<string | null>(null)
   const importSpreadsheetRef = useRef<HTMLInputElement>(null)
-  const [familyFilter, setFamilyFilter] = useState<ObisFamilyTab | "all">("all")
-  const [sectionFilter, setSectionFilter] = useState<string | "all">("all")
+  const [classFilter, setClassFilter] = useState<string | "all">("all")
+  const [subclassFilter, setSubclassFilter] = useState<string | "all">("all")
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ObisCatalogEntry | null>(null)
-  const [originalObis, setOriginalObis] = useState<string | null>(null)
+  const [originalObjectCode, setOriginalObjectCode] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setError(null)
@@ -95,32 +119,30 @@ export function ObisConfigCatalogClient() {
     void load()
   }, [load])
 
-  const sectionKeysForFilter = useMemo(() => {
-    if (familyFilter === "all") {
-      const u = new Set(rows.map((r) => r.pack_key))
-      return [...u].sort((a, b) =>
-        sectionLabelForPack(rows, a).localeCompare(sectionLabelForPack(rows, b))
-      )
-    }
-    return packKeysForFamily(rows, familyFilter)
-  }, [rows, familyFilter])
+  const classNames = useMemo(() => classNamesPresent(rows), [rows])
+
+  const subclassKeysList = useMemo(() => {
+    if (classFilter === "all") return []
+    return subclassKeysForClass(rows, classFilter)
+  }, [rows, classFilter])
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
-      if (familyFilter !== "all" && r.family_tab !== familyFilter) return false
-      if (sectionFilter !== "all" && r.pack_key !== sectionFilter) return false
+      if (classFilter !== "all" && r.class_name !== classFilter) return false
+      if (classFilter !== "all" && subclassFilter !== "all" && subclassKey(r) !== subclassFilter)
+        return false
       return true
     })
-  }, [rows, familyFilter, sectionFilter])
+  }, [rows, classFilter, subclassFilter])
 
   function openAdd() {
-    setOriginalObis(null)
+    setOriginalObjectCode(null)
     setEditing(emptyRow())
     setEditorOpen(true)
   }
 
   function openEdit(row: ObisCatalogEntry) {
-    setOriginalObis(row.obis)
+    setOriginalObjectCode(row.object_code)
     setEditing({ ...row })
     setEditorOpen(true)
   }
@@ -128,35 +150,35 @@ export function ObisConfigCatalogClient() {
   function closeEditor() {
     setEditorOpen(false)
     setEditing(null)
-    setOriginalObis(null)
+    setOriginalObjectCode(null)
   }
 
   function saveEditor() {
     if (!editing) return
-    const o = editing.obis.trim()
-    if (!o) {
-      setSaveError("OBIS required")
+    const oc = editing.object_code.trim()
+    if (!oc) {
+      setSaveError("Object code required")
       return
     }
-    if (!originalObis && rows.some((r) => r.obis === o)) {
-      setSaveError("Duplicate OBIS")
+    if (!originalObjectCode && rows.some((r) => r.object_code === oc)) {
+      setSaveError("Duplicate object code")
       return
     }
-    if (
-      originalObis &&
-      originalObis !== o &&
-      rows.some((r) => r.obis === o)
-    ) {
-      setSaveError("Duplicate OBIS")
+    if (originalObjectCode && originalObjectCode !== oc && rows.some((r) => r.object_code === oc)) {
+      setSaveError("Duplicate object code")
       return
     }
     setSaveError(null)
     setRows((prev) => {
       const next = [...prev]
-      const idx = originalObis
-        ? next.findIndex((r) => r.obis === originalObis)
+      const idx = originalObjectCode
+        ? next.findIndex((r) => r.object_code === originalObjectCode)
         : -1
-      const row = { ...editing, obis: o }
+      const row = {
+        ...editing,
+        object_code: oc,
+        sort_order: editing.sort_no,
+      }
       if (idx >= 0) next[idx] = row
       else next.push(row)
       return next
@@ -164,9 +186,9 @@ export function ObisConfigCatalogClient() {
     closeEditor()
   }
 
-  function removeRow(obis: string) {
-    if (!confirm(`Delete ${obis}?`)) return
-    setRows((prev) => prev.filter((r) => r.obis !== obis))
+  function removeRow(objectCode: string) {
+    if (!confirm(`Delete ${objectCode}?`)) return
+    setRows((prev) => prev.filter((r) => r.object_code !== objectCode))
   }
 
   async function saveCatalog() {
@@ -335,59 +357,61 @@ export function ObisConfigCatalogClient() {
         <button
           type="button"
           onClick={() => {
-            setFamilyFilter("all")
-            setSectionFilter("all")
+            setClassFilter("all")
+            setSubclassFilter("all")
           }}
           className={cn(
             "rounded border px-2 py-1 text-xs",
-            familyFilter === "all" ? "border-primary bg-primary/10" : "border-border"
+            classFilter === "all" ? "border-primary bg-primary/10" : "border-border"
           )}
         >
-          All
+          All classes
         </button>
-        {FAMILY_TAB_ORDER.map((ft) => (
+        {classNames.map((c) => (
           <button
-            key={ft}
+            key={c}
             type="button"
             onClick={() => {
-              setFamilyFilter(ft)
-              setSectionFilter("all")
+              setClassFilter(c)
+              setSubclassFilter("all")
             }}
             className={cn(
               "rounded border px-2 py-1 text-xs",
-              familyFilter === ft ? "border-primary bg-primary/10" : "border-border"
+              classFilter === c ? "border-primary bg-primary/10" : "border-border"
             )}
           >
-            {familyTabLabel(ft)}
+            {c}
           </button>
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          onClick={() => setSectionFilter("all")}
-          className={cn(
-            "rounded border px-2 py-1 text-xs",
-            sectionFilter === "all" ? "border-primary bg-primary/10" : "border-border"
-          )}
-        >
-          All sections
-        </button>
-        {sectionKeysForFilter.map((k) => (
+      {classFilter !== "all" ? (
+        <div className="flex flex-wrap gap-1.5">
           <button
-            key={k}
             type="button"
-            onClick={() => setSectionFilter(k)}
+            onClick={() => setSubclassFilter("all")}
             className={cn(
               "rounded border px-2 py-1 text-xs",
-              sectionFilter === k ? "border-primary bg-primary/10" : "border-border"
+              subclassFilter === "all" ? "border-primary bg-primary/10" : "border-border"
             )}
           >
-            {sectionLabelForPack(rows, k)}
+            All subclasses
           </button>
-        ))}
-      </div>
+          {subclassKeysList.map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setSubclassFilter(k)}
+              className={cn(
+                "rounded border px-2 py-1 text-xs",
+                subclassFilter === k ? "border-primary bg-primary/10" : "border-border"
+              )}
+            >
+              {subclassLabelFromKey(k)}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <p className="text-xs text-muted-foreground tabular-nums">
         Displayed rows: {loading ? "—" : filtered.length}
@@ -397,14 +421,15 @@ export function ObisConfigCatalogClient() {
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead>OBIS</TableHead>
-              <TableHead>Description</TableHead>
+              <TableHead className="whitespace-nowrap">Object code</TableHead>
+              <TableHead className="whitespace-nowrap">OBIS</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Class</TableHead>
+              <TableHead>Subclass</TableHead>
+              <TableHead className="text-right">Sort</TableHead>
               <TableHead>Type</TableHead>
               <TableHead className="text-right">Cl</TableHead>
               <TableHead className="text-right">At</TableHead>
-              <TableHead>Family</TableHead>
-              <TableHead>Section</TableHead>
-              <TableHead>Pack</TableHead>
               <TableHead>En</TableHead>
               <TableHead className="w-[100px] text-right">Actions</TableHead>
             </TableRow>
@@ -412,37 +437,36 @@ export function ObisConfigCatalogClient() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-muted-foreground">
+                <TableCell colSpan={11} className="text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-muted-foreground">
+                <TableCell colSpan={11} className="text-muted-foreground">
                   No rows
                 </TableCell>
               </TableRow>
             ) : (
               filtered.map((r) => (
-                <TableRow key={r.obis}>
-                  <TableCell className="max-w-[10rem] align-top font-mono text-xs whitespace-normal break-all">
+                <TableRow key={r.object_code}>
+                  <TableCell className="max-w-[11rem] align-top font-mono text-[10px] whitespace-normal break-all">
+                    {r.object_code}
+                  </TableCell>
+                  <TableCell className="max-w-[9rem] align-top font-mono text-xs whitespace-normal break-all">
                     {r.obis}
                   </TableCell>
-                  <TableCell className="max-w-[min(16rem,32vw)] align-top text-xs whitespace-normal break-words">
+                  <TableCell className="max-w-[min(14rem,28vw)] align-top text-xs whitespace-normal break-words">
                     {r.description}
                   </TableCell>
-                  <TableCell className="align-top text-xs whitespace-normal break-words">
-                    {r.object_type}
+                  <TableCell className="align-top text-xs whitespace-normal break-words">{r.class_name}</TableCell>
+                  <TableCell className="max-w-[min(10rem,24vw)] align-top text-xs whitespace-normal break-words">
+                    {(r.subclass_name ?? "").trim() || "—"}
                   </TableCell>
+                  <TableCell className="text-right align-top font-mono text-xs">{r.sort_no}</TableCell>
+                  <TableCell className="align-top text-xs whitespace-normal break-words">{r.object_type}</TableCell>
                   <TableCell className="text-right align-top font-mono text-xs">{r.class_id}</TableCell>
                   <TableCell className="text-right align-top font-mono text-xs">{r.attribute}</TableCell>
-                  <TableCell className="align-top text-xs">{familyTabLabel(r.family_tab)}</TableCell>
-                  <TableCell className="max-w-[min(12rem,28vw)] align-top text-xs whitespace-normal break-words">
-                    {r.section_group}
-                  </TableCell>
-                  <TableCell className="align-top font-mono text-[10px] whitespace-normal break-all">
-                    {r.pack_key}
-                  </TableCell>
                   <TableCell className="text-xs">{r.enabled ? "Y" : "N"}</TableCell>
                   <TableCell className="space-x-1 whitespace-nowrap text-right">
                     <Button
@@ -460,7 +484,7 @@ export function ObisConfigCatalogClient() {
                       size="icon"
                       variant="ghost"
                       className="size-8 text-destructive"
-                      onClick={() => removeRow(r.obis)}
+                      onClick={() => removeRow(r.object_code)}
                       aria-label="Delete"
                     >
                       <TrashIcon className="size-3.5" />
@@ -476,19 +500,41 @@ export function ObisConfigCatalogClient() {
       <Sheet open={editorOpen} onOpenChange={(o) => !o && closeEditor()}>
         <SheetContent side="right" className="flex w-full max-w-md flex-col gap-4 sm:max-w-lg">
           <SheetHeader>
-            <SheetTitle>{originalObis ? "Edit OBIS" : "Add OBIS"}</SheetTitle>
+            <SheetTitle>{originalObjectCode ? "Edit row" : "Add row"}</SheetTitle>
           </SheetHeader>
           {editing ? (
             <div className="flex flex-1 flex-col gap-3 overflow-y-auto pr-1 text-sm">
               <div>
+                <label htmlFor="oc" className="text-xs font-medium">
+                  Object code (PRM)
+                </label>
+                <Input
+                  id="oc"
+                  className="mt-1 font-mono text-xs"
+                  value={editing.object_code}
+                  onChange={(e) => setEditing({ ...editing, object_code: e.target.value })}
+                />
+              </div>
+              <div>
                 <label htmlFor="obis" className="text-xs font-medium">
-                  OBIS
+                  OBIS (6-group)
                 </label>
                 <Input
                   id="obis"
-                  className="mt-1 font-mono"
+                  className="mt-1 font-mono text-xs"
                   value={editing.obis}
                   onChange={(e) => setEditing({ ...editing, obis: e.target.value })}
+                />
+              </div>
+              <div>
+                <label htmlFor="oname" className="text-xs font-medium">
+                  Object name
+                </label>
+                <Input
+                  id="oname"
+                  className="mt-1"
+                  value={editing.object_name}
+                  onChange={(e) => setEditing({ ...editing, object_name: e.target.value })}
                 />
               </div>
               <div>
@@ -502,37 +548,42 @@ export function ObisConfigCatalogClient() {
                   onChange={(e) => setEditing({ ...editing, description: e.target.value })}
                 />
               </div>
-              <div>
-                <label htmlFor="fam" className="text-xs font-medium">
-                  Family tab
-                </label>
-                <select
-                  id="fam"
-                  className="mt-1 flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                  value={editing.family_tab}
-                  onChange={(e) =>
-                    setEditing({
-                      ...editing,
-                      family_tab: e.target.value as ObisFamilyTab,
-                    })
-                  }
-                >
-                  {FAMILY_TAB_ORDER.map((ft) => (
-                    <option key={ft} value={ft}>
-                      {familyTabLabel(ft)}
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label htmlFor="cname" className="text-xs font-medium">
+                    Class name
+                  </label>
+                  <Input
+                    id="cname"
+                    className="mt-1"
+                    value={editing.class_name}
+                    onChange={(e) => setEditing({ ...editing, class_name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="scname" className="text-xs font-medium">
+                    Subclass
+                  </label>
+                  <Input
+                    id="scname"
+                    className="mt-1"
+                    value={editing.subclass_name}
+                    onChange={(e) => setEditing({ ...editing, subclass_name: e.target.value })}
+                  />
+                </div>
               </div>
               <div>
-                <label htmlFor="sec" className="text-xs font-medium">
-                  Section / group
+                <label htmlFor="sn" className="text-xs font-medium">
+                  SortNo
                 </label>
                 <Input
-                  id="sec"
+                  id="sn"
+                  type="number"
                   className="mt-1"
-                  value={editing.section_group}
-                  onChange={(e) => setEditing({ ...editing, section_group: e.target.value })}
+                  value={editing.sort_no}
+                  onChange={(e) =>
+                    setEditing({ ...editing, sort_no: Number(e.target.value) || 0, sort_order: Number(e.target.value) || 0 })
+                  }
                 />
               </div>
               <div>
@@ -616,17 +667,6 @@ export function ObisConfigCatalogClient() {
                 />
               </div>
               <div>
-                <label htmlFor="pk" className="text-xs font-medium">
-                  Pack key
-                </label>
-                <Input
-                  id="pk"
-                  className="mt-1 font-mono"
-                  value={editing.pack_key}
-                  onChange={(e) => setEditing({ ...editing, pack_key: e.target.value })}
-                />
-              </div>
-              <div>
                 <label htmlFor="st" className="text-xs font-medium">
                   Status
                 </label>
@@ -645,31 +685,15 @@ export function ObisConfigCatalogClient() {
                   <option value="catalog_only">catalog_only</option>
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label htmlFor="so" className="text-xs font-medium">
-                    Sort order
-                  </label>
-                  <Input
-                    id="so"
-                    type="number"
-                    className="mt-1"
-                    value={editing.sort_order}
-                    onChange={(e) =>
-                      setEditing({ ...editing, sort_order: Number(e.target.value) || 0 })
-                    }
+              <div className="flex items-end pb-1">
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={editing.enabled}
+                    onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })}
                   />
-                </div>
-                <div className="flex items-end pb-1">
-                  <label className="flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={editing.enabled}
-                      onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })}
-                    />
-                    Enabled
-                  </label>
-                </div>
+                  Enabled
+                </label>
               </div>
               <div>
                 <label htmlFor="notes" className="text-xs font-medium">

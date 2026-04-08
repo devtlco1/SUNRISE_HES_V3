@@ -175,6 +175,8 @@ export type ObisSelectionRowStatus = "ok" | "error" | "unsupported" | "not_attem
 /** One row returned from read-obis-selection (operator table merge). */
 export interface ObisSelectionRowResult {
   obis: string
+  /** Catalog row id (PRM ObjectCode); preferred key for UI row state when present. */
+  objectCode?: string
   value: string
   unit?: string
   quality?: string
@@ -199,6 +201,7 @@ export interface ObisSelectionItemInput {
   scalerUnitAttribute?: number
   unit?: string
   packKey?: string
+  objectCode?: string
 }
 
 export interface ReadObisSelectionRequest extends RuntimeTargetRequest {
@@ -209,6 +212,7 @@ export interface ReadObisSelectionRequest extends RuntimeTargetRequest {
 export interface ObisSelectionJobRowPollView {
   index: number
   obis: string
+  objectCode?: string
   phase: string
   row?: ObisSelectionRowResult
 }

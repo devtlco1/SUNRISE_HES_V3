@@ -54,6 +54,11 @@ class ObisSelectionItem(BaseModel):
     scalerUnitAttribute: Optional[int] = Field(default=None, ge=0, le=255)
     unit: Optional[str] = Field(default=None, max_length=32)
     packKey: Optional[str] = Field(default=None, max_length=64)
+    objectCode: Optional[str] = Field(
+        default=None,
+        max_length=96,
+        description="PRM ObjectCode (catalog row id); echoed for UI row state keys.",
+    )
 
 
 class ReadObisSelectionRequest(BaseModel):

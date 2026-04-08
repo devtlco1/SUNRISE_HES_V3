@@ -72,6 +72,14 @@ function coerceItem(raw: unknown): ObisSelectionItemInput | null {
         ? (r as { pack_key: string }).pack_key
         : undefined
 
+  const objectCodeRaw =
+    typeof r.objectCode === "string"
+      ? r.objectCode.trim()
+      : typeof (r as { object_code?: string }).object_code === "string"
+        ? String((r as { object_code: string }).object_code).trim()
+        : ""
+  const objectCode = objectCodeRaw || undefined
+
   const item: ObisSelectionItemInput = {
     obis,
     objectType,
@@ -79,6 +87,7 @@ function coerceItem(raw: unknown): ObisSelectionItemInput | null {
     description,
     unit,
     packKey,
+    ...(objectCode ? { objectCode } : {}),
   }
   if (attribute !== undefined && Number.isFinite(attribute)) {
     item.attribute = attribute

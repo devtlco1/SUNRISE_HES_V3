@@ -6,11 +6,29 @@ import type {
   BasicRegistersPayload,
   IdentityPayload,
   ObisSelectionJobPollView,
+  ObisSelectionJobRowPollView,
   ObisSelectionRowResult,
   ReadObisSelectionPayload,
 } from "@/types/runtime"
 
 import { IDENTITY_READ_MAPPED_OBIS, SIDECAR_DEFAULT_BASIC_REGISTERS_OBIS } from "./catalog-seed"
+
+/** Prefer catalog `object_code` when runtime echoes it (duplicate OBIS logical names). */
+export function obisSelectionResultStateKey(
+  r: Pick<ObisSelectionRowResult, "obis" | "objectCode">
+): string {
+  const oc = (r.objectCode ?? "").trim()
+  return oc || r.obis
+}
+
+export function obisJobPollRowStateKey(rv: ObisSelectionJobRowPollView): string {
+  const fromRow =
+    rv.row && typeof rv.row === "object"
+      ? (rv.row as ObisSelectionRowResult).objectCode
+      : undefined
+  const oc = (rv.objectCode ?? fromRow ?? "").trim()
+  return oc || rv.obis
+}
 
 export type ObisRowReadState = {
   result: string
@@ -89,6 +107,7 @@ export function mergeObisSelectionIntoRowState(
 ): Record<string, ObisRowReadState> {
   const next = { ...prev }
   for (const r of payload.rows) {
+    const key = obisSelectionResultStateKey(r)
     let st: ObisRowReadState["status"]
     if (r.status === "ok") st = "ok"
     else if (r.status === "unsupported") st = "unsupported"
@@ -107,7 +126,7 @@ export function mergeObisSelectionIntoRowState(
       result = result ? `${result} (${r.quality})` : r.quality
     }
 
-    next[r.obis] = {
+    next[key] = {
       result,
       status: st,
       error: r.error,
@@ -130,24 +149,25 @@ export function mergeObisJobPollIntoRowState(
   const fatal = (job.fatalError ?? "").trim()
 
   for (const rv of job.rows) {
+    const rowKey = obisJobPollRowStateKey(rv)
     const obis = rv.obis
     const phase = (rv.phase || "").toLowerCase()
     const row = rv.row
-    const existing = next[obis]
+    const existing = next[rowKey]
 
     if (row && typeof row === "object" && typeof (row as ObisSelectionRowResult).obis === "string") {
       const payload = mergeObisSelectionIntoRowState({}, {
         rows: [row as ObisSelectionRowResult],
       })
-      const cell = payload[obis]
-      if (cell) next[obis] = cell
+      const cell = payload[rowKey] ?? payload[obis]
+      if (cell) next[rowKey] = cell
       continue
     }
 
     if (existing?.status === "ok") continue
 
     if (phase === "running" || (!terminal && curObis === obis)) {
-      next[obis] = {
+      next[rowKey] = {
         result: "…",
         status: "running",
         lastReadAt: null,
@@ -155,7 +175,7 @@ export function mergeObisJobPollIntoRowState(
       continue
     }
     if (phase === "queued") {
-      next[obis] = {
+      next[rowKey] = {
         result: "",
         status: "pending",
         lastReadAt: null,
@@ -163,7 +183,7 @@ export function mergeObisJobPollIntoRowState(
       continue
     }
     if (phase === "skipped") {
-      next[obis] = {
+      next[rowKey] = {
         result: "",
         status: "skipped",
         error: "removed_from_queue_by_operator",
@@ -172,7 +192,7 @@ export function mergeObisJobPollIntoRowState(
       continue
     }
     if (phase === "cancelled") {
-      next[obis] = {
+      next[rowKey] = {
         result: "",
         status: "cancelled",
         error: fatal || "Cancelled by operator",
@@ -181,7 +201,7 @@ export function mergeObisJobPollIntoRowState(
       continue
     }
     if (phase === "unsupported") {
-      next[obis] = {
+      next[rowKey] = {
         result: "",
         status: "unsupported",
         error: "unsupported",
@@ -190,7 +210,7 @@ export function mergeObisJobPollIntoRowState(
       continue
     }
     if (phase === "not_attempted") {
-      next[obis] = {
+      next[rowKey] = {
         result: "",
         status: "not_attempted",
         error: fatal || undefined,
@@ -199,7 +219,7 @@ export function mergeObisJobPollIntoRowState(
       continue
     }
     if (phase === "error") {
-      next[obis] = {
+      next[rowKey] = {
         result: "",
         status: "error",
         error: fatal || "read failed",
@@ -210,12 +230,12 @@ export function mergeObisJobPollIntoRowState(
 
   if (terminal && job.status === "failed" && fatal) {
     for (const rv of job.rows) {
-      const obis = rv.obis
-      const cur = next[obis]
+      const rowKey = obisJobPollRowStateKey(rv)
+      const cur = next[rowKey]
       if (cur?.status === "ok") continue
       const phase = (rv.phase || "").toLowerCase()
       if (phase === "queued" || phase === "running") {
-        next[obis] = {
+        next[rowKey] = {
           result: "",
           status: "not_attempted",
           error: fatal,
@@ -228,12 +248,12 @@ export function mergeObisJobPollIntoRowState(
   if (terminal && job.status === "cancelled") {
     const msg = fatal || "Cancelled by operator"
     for (const rv of job.rows) {
-      const obis = rv.obis
-      const cur = next[obis]
+      const rowKey = obisJobPollRowStateKey(rv)
+      const cur = next[rowKey]
       if (cur?.status === "ok" || cur?.status === "skipped") continue
       const phase = (rv.phase || "").toLowerCase()
       if (phase === "queued" || phase === "running") {
-        next[obis] = {
+        next[rowKey] = {
           result: "",
           status: "cancelled",
           error: msg,
