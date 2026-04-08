@@ -22,6 +22,8 @@
 
 # misc
 .DS_Store
+lib/obis/note
+scanner.py
 *.pem
 
 # debug
