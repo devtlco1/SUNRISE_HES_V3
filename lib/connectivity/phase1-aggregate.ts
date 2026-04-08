@@ -15,7 +15,7 @@
  * not used to infer "online" for the live strip (avoids fake green from stale JSON).
  */
 
-import { formatOperatorUtc } from "@/lib/format/operator-datetime"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { PHASE1_REGISTRY_RECENT_MS } from "@/lib/connectivity/phase1-constants"
 import type {
   ConnectivityPhase1LiveStatus,
@@ -168,7 +168,9 @@ export function buildConnectivityPhase1Response(
       statusReason = "Runtime TCP listener status unavailable (check Python sidecar)."
       unknownLive += 1
       currentRoute = "unknown"
-      lastSeenDisplay = regDate ? formatOperatorUtc(m.lastCommunicationAt) : "—"
+      lastSeenDisplay = regDate
+        ? formatOperatorDateTime(m.lastCommunicationAt)
+        : "—"
       if (regNever) {
         neverSeen += 1
       }
@@ -180,7 +182,7 @@ export function buildConnectivityPhase1Response(
         liveStatus = "live_inbound"
         remoteEndpoint = `${sess.remoteHost}:${sess.remotePort}`
         lastSeenIso = sess.acceptedAtUtc
-        lastSeenDisplay = formatOperatorUtc(sess.acceptedAtUtc)
+        lastSeenDisplay = formatOperatorDateTime(sess.acceptedAtUtc)
         lastSeenSource = "inbound_session"
         currentRoute = "inbound_tcp"
         if (sess.pendingBind) {
@@ -204,7 +206,7 @@ export function buildConnectivityPhase1Response(
           lastSeenDisplay = "—"
           lastSeenSource = "none"
         } else {
-          lastSeenDisplay = formatOperatorUtc(m.lastCommunicationAt)
+          lastSeenDisplay = formatOperatorDateTime(m.lastCommunicationAt)
           lastSeenSource = "registry"
           const regMs = regDate!.getTime()
           const recent =

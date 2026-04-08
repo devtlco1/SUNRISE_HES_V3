@@ -33,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import {
   buildReadingsResultsCsv,
   downloadUtf8CsvFile,
@@ -1819,7 +1820,7 @@ export function ReadingsWorkspaceClient() {
                         onClick={() => toggleLogExpanded(line.id)}
                       >
                         <span className="text-muted-foreground">
-                          {new Date(line.ts).toISOString()}
+                          {formatOperatorDateTime(line.ts)}
                         </span>{" "}
                         <span
                           className={

@@ -1,4 +1,4 @@
-import { formatOperatorUtc } from "@/lib/format/operator-datetime"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import type { ConnectivityPhase2RowHint } from "@/types/connectivity"
 import type { ConnectivityEventRecord } from "@/types/connectivity-events"
 import { CONNECTIVITY_FAILURE_EVENT_TYPES } from "@/types/connectivity-events"
@@ -42,7 +42,7 @@ export function buildPhase2HintsBySerial(
     out.set(k, {
       lastEventType: newest.eventType,
       lastEventSummary: newest.message.slice(0, 120),
-      lastEventAtDisplay: formatOperatorUtc(newest.createdAt),
+      lastEventAtDisplay: formatOperatorDateTime(newest.createdAt),
       recentFailureCount,
       unstable: recentFailureCount >= UNSTABLE_MIN_FAILURES,
     })

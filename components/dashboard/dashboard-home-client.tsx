@@ -24,6 +24,7 @@ import {
 } from "@/lib/dashboard/api"
 import { formatAlarmSeverity } from "@/lib/alarms/format"
 import { formatQueueState } from "@/lib/commands/format"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import type { DashboardSnapshot } from "@/types/dashboard"
 
 function StatGridSkeleton() {
@@ -162,7 +163,7 @@ export function DashboardHomeClient() {
                           <StatusBadge variant="neutral">Info</StatusBadge>
                         ) : null}
                         <span className="text-xs tabular-nums text-muted-foreground">
-                          {item.occurredAt}
+                          {formatOperatorDateTime(item.occurredAt)}
                         </span>
                       </div>
                     </li>
@@ -211,7 +212,7 @@ export function DashboardHomeClient() {
                               </StatusBadge>
                             </TableCell>
                             <TableCell className="text-right text-muted-foreground tabular-nums">
-                              {row.lastSeen}
+                              {formatOperatorDateTime(row.lastSeen)}
                             </TableCell>
                           </TableRow>
                         )
@@ -258,7 +259,7 @@ export function DashboardHomeClient() {
                             <StatusBadge variant={q.variant}>{q.label}</StatusBadge>
                           </TableCell>
                           <TableCell className="text-right tabular-nums text-muted-foreground">
-                            {row.submittedAt}
+                            {formatOperatorDateTime(row.submittedAt)}
                           </TableCell>
                           <TableCell className="max-w-[220px] truncate text-sm text-foreground">
                             {row.resultSummary}

@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatOperatorUtc } from "@/lib/format/operator-datetime"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import {
   fetchTcpListenerStatus,
   postTcpListenerReadIdentity,
@@ -369,7 +369,7 @@ export function ScannerWorkspaceClient() {
                       {ep}
                     </TableCell>
                     <TableCell className="max-w-[min(14rem,30vw)] align-top text-xs whitespace-normal break-words text-muted-foreground">
-                      {formatOperatorUtc(row.acceptedAtUtc)}
+                      {formatOperatorDateTime(row.acceptedAtUtc)}
                     </TableCell>
                     <TableCell className="max-w-[min(11rem,26vw)] align-top text-xs">
                       <div className="font-medium">{row.operatorLabel ?? "—"}</div>

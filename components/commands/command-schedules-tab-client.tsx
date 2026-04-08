@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import type {
   CommandActionGroup,
   CommandGroup,
@@ -281,7 +282,7 @@ export function CommandSchedulesTabClient() {
                         : "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {s.nextRunAt ?? "—"}
+                      {formatOperatorDateTime(s.nextRunAt)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">

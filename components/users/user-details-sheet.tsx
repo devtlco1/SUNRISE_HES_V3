@@ -13,6 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { formatUserRole, formatUserStatus } from "@/lib/users/format"
 import {
   operationalSheetBodyScroll,
@@ -99,7 +100,9 @@ export function UserDetailsSheet({
                     {
                       label: "Last active",
                       value: (
-                        <span className="tabular-nums">{user.lastActiveAt}</span>
+                        <span className="tabular-nums">
+                          {formatOperatorDateTime(user.lastActiveAt)}
+                        </span>
                       ),
                     },
                   ]}
@@ -125,13 +128,17 @@ export function UserDetailsSheet({
                     {
                       label: "Created",
                       value: (
-                        <span className="tabular-nums">{user.createdAt}</span>
+                        <span className="tabular-nums">
+                          {formatOperatorDateTime(user.createdAt)}
+                        </span>
                       ),
                     },
                     {
                       label: "Profile updated",
                       value: (
-                        <span className="tabular-nums">{user.updatedAt}</span>
+                        <span className="tabular-nums">
+                          {formatOperatorDateTime(user.updatedAt)}
+                        </span>
                       ),
                     },
                   ]}

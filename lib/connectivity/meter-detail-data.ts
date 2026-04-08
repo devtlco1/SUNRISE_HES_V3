@@ -4,7 +4,7 @@ import {
   loadConnectivityAggregation,
 } from "@/lib/connectivity/load-aggregate"
 import { readConnectivityEventsRaw } from "@/lib/connectivity-events/store"
-import { formatOperatorUtc } from "@/lib/format/operator-datetime"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import type {
   ConnectivityMeterDerived,
   ConnectivityMeterDetailPayload,
@@ -33,7 +33,7 @@ function firstOfType(
 
 function isoDisplay(iso: string | null): string {
   if (!iso) return "—"
-  return formatOperatorUtc(iso)
+  return formatOperatorDateTime(iso)
 }
 
 function deriveFromEvents(

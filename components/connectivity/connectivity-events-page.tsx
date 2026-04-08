@@ -19,7 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { fetchConnectivityEventsHistory } from "@/lib/connectivity-events/fetch-history"
-import { formatOperatorUtc } from "@/lib/format/operator-datetime"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { operationalListPageStackClass } from "@/lib/ui/operational"
 import type { StatusBadgeVariant } from "@/components/shared/status-badge"
 import {
@@ -162,7 +162,7 @@ export function ConnectivityEventsPage() {
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[168px]">Time (UTC)</TableHead>
+                  <TableHead className="w-[168px]">Time</TableHead>
                   <TableHead className="w-[120px]">Meter</TableHead>
                   <TableHead className="w-[140px]">Event</TableHead>
                   <TableHead className="min-w-[200px]">Message</TableHead>
@@ -180,7 +180,7 @@ export function ConnectivityEventsPage() {
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[168px]">Time (UTC)</TableHead>
+                  <TableHead className="w-[168px]">Time</TableHead>
                   <TableHead className="w-[120px]">Meter</TableHead>
                   <TableHead className="w-[140px]">Event</TableHead>
                   <TableHead className="min-w-[200px]">Message</TableHead>
@@ -198,7 +198,7 @@ export function ConnectivityEventsPage() {
                   return (
                     <TableRow key={ev.id}>
                       <TableCell className="align-top text-xs tabular-nums text-muted-foreground">
-                        {formatOperatorUtc(ev.createdAt)}
+                        {formatOperatorDateTime(ev.createdAt)}
                       </TableCell>
                       <TableCell className="align-top font-mono text-xs">
                         {(() => {

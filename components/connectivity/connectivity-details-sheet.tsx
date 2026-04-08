@@ -14,6 +14,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { formatHealthState } from "@/lib/connectivity/format"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { formatCommStatus } from "@/lib/meters/format"
 import {
   operationalSheetBodyScroll,
@@ -102,7 +103,7 @@ export function ConnectivityDetailsSheet({
                       label: "Last communication",
                       value: (
                         <span className="tabular-nums">
-                          {row.lastCommunicationAt}
+                          {formatOperatorDateTime(row.lastCommunicationAt)}
                         </span>
                       ),
                     },
@@ -110,7 +111,7 @@ export function ConnectivityDetailsSheet({
                       label: "Last successful read",
                       value: (
                         <span className="tabular-nums">
-                          {row.lastSuccessfulReadAt}
+                          {formatOperatorDateTime(row.lastSuccessfulReadAt)}
                         </span>
                       ),
                     },

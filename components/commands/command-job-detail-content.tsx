@@ -17,6 +17,7 @@ import {
   formatMeterCommandResult,
   formatQueueState,
 } from "@/lib/commands/format"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import type { CommandJobRow } from "@/types/command"
 import { ListTreeIcon } from "lucide-react"
 
@@ -77,7 +78,9 @@ export function CommandJobDetailContent({ job }: CommandJobDetailContentProps) {
             {
               label: "Submitted at",
               value: (
-                <span className="tabular-nums">{job.submittedAt}</span>
+                <span className="tabular-nums">
+                  {formatOperatorDateTime(job.submittedAt)}
+                </span>
               ),
             },
             {
@@ -149,7 +152,7 @@ export function CommandJobDetailContent({ job }: CommandJobDetailContentProps) {
                       {m.responseSummary}
                     </TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
-                      {m.updatedAt}
+                      {formatOperatorDateTime(m.updatedAt)}
                     </TableCell>
                   </TableRow>
                 )

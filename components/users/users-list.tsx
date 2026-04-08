@@ -32,6 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { mockUserListRows } from "@/lib/mock/users"
 import {
   operationalListPageStackClass,
@@ -362,10 +363,10 @@ export function UsersList({ rows: sourceRows = mockUserListRows }: UsersListProp
                             <StatusBadge variant={st.variant}>{st.label}</StatusBadge>
                           </TableCell>
                           <TableCell className="align-top tabular-nums text-xs text-muted-foreground">
-                            {row.lastActiveAt}
+                            {formatOperatorDateTime(row.lastActiveAt)}
                           </TableCell>
                           <TableCell className="align-top tabular-nums text-xs text-muted-foreground">
-                            {row.createdAt}
+                            {formatOperatorDateTime(row.createdAt)}
                           </TableCell>
                           <TableCell className="align-top text-right">
                             <DropdownMenu>

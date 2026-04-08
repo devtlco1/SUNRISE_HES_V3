@@ -32,6 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import {
   ALARMS_FETCH_NETWORK_ERROR,
   fetchAlarms,
@@ -462,10 +463,10 @@ export function AlarmsList({ rows: rowsProp }: AlarmsListProps) {
                             <StatusBadge variant={st.variant}>{st.label}</StatusBadge>
                           </TableCell>
                           <TableCell className="align-top tabular-nums text-xs text-muted-foreground">
-                            {row.firstSeen}
+                            {formatOperatorDateTime(row.firstSeen)}
                           </TableCell>
                           <TableCell className="align-top tabular-nums text-xs text-muted-foreground">
-                            {row.lastSeen}
+                            {formatOperatorDateTime(row.lastSeen)}
                           </TableCell>
                           <TableCell className="align-top text-right tabular-nums text-sm text-foreground">
                             {row.occurrenceCount}

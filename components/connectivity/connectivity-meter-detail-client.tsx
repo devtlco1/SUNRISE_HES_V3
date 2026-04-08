@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table"
 import type { ConnectivityMeterDetailPayload } from "@/types/connectivity"
 import { phase1LiveStatusPresentation } from "@/lib/connectivity/phase1-status-present"
-import { formatOperatorUtc } from "@/lib/format/operator-datetime"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { formatCommStatus } from "@/lib/meters/format"
 import { operationalListPageStackClass } from "@/lib/ui/operational"
 import type { StatusBadgeVariant } from "@/components/shared/status-badge"
@@ -209,7 +209,7 @@ export function ConnectivityMeterDetailClient({
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[168px]">Time (UTC)</TableHead>
+                  <TableHead className="w-[168px]">Time</TableHead>
                   <TableHead className="w-[140px]">Event</TableHead>
                   <TableHead className="min-w-[220px]">Message</TableHead>
                   <TableHead className="w-[120px]">Route</TableHead>
@@ -226,7 +226,7 @@ export function ConnectivityMeterDetailClient({
                   return (
                     <TableRow key={ev.id}>
                       <TableCell className="align-top text-xs tabular-nums text-muted-foreground">
-                        {formatOperatorUtc(ev.createdAt)}
+                        {formatOperatorDateTime(ev.createdAt)}
                       </TableCell>
                       <TableCell className="align-top">
                         <StatusBadge variant={sev} className="font-mono text-[11px]">

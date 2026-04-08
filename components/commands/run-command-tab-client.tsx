@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import type {
   CommandActionGroup,
   CommandGroup,
@@ -362,7 +363,7 @@ export function RunCommandTabClient() {
                         ) : null}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {row.schedule.nextRunAt}
+                        {formatOperatorDateTime(row.schedule.nextRunAt)}
                       </TableCell>
                       <TableCell className="text-xs">
                         {isFuture ? (
@@ -429,13 +430,13 @@ export function RunCommandTabClient() {
                       {r.scheduleName ?? r.scheduleId ?? "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {r.createdAt}
+                      {formatOperatorDateTime(r.createdAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {r.startedAt ?? "—"}
+                      {formatOperatorDateTime(r.startedAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {r.finishedAt ?? "—"}
+                      {formatOperatorDateTime(r.finishedAt)}
                     </TableCell>
                     <TableCell
                       className="max-w-[130px] truncate text-xs"

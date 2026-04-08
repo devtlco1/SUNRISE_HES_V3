@@ -41,6 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import {
   METERS_FETCH_NETWORK_ERROR,
   deleteMeter,
@@ -667,12 +668,12 @@ export function MetersList({
                           ) : null}
                           {cols.lastReading ? (
                             <TableCell className="align-top tabular-nums text-muted-foreground">
-                              {disp(row.lastReadingAt)}
+                              {formatOperatorDateTime(row.lastReadingAt)}
                             </TableCell>
                           ) : null}
                           {cols.lastComm ? (
                             <TableCell className="align-top tabular-nums text-muted-foreground">
-                              {disp(row.lastCommunicationAt)}
+                              {formatOperatorDateTime(row.lastCommunicationAt)}
                             </TableCell>
                           ) : null}
                           {cols.alarm ? (

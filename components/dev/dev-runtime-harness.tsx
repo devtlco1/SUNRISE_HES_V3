@@ -1,5 +1,6 @@
 "use client"
 
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { RuntimeAdapterPublicStatus } from "@/lib/runtime/adapter-mode"
@@ -284,11 +285,11 @@ function EnvelopeViewer({ envelope }: { envelope: RuntimeResponseEnvelope }) {
         </div>
         <div>
           <dt className="text-muted-foreground">startedAt</dt>
-          <dd>{envelope.startedAt}</dd>
+          <dd>{formatOperatorDateTime(envelope.startedAt)}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">finishedAt</dt>
-          <dd>{envelope.finishedAt}</dd>
+          <dd>{formatOperatorDateTime(envelope.finishedAt)}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">durationMs</dt>

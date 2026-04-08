@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import type { UnifiedCommandRunRow } from "@/types/command-operator"
 
 type ApiResponse = {
@@ -180,13 +181,13 @@ export function CommandsUnifiedRunsClient() {
                       {r.meterOutcomeBrief ?? "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {r.createdAt}
+                      {formatOperatorDateTime(r.createdAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {r.startedAt ?? "—"}
+                      {formatOperatorDateTime(r.startedAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {r.finishedAt ?? "—"}
+                      {formatOperatorDateTime(r.finishedAt)}
                     </TableCell>
                     <TableCell
                       className="max-w-[160px] truncate text-xs"

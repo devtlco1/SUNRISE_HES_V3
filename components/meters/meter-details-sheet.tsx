@@ -16,6 +16,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import {
   deleteMeter,
   postMeterFull,
@@ -86,18 +87,8 @@ type MeterDetailsSheetProps = {
   onAfterMutation?: () => void
 }
 
-function stampLocal(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const mo = String(d.getMonth() + 1).padStart(2, "0")
-  const da = String(d.getDate()).padStart(2, "0")
-  const h = String(d.getHours()).padStart(2, "0")
-  const mi = String(d.getMinutes()).padStart(2, "0")
-  return `${y}-${mo}-${da} ${h}:${mi}`
-}
-
 function emptyAdd(): MeterListRow {
-  const t = stampLocal()
+  const t = formatOperatorDateTime(Date.now())
   return {
     id: "",
     serialNumber: "",
@@ -829,7 +820,7 @@ export function MeterDetailsSheet({
                       <span className="text-xs text-muted-foreground">
                         Last comm{" "}
                         <span className="font-medium text-foreground tabular-nums">
-                          {meter.lastCommunicationAt}
+                          {formatOperatorDateTime(meter.lastCommunicationAt)}
                         </span>
                       </span>
                     </div>
@@ -849,7 +840,7 @@ export function MeterDetailsSheet({
                           label: "Last reading",
                           value: (
                             <span className="tabular-nums">
-                              {meter.lastReadingAt}
+                              {formatOperatorDateTime(meter.lastReadingAt)}
                             </span>
                           ),
                         },

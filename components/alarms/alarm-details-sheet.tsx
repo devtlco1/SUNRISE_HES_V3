@@ -18,6 +18,7 @@ import {
   formatAlarmSeverity,
   formatAlarmState,
 } from "@/lib/alarms/format"
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import {
   operationalSheetBodyScroll,
   operationalSheetContentNarrow,
@@ -106,13 +107,17 @@ export function AlarmDetailsSheet({
                     {
                       label: "First seen",
                       value: (
-                        <span className="tabular-nums">{alarm.firstSeen}</span>
+                        <span className="tabular-nums">
+                          {formatOperatorDateTime(alarm.firstSeen)}
+                        </span>
                       ),
                     },
                     {
                       label: "Last seen",
                       value: (
-                        <span className="tabular-nums">{alarm.lastSeen}</span>
+                        <span className="tabular-nums">
+                          {formatOperatorDateTime(alarm.lastSeen)}
+                        </span>
                       ),
                     },
                     {
@@ -163,13 +168,13 @@ export function AlarmDetailsSheet({
                 <ul className="list-inside list-disc space-y-1.5 text-sm text-muted-foreground">
                   <li>
                     <span className="tabular-nums text-foreground">
-                      {alarm.firstSeen}
+                      {formatOperatorDateTime(alarm.firstSeen)}
                     </span>{" "}
                     — Raised ({alarm.sourceDomain})
                   </li>
                   <li>
                     <span className="tabular-nums text-foreground">
-                      {alarm.lastSeen}
+                      {formatOperatorDateTime(alarm.lastSeen)}
                     </span>{" "}
                     — Last occurrence (illustrative)
                   </li>

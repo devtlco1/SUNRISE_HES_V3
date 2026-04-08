@@ -1,15 +1,6 @@
+import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
 import { slugId } from "@/lib/meters/id-slug"
 import type { MeterListRow } from "@/types/meter"
-
-function stampLocal(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const mo = String(d.getMonth() + 1).padStart(2, "0")
-  const da = String(d.getDate()).padStart(2, "0")
-  const h = String(d.getHours()).padStart(2, "0")
-  const mi = String(d.getMinutes()).padStart(2, "0")
-  return `${y}-${mo}-${da} ${h}:${mi}`
-}
 
 /** New registry row: serial is the operator-facing identity; customerName defaults to serial. */
 export function createMeterRowFromSerial(
@@ -17,7 +8,7 @@ export function createMeterRowFromSerial(
   existingIds: Set<string>
 ): MeterListRow {
   const serialNumber = serial.trim()
-  const t = stampLocal()
+  const t = formatOperatorDateTime(Date.now())
   return {
     id: slugId(serialNumber, existingIds),
     serialNumber,

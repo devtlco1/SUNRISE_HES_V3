@@ -1,26 +1,19 @@
 /**
- * Human-readable timestamps for operator surfaces (Scanner, etc.).
- * Raw ISO stays in diagnostics/API payloads only.
+ * Single operator-facing datetime format for visible UI (local clock, no TZ label).
+ * Storage and API payloads stay as-is (typically ISO strings).
  */
 
-const UTC_DATE = new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-})
-
-const UTC_TIME = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-  minute: "2-digit",
-  hour12: true,
-  timeZone: "UTC",
-})
+function pad2(n: number): string {
+  return String(n).padStart(2, "0")
+}
 
 /**
- * e.g. "07 Apr 2026, 10:58 PM UTC" (day-month-year + 12h clock, UTC).
+ * `YYYY-MM-DD | HH:mm:ss` in the runtime's local timezone.
+ * `null`, `undefined`, empty string, whitespace-only, or unparseable → `—`.
  */
-export function formatOperatorUtc(isoOrMs: string | number | null | undefined): string {
+export function formatOperatorDateTime(
+  isoOrMs: string | number | null | undefined
+): string {
   if (isoOrMs === null || isoOrMs === undefined) return "—"
   const d =
     typeof isoOrMs === "number"
@@ -28,11 +21,17 @@ export function formatOperatorUtc(isoOrMs: string | number | null | undefined): 
         ? new Date(isoOrMs)
         : null
       : (() => {
-          const t = isoOrMs.trim()
+          const t = String(isoOrMs).trim()
           if (!t) return null
           const x = new Date(t)
           return Number.isNaN(x.getTime()) ? null : x
         })()
   if (!d) return "—"
-  return `${UTC_DATE.format(d)}, ${UTC_TIME.format(d)} UTC`
+  const y = d.getFullYear()
+  const mo = pad2(d.getMonth() + 1)
+  const da = pad2(d.getDate())
+  const h = pad2(d.getHours())
+  const mi = pad2(d.getMinutes())
+  const s = pad2(d.getSeconds())
+  return `${y}-${mo}-${da} | ${h}:${mi}:${s}`
 }
