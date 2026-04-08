@@ -109,11 +109,16 @@ function loadColumnVisibility(): Record<MetersColumnKey, boolean> {
   if (typeof window === "undefined") return defaultColumns()
   try {
     const raw = localStorage.getItem(COL_STORAGE_KEY)
-    if (!raw) return defaultColumns()
-    const o = JSON.parse(raw) as Partial<Record<MetersColumnKey, boolean>>
+    if (!raw || raw.length > 50_000) return defaultColumns()
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return defaultColumns()
+    }
+    const o = parsed as Record<string, unknown>
     const base = defaultColumns()
-    for (const k of Object.keys(base) as MetersColumnKey[]) {
-      if (typeof o[k] === "boolean") base[k] = o[k]!
+    for (const k of Object.keys(COL_LABELS) as MetersColumnKey[]) {
+      const v = o[k]
+      if (typeof v === "boolean") base[k] = v
     }
     base.actions = true
     return base
@@ -160,7 +165,9 @@ export function MetersList({ rows: rowsProp, onRegisterActions }: MetersListProp
   const [loading, setLoading] = useState(rowsProp === undefined)
   const [error, setError] = useState<string | null>(null)
 
-  const [cols, setCols] = useState<Record<MetersColumnKey, boolean>>(defaultColumns)
+  const [cols, setCols] = useState<Record<MetersColumnKey, boolean>>(() =>
+    defaultColumns()
+  )
 
   useEffect(() => {
     setCols(loadColumnVisibility())
