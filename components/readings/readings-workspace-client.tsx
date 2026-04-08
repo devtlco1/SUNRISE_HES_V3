@@ -1212,7 +1212,7 @@ export function ReadingsWorkspaceClient() {
   }, [meterKey, catalogRows, currentMeterState.rowState])
 
   const exportReadingsCsv = useCallback(() => {
-    if (!meterKey || catalogRows.length === 0) return
+    if (!canExportReadingsCsv || !meterKey || catalogRows.length === 0) return
     const rows = catalogRows.map((catalog) => ({
       catalog,
       rowState: currentMeterState.rowState[catalog.obis],
@@ -1228,7 +1228,15 @@ export function ReadingsWorkspaceClient() {
       `readings_${sanitizeCsvFilenamePart(meterKey)}_${stamp}.csv`,
       csv
     )
-  }, [meterKey, catalogRows, currentMeterState.rowState, familyTab, catalog, pack])
+  }, [
+    canExportReadingsCsv,
+    meterKey,
+    catalogRows,
+    currentMeterState.rowState,
+    familyTab,
+    catalog,
+    pack,
+  ])
 
   function toggleLogExpanded(id: string) {
     setExpandedLogIds((prev) => {
