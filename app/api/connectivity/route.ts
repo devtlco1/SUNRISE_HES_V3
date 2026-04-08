@@ -1,38 +1,51 @@
-import { readFile } from "fs/promises"
-import path from "path"
-
-import { normalizeConnectivityRows } from "@/lib/connectivity/normalize"
+import { buildConnectivityPhase1Response } from "@/lib/connectivity/phase1-aggregate"
+import { readMetersJsonRaw } from "@/lib/meters/meters-file"
+import { normalizeMeterRows } from "@/lib/meters/normalize"
+import {
+  getTcpListenerStatusFromSidecar,
+  PythonSidecarHttpError,
+  PythonSidecarNotConfiguredError,
+} from "@/lib/runtime/python-sidecar/client"
 import { NextResponse } from "next/server"
 
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
+
 export async function GET() {
-  try {
-    const filePath = path.join(process.cwd(), "data", "connectivity.json")
-    const text = await readFile(filePath, "utf-8")
-    const parsed: unknown = JSON.parse(text)
-
-    if (!Array.isArray(parsed)) {
-      return NextResponse.json(
-        { error: "INVALID_CONNECTIVITY_PAYLOAD" },
-        { status: 500 }
-      )
-    }
-
-    const rows = normalizeConnectivityRows(parsed)
-    // Empty array [] → 200 with []. 500 only when input had items but none normalized.
-    if (rows.length === 0 && parsed.length > 0) {
-      return NextResponse.json(
-        { error: "INVALID_CONNECTIVITY_ROWS" },
-        { status: 500 }
-      )
-    }
-
-    return NextResponse.json(rows, {
-      headers: { "Cache-Control": "no-store" },
-    })
-  } catch {
-    return NextResponse.json(
-      { error: "CONNECTIVITY_LOAD_FAILED" },
-      { status: 500 }
-    )
+  const raw = await readMetersJsonRaw()
+  if (!raw.ok) {
+    return NextResponse.json({ error: raw.error }, { status: 500 })
   }
+  const meters = normalizeMeterRows(raw.parsed)
+  if (meters.length === 0 && raw.parsed.length > 0) {
+    return NextResponse.json({ error: "INVALID_METERS_ROWS" }, { status: 500 })
+  }
+
+  let listenerStatus: Record<string, unknown> | null = null
+  let listenerFetchFailed = false
+
+  try {
+    listenerStatus = (await getTcpListenerStatusFromSidecar()) as Record<
+      string,
+      unknown
+    >
+  } catch (e) {
+    listenerFetchFailed = true
+    if (
+      e instanceof PythonSidecarNotConfiguredError ||
+      e instanceof PythonSidecarHttpError
+    ) {
+      /* aggregate still returns per-meter unknown_live */
+    }
+  }
+
+  const payload = buildConnectivityPhase1Response(
+    meters,
+    listenerStatus,
+    listenerFetchFailed
+  )
+
+  return NextResponse.json(payload, {
+    headers: { "Cache-Control": "no-store" },
+  })
 }

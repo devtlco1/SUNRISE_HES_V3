@@ -18,7 +18,7 @@ import {
   useState,
 } from "react"
 import { createPortal, flushSync } from "react-dom"
-import { usePathname } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 
 import { MeterSearchCombobox } from "@/components/readings/meter-search-combobox"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -521,6 +521,16 @@ export function ReadingsWorkspaceClient() {
   ])
 
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const urlMeterAppliedRef = useRef(false)
+
+  useEffect(() => {
+    if (!workspaceHydrated || urlMeterAppliedRef.current) return
+    const want = searchParams.get("meter")?.trim()
+    if (!want) return
+    urlMeterAppliedRef.current = true
+    setMeterId(want)
+  }, [workspaceHydrated, searchParams])
 
   useEffect(() => {
     if (pathname !== "/readings") return

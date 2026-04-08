@@ -4,7 +4,6 @@ import path from "path"
 import { buildDashboardSnapshot } from "@/lib/dashboard/summary"
 import { normalizeAlarmRows } from "@/lib/alarms/normalize"
 import { normalizeCommandJobRows } from "@/lib/commands/normalize"
-import { normalizeConnectivityRows } from "@/lib/connectivity/normalize"
 import { normalizeMeterRows } from "@/lib/meters/normalize"
 import { NextResponse } from "next/server"
 
@@ -30,30 +29,21 @@ function assertNormalized<T>(
 
 export async function GET() {
   try {
-    const [metersRaw, connectivityRaw, alarmsRaw, commandsRaw] =
-      await Promise.all([
-        readCatalogArray("meters.json"),
-        readCatalogArray("connectivity.json"),
-        readCatalogArray("alarms.json"),
-        readCatalogArray("commands.json"),
-      ])
+    const [metersRaw, alarmsRaw, commandsRaw] = await Promise.all([
+      readCatalogArray("meters.json"),
+      readCatalogArray("alarms.json"),
+      readCatalogArray("commands.json"),
+    ])
 
     const meters = normalizeMeterRows(metersRaw)
-    const connectivity = normalizeConnectivityRows(connectivityRaw)
     const alarms = normalizeAlarmRows(alarmsRaw)
     const commandJobs = normalizeCommandJobRows(commandsRaw)
 
     assertNormalized(metersRaw, meters, "METERS")
-    assertNormalized(connectivityRaw, connectivity, "CONNECTIVITY")
     assertNormalized(alarmsRaw, alarms, "ALARMS")
     assertNormalized(commandsRaw, commandJobs, "COMMANDS")
 
-    const snapshot = buildDashboardSnapshot(
-      meters,
-      connectivity,
-      alarms,
-      commandJobs
-    )
+    const snapshot = buildDashboardSnapshot(meters, alarms, commandJobs)
 
     return NextResponse.json(snapshot, {
       headers: { "Cache-Control": "no-store" },

@@ -134,6 +134,8 @@ function disp(s: string): string {
 
 type MetersListProps = {
   rows?: MeterListRow[]
+  /** Deep-link from other pages (e.g. connectivity row → `/meters?q=…`). */
+  initialSearch?: string
   onRegisterActions?: (api: {
     openAdd: () => void
     refresh: () => void
@@ -158,7 +160,11 @@ function matchesSearch(row: MeterListRow, q: string) {
     .includes(n)
 }
 
-export function MetersList({ rows: rowsProp, onRegisterActions }: MetersListProps) {
+export function MetersList({
+  rows: rowsProp,
+  initialSearch,
+  onRegisterActions,
+}: MetersListProps) {
   const staticMode = rowsProp !== undefined
   const [fetchedRows, setFetchedRows] = useState<MeterListRow[]>([])
   const [loadKey, setLoadKey] = useState(0)
@@ -184,7 +190,12 @@ export function MetersList({ rows: rowsProp, onRegisterActions }: MetersListProp
 
   const sourceRows = rowsProp !== undefined ? rowsProp : fetchedRows
 
-  const [search, setSearch] = useState("")
+  const [search, setSearch] = useState(() => initialSearch?.trim() ?? "")
+
+  useEffect(() => {
+    const q = initialSearch?.trim()
+    if (q) setSearch(q)
+  }, [initialSearch])
   const [commFilter, setCommFilter] = useState<string>(ALL)
   const [manufacturerFilter, setManufacturerFilter] = useState<string>(ALL)
   const [relayFilter, setRelayFilter] = useState<string>(ALL)

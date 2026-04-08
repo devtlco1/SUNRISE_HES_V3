@@ -13,6 +13,7 @@ import { mockMeterListRows } from "@/lib/mock/meters"
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, DownloadIcon, PlusIcon, UploadIcon } from "lucide-react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useCallback, useRef, useState } from "react"
 
 type MetersPageClientProps = {
@@ -20,6 +21,9 @@ type MetersPageClientProps = {
 }
 
 export function MetersPageClient({ useMockMeters }: MetersPageClientProps) {
+  const searchParams = useSearchParams()
+  const initialSearch = searchParams.get("q")?.trim() ?? ""
+
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState<string | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -189,6 +193,7 @@ export function MetersPageClient({ useMockMeters }: MetersPageClientProps) {
 
       <MetersList
         rows={useMockMeters ? mockMeterListRows : undefined}
+        initialSearch={initialSearch || undefined}
         onRegisterActions={(api) => {
           actionsRef.current = api
         }}

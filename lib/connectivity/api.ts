@@ -1,34 +1,32 @@
-import { normalizeConnectivityRows } from "@/lib/connectivity/normalize"
-import type { ConnectivityListRow } from "@/types/connectivity"
+import type { ConnectivityPhase1Response } from "@/types/connectivity"
 
-export type FetchConnectivityResult =
-  | { ok: true; rows: ConnectivityListRow[] }
+export type FetchConnectivityPhase1Result =
+  | { ok: true; data: ConnectivityPhase1Response }
   | { ok: false; error: string }
 
 const LOAD_FAILED =
-  "The connectivity catalog could not be loaded. Retry shortly or contact operations if this continues."
+  "Connectivity data could not be loaded. Retry shortly or contact operations if this continues."
 const INVALID_PAYLOAD =
-  "The connectivity response was invalid. Verify the catalog source and deployment."
+  "The connectivity response was invalid. Verify deployment and API version."
 export const CONNECTIVITY_FETCH_NETWORK_ERROR =
-  "Network error while loading the connectivity catalog."
+  "Network error while loading connectivity."
 
-function messageForErrorCode(code: string | undefined): string {
-  if (
-    code === "INVALID_CONNECTIVITY_PAYLOAD" ||
-    code === "INVALID_CONNECTIVITY_ROWS"
-  ) {
-    return INVALID_PAYLOAD
-  }
-  return LOAD_FAILED
+function isPhase1Response(v: unknown): v is ConnectivityPhase1Response {
+  if (!v || typeof v !== "object") return false
+  const o = v as Record<string, unknown>
+  if (!o.summary || typeof o.summary !== "object") return false
+  if (!Array.isArray(o.rows)) return false
+  if (typeof o.fetchedAt !== "string") return false
+  const s = o.summary as Record<string, unknown>
+  return typeof s.totalMeters === "number"
 }
 
 /**
- * Client-side fetch of read-only connectivity rows from the local App Router API.
- * Search and filters stay in the UI; this returns the full row set.
+ * Phase 1: meter registry + Python TCP listener snapshot (via server aggregation).
  */
-export async function fetchConnectivity(
+export async function fetchConnectivityPhase1(
   signal?: AbortSignal
-): Promise<FetchConnectivityResult> {
+): Promise<FetchConnectivityPhase1Result> {
   try {
     const res = await fetch("/api/connectivity", {
       signal,
@@ -43,15 +41,17 @@ export async function fetchConnectivity(
       } catch {
         /* ignore */
       }
-      return { ok: false, error: messageForErrorCode(code) }
+      if (code === "METERS_LOAD_FAILED" || code === "INVALID_METERS_ROWS") {
+        return { ok: false, error: LOAD_FAILED }
+      }
+      return { ok: false, error: LOAD_FAILED }
     }
 
     const data: unknown = await res.json()
-    const rows = normalizeConnectivityRows(data)
-    if (rows.length === 0 && Array.isArray(data) && data.length > 0) {
+    if (!isPhase1Response(data)) {
       return { ok: false, error: INVALID_PAYLOAD }
     }
-    return { ok: true, rows }
+    return { ok: true, data }
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") {
       throw e

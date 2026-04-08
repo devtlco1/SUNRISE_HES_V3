@@ -6,7 +6,6 @@ import type {
   RecentCommandDigestRow,
 } from "@/types/dashboard"
 import type { CommandJobRow } from "@/types/command"
-import type { ConnectivityListRow } from "@/types/connectivity"
 import type { MeterCommStatus, MeterListRow } from "@/types/meter"
 
 const ACTIVITY_LIMIT = 8
@@ -54,7 +53,6 @@ function compareOccurredAt(a: string, b: string): number {
  */
 export function buildDashboardSnapshot(
   meters: MeterListRow[],
-  connectivity: ConnectivityListRow[],
   alarms: AlarmListRow[],
   commandJobs: CommandJobRow[]
 ): {
@@ -103,12 +101,14 @@ export function buildDashboardSnapshot(
     })
   }
 
-  for (const c of connectivity) {
+  for (const m of meters) {
+    const t = m.lastCommunicationAt?.trim()
+    if (!t) continue
     activityCandidates.push({
-      id: `conn-${c.id}`,
-      occurredAt: c.lastCommunicationAt,
-      summary: `Comm ${c.commState} — ${c.serialNumber} · ${c.networkType}`,
-      tone: connectivityActivityTone(c.commState),
+      id: `meter-comm-${m.id}`,
+      occurredAt: t,
+      summary: `Registry comm ${m.commStatus} — ${m.serialNumber}`,
+      tone: connectivityActivityTone(m.commStatus),
     })
   }
 

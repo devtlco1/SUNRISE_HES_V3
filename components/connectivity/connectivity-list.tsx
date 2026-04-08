@@ -1,9 +1,10 @@
 "use client"
 
 import { MoreHorizontalIcon, SearchIcon } from "lucide-react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { ConnectivityDetailsSheet } from "@/components/connectivity/connectivity-details-sheet"
 import { TableBodySkeleton } from "@/components/data-table/table-body-skeleton"
 import { TableEmpty } from "@/components/data-table/table-empty"
 import { TablePagination } from "@/components/data-table/table-pagination"
@@ -12,6 +13,7 @@ import { TableToolbar } from "@/components/data-table/table-toolbar"
 import { FilterBar } from "@/components/shared/filter-bar"
 import { FilterSelect } from "@/components/shared/filter-select"
 import { SectionCard } from "@/components/shared/section-card"
+import { StatCard } from "@/components/shared/stat-card"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -33,116 +35,127 @@ import {
 } from "@/components/ui/table"
 import {
   CONNECTIVITY_FETCH_NETWORK_ERROR,
-  fetchConnectivity,
+  fetchConnectivityPhase1,
 } from "@/lib/connectivity/api"
-import { formatHealthState } from "@/lib/connectivity/format"
+import { PHASE1_REGISTRY_RECENT_MS } from "@/lib/connectivity/phase1-constants"
+import { formatCommStatus } from "@/lib/meters/format"
 import {
   operationalListPageStackClass,
   operationalMonoIdTriggerClass,
   operationalRowActionTriggerClass,
 } from "@/lib/ui/operational"
-import { formatCommStatus } from "@/lib/meters/format"
-import type { ConnectivityListRow } from "@/types/connectivity"
+import type { StatusBadgeVariant } from "@/components/shared/status-badge"
+import type {
+  ConnectivityPhase1LiveStatus,
+  ConnectivityPhase1Row,
+  ConnectivityPhase1Summary,
+} from "@/types/connectivity"
 
 const ALL = "all"
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
 
+function liveStatusBadge(
+  s: ConnectivityPhase1LiveStatus
+): { label: string; variant: StatusBadgeVariant } {
+  switch (s) {
+    case "live_inbound":
+      return { label: "Live (inbound)", variant: "success" }
+    case "online_recent_registry":
+      return { label: "Online (recent)", variant: "success" }
+    case "offline":
+      return { label: "Offline", variant: "danger" }
+    case "never_seen_registry":
+      return { label: "Never seen", variant: "neutral" }
+    case "unknown_live":
+      return { label: "Unknown", variant: "warning" }
+    default:
+      return { label: s, variant: "neutral" }
+  }
+}
+
 function ConnectivityTableHeaderRow() {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead className="w-[168px]">Meter</TableHead>
-      <TableHead className="w-[120px]">Serial No.</TableHead>
-      <TableHead className="min-w-[160px]">Network / Route</TableHead>
-      <TableHead className="w-[104px]">Comm Status</TableHead>
-      <TableHead className="w-[100px]">Health</TableHead>
-      <TableHead className="w-[128px]">Last Communication</TableHead>
-      <TableHead className="w-[128px]">Last Successful Read</TableHead>
-      <TableHead className="min-w-[140px]">Signal / Quality</TableHead>
-      <TableHead className="min-w-[180px]">Endpoint / Gateway</TableHead>
+      <TableHead className="w-[120px]">Serial</TableHead>
+      <TableHead className="w-[120px]">Meter ID</TableHead>
+      <TableHead className="min-w-[100px]">Model</TableHead>
+      <TableHead className="min-w-[100px]">Feeder / zone</TableHead>
+      <TableHead className="w-[132px]">Status</TableHead>
+      <TableHead className="w-[128px]">Last seen</TableHead>
+      <TableHead className="min-w-[120px]">Route</TableHead>
+      <TableHead className="min-w-[120px]">Remote / bind</TableHead>
+      <TableHead className="min-w-[100px]">Registry comm</TableHead>
       <TableHead className="w-[72px] text-right">Actions</TableHead>
     </TableRow>
   )
 }
 
-type ConnectivityListProps = {
-  /**
-   * When provided, skips `/api/connectivity` (e.g. `NEXT_PUBLIC_CONNECTIVITY_USE_MOCK` or tests).
-   * Pass `[]` to exercise an empty catalog without the API.
-   */
-  rows?: ConnectivityListRow[]
-}
-
-function matchesSearch(row: ConnectivityListRow, q: string) {
+function matchesSearch(row: ConnectivityPhase1Row, q: string) {
   if (!q.trim()) return true
   const n = q.trim().toLowerCase()
   return [
-    row.id,
+    row.meterId,
     row.serialNumber,
-    row.networkType,
-    row.routeId,
-    row.gatewayId,
-    row.endpoint,
-    row.protocolVersion,
+    row.internalId,
+    row.model,
+    row.feeder,
+    row.zone,
+    row.meterProfileId,
+    row.currentRoute,
+    row.remoteEndpoint ?? "",
+    row.statusReason,
   ]
     .join(" ")
     .toLowerCase()
     .includes(n)
 }
 
-export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
-  const staticMode = rowsProp !== undefined
-  const [fetchedRows, setFetchedRows] = useState<ConnectivityListRow[]>([])
+export function ConnectivityList() {
+  const router = useRouter()
+  const [data, setData] = useState<{
+    summary: ConnectivityPhase1Summary
+    rows: ConnectivityPhase1Row[]
+  } | null>(null)
   const [loadKey, setLoadKey] = useState(0)
-  const [loading, setLoading] = useState(rowsProp === undefined)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const sourceRows =
-    rowsProp !== undefined ? rowsProp : fetchedRows
-
   const [search, setSearch] = useState("")
-  const [commFilter, setCommFilter] = useState<string>(ALL)
-  const [networkFilter, setNetworkFilter] = useState<string>(ALL)
-  const [gatewayFilter, setGatewayFilter] = useState<string>(ALL)
-  const [healthFilter, setHealthFilter] = useState<string>(ALL)
+  const [statusFilter, setStatusFilter] = useState<string>(ALL)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const [selected, setSelected] = useState<ConnectivityListRow | null>(null)
 
   useEffect(() => {
-    if (staticMode) return
-
     const ac = new AbortController()
     let stale = false
 
-    fetchConnectivity(ac.signal)
+    fetchConnectivityPhase1(ac.signal)
       .then((result) => {
         if (stale) return
         setLoading(false)
         if (!result.ok) {
           setError(result.error)
-          setFetchedRows([])
+          setData(null)
           return
         }
         setError(null)
-        setFetchedRows(result.rows)
+        setData({ summary: result.data.summary, rows: result.data.rows })
       })
       .catch((e) => {
         if (e instanceof Error && e.name === "AbortError") return
         if (stale) return
         setLoading(false)
         setError(CONNECTIVITY_FETCH_NETWORK_ERROR)
-        setFetchedRows([])
+        setData(null)
       })
 
     return () => {
       stale = true
       ac.abort()
     }
-  }, [staticMode, loadKey])
+  }, [loadKey])
 
   function reload() {
-    if (staticMode) return
     setLoading(true)
     setError(null)
     setLoadKey((k) => k + 1)
@@ -150,136 +163,84 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
 
   const resetPage = useCallback(() => setPage(1), [])
 
-  const networkOptions = useMemo(() => {
-    const set = new Set(sourceRows.map((r) => r.networkType))
-    return [
-      { value: ALL, label: "All network types" },
-      ...[...set]
-        .sort((a, b) => a.localeCompare(b))
-        .map((v) => ({ value: v, label: v })),
-    ]
-  }, [sourceRows])
-
-  const gatewayOptions = useMemo(() => {
-    const set = new Set(sourceRows.map((r) => r.gatewayId))
-    return [
-      { value: ALL, label: "All gateways / DCUs" },
-      ...[...set]
-        .sort((a, b) => a.localeCompare(b))
-        .map((v) => ({ value: v, label: v })),
-    ]
-  }, [sourceRows])
+  const sourceRows = data?.rows ?? []
 
   const filtered = useMemo(() => {
     return sourceRows.filter((row) => {
       if (!matchesSearch(row, search)) return false
-      if (commFilter !== ALL && row.commState !== commFilter) return false
-      if (networkFilter !== ALL && row.networkType !== networkFilter)
-        return false
-      if (gatewayFilter !== ALL && row.gatewayId !== gatewayFilter) return false
-      if (healthFilter !== ALL && row.healthState !== healthFilter) return false
+      if (statusFilter !== ALL && row.liveStatus !== statusFilter) return false
       return true
     })
-  }, [
-    sourceRows,
-    search,
-    commFilter,
-    networkFilter,
-    gatewayFilter,
-    healthFilter,
-  ])
+  }, [sourceRows, search, statusFilter])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize) || 1)
   const currentPage = Math.min(Math.max(1, page), totalPages)
   const sliceStart = (currentPage - 1) * pageSize
   const pageRows = filtered.slice(sliceStart, sliceStart + pageSize)
 
-  const filtersActive =
-    search.trim() !== "" ||
-    commFilter !== ALL ||
-    networkFilter !== ALL ||
-    gatewayFilter !== ALL ||
-    healthFilter !== ALL
+  const filtersActive = search.trim() !== "" || statusFilter !== ALL
 
   function clearFilters() {
     setSearch("")
-    setCommFilter(ALL)
-    setNetworkFilter(ALL)
-    setGatewayFilter(ALL)
-    setHealthFilter(ALL)
+    setStatusFilter(ALL)
     resetPage()
   }
 
-  function openDetails(row: ConnectivityListRow) {
-    setSelected(row)
-    setSheetOpen(true)
-  }
-
-  function onSheetOpenChange(open: boolean) {
-    setSheetOpen(open)
-    if (!open) setSelected(null)
-  }
-
-  const fetchFailed = !staticMode && !loading && error !== null
-  const emptyCatalog = !fetchFailed && sourceRows.length === 0
+  const fetchFailed = !loading && error !== null
+  const emptyCatalog = !fetchFailed && !loading && sourceRows.length === 0
   const noResults =
     !fetchFailed && !emptyCatalog && filtered.length === 0
 
+  const summary = data?.summary
+
   return (
     <div className={operationalListPageStackClass}>
+      {summary ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <StatCard label="Total meters" value={summary.totalMeters.toLocaleString()} />
+          <StatCard
+            label="Online"
+            value={summary.onlineMeters.toLocaleString()}
+            description={
+              summary.listenerFetchFailed
+                ? "— (listener unavailable)"
+                : "Inbound + recent registry"
+            }
+          />
+          <StatCard label="Offline" value={summary.offlineMeters.toLocaleString()} />
+          <StatCard
+            label="Live inbound"
+            value={summary.liveInboundMeters.toLocaleString()}
+          />
+          <StatCard
+            label="Sessions (staged)"
+            value={summary.stagedSessionCount.toLocaleString()}
+          />
+          <StatCard
+            label="Never seen"
+            value={summary.neverSeenMeters.toLocaleString()}
+          />
+        </div>
+      ) : null}
+
       <FilterBar>
         <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid w-full gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <FilterSelect
-              id="conn-filter-comm"
-              label="Communication status"
-              value={commFilter}
+              id="conn-filter-status"
+              label="Connectivity status"
+              value={statusFilter}
               onChange={(v) => {
-                setCommFilter(v)
+                setStatusFilter(v)
                 resetPage()
               }}
               options={[
-                { value: ALL, label: "All comm states" },
-                { value: "online", label: "Online" },
-                { value: "degraded", label: "Degraded" },
+                { value: ALL, label: "All statuses" },
+                { value: "live_inbound", label: "Live (inbound)" },
+                { value: "online_recent_registry", label: "Online (recent registry)" },
                 { value: "offline", label: "Offline" },
-                { value: "dormant", label: "Dormant" },
-              ]}
-            />
-            <FilterSelect
-              id="conn-filter-net"
-              label="Network type"
-              value={networkFilter}
-              onChange={(v) => {
-                setNetworkFilter(v)
-                resetPage()
-              }}
-              options={networkOptions}
-            />
-            <FilterSelect
-              id="conn-filter-gw"
-              label="Gateway / DCU"
-              value={gatewayFilter}
-              onChange={(v) => {
-                setGatewayFilter(v)
-                resetPage()
-              }}
-              options={gatewayOptions}
-            />
-            <FilterSelect
-              id="conn-filter-health"
-              label="Health state"
-              value={healthFilter}
-              onChange={(v) => {
-                setHealthFilter(v)
-                resetPage()
-              }}
-              options={[
-                { value: ALL, label: "All health states" },
-                { value: "healthy", label: "Healthy" },
-                { value: "degraded", label: "Degraded" },
-                { value: "failed", label: "Failed" },
-                { value: "unknown", label: "Unknown" },
+                { value: "never_seen_registry", label: "Never seen" },
+                { value: "unknown_live", label: "Unknown (listener)" },
               ]}
             />
           </div>
@@ -298,12 +259,8 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
       </FilterBar>
 
       <SectionCard
-        title="Communication endpoints"
-        description={
-          staticMode
-            ? "Static catalog — filters and pagination run client-side."
-            : "Served from GET /api/connectivity. Filters and pagination run client-side on the fetched row set."
-        }
+        title="Meters — live connectivity"
+        description={`Registry + TCP listener. Recent registry window: ${PHASE1_REGISTRY_RECENT_MS / 60000} min UTC.`}
       >
         <TableShell>
           <TableToolbar
@@ -315,7 +272,7 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
                 />
                 <Input
                   className="h-8 pl-8"
-                  placeholder="Search meter, serial, route, gateway, endpoint…"
+                  placeholder="Search serial, ID, feeder, route…"
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value)
@@ -326,26 +283,21 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
               </div>
             }
             right={
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={staticMode || loading}
-                  onClick={reload}
-                >
-                  Refresh
-                </Button>
-                <Button type="button" variant="secondary" size="sm" disabled>
-                  Columns
-                </Button>
-              </>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={loading}
+                onClick={reload}
+              >
+                Refresh
+              </Button>
             }
           />
 
           {loading ? (
             <div className="relative min-w-0">
-              <div className="min-w-[1180px]">
+              <div className="min-w-[960px]">
                 <Table>
                   <TableHeader>
                     <ConnectivityTableHeaderRow />
@@ -356,63 +308,73 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
             </div>
           ) : fetchFailed ? null : emptyCatalog || noResults ? null : (
             <div className="relative min-w-0">
-              <div className="min-w-[1180px]">
+              <div className="min-w-[960px]">
                 <Table>
                   <TableHeader>
                     <ConnectivityTableHeaderRow />
                   </TableHeader>
                   <TableBody>
                     {pageRows.map((row) => {
-                      const comm = formatCommStatus(row.commState)
-                      const health = formatHealthState(row.healthState)
+                      const st = liveStatusBadge(row.liveStatus)
+                      const reg = formatCommStatus(row.registryCommStatus)
+                      const bindLabel =
+                        row.bindState === "bound"
+                          ? "Bound"
+                          : row.bindState === "pending_identity"
+                            ? "Pending bind"
+                            : "—"
+                      const remoteOrBind =
+                        row.remoteEndpoint ??
+                        (row.listenerBindEndpoint
+                          ? `Listener ${row.listenerBindEndpoint}`
+                          : "—")
                       return (
-                        <TableRow key={row.id}>
-                          <TableCell className="align-top">
-                            <button
-                              type="button"
-                              onClick={() => openDetails(row)}
-                              className={operationalMonoIdTriggerClass}
-                            >
-                              {row.id}
-                            </button>
-                          </TableCell>
-                          <TableCell className="align-top tabular-nums text-muted-foreground">
+                        <TableRow key={row.meterId}>
+                          <TableCell className="align-top font-mono text-sm tabular-nums">
                             {row.serialNumber}
                           </TableCell>
                           <TableCell className="align-top">
-                            <div className="max-w-[200px] truncate text-foreground">
-                              {row.networkType}
-                            </div>
-                            <div className="font-mono text-xs text-muted-foreground">
-                              {row.routeId}
-                            </div>
+                            <Link
+                              href={`/meters?q=${encodeURIComponent(row.serialNumber)}`}
+                              className={operationalMonoIdTriggerClass}
+                            >
+                              {row.internalId}
+                            </Link>
                           </TableCell>
-                          <TableCell className="align-top">
-                            <StatusBadge variant={comm.variant}>
-                              {comm.label}
-                            </StatusBadge>
+                          <TableCell className="align-top text-sm">
+                            <div className="max-w-[140px] truncate">{row.model || "—"}</div>
+                            {row.meterProfileId ? (
+                              <div className="font-mono text-xs text-muted-foreground">
+                                {row.meterProfileId}
+                              </div>
+                            ) : null}
                           </TableCell>
-                          <TableCell className="align-top">
-                            <StatusBadge variant={health.variant}>
-                              {health.label}
-                            </StatusBadge>
+                          <TableCell className="align-top text-sm">
+                            <div className="max-w-[160px] truncate">{row.feeder || "—"}</div>
+                            <div className="text-xs text-muted-foreground">{row.zone || "—"}</div>
                           </TableCell>
-                          <TableCell className="align-top tabular-nums text-muted-foreground">
-                            {row.lastCommunicationAt}
+                          <TableCell className="align-top" title={row.statusReason}>
+                            <StatusBadge variant={st.variant}>{st.label}</StatusBadge>
                           </TableCell>
-                          <TableCell className="align-top tabular-nums text-muted-foreground">
-                            {row.lastSuccessfulReadAt}
+                          <TableCell className="align-top text-sm tabular-nums text-muted-foreground">
+                            {row.lastSeenDisplay}
                           </TableCell>
-                          <TableCell className="align-top text-sm text-foreground">
-                            {row.signalQuality}
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <div className="max-w-[220px] truncate font-mono text-xs text-foreground">
-                              {row.endpoint}
-                            </div>
+                          <TableCell className="align-top text-sm">
+                            <div className="max-w-[180px] truncate">{row.currentRoute}</div>
                             <div className="text-xs text-muted-foreground">
-                              {row.gatewayId}
+                              {row.lastSeenSource === "inbound_session"
+                                ? "Session time"
+                                : row.lastSeenSource === "registry"
+                                  ? "Registry time"
+                                  : "—"}
                             </div>
+                          </TableCell>
+                          <TableCell className="align-top text-sm">
+                            <div className="font-mono text-xs">{remoteOrBind}</div>
+                            <div className="text-xs text-muted-foreground">{bindLabel}</div>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <StatusBadge variant={reg.variant}>{reg.label}</StatusBadge>
                           </TableCell>
                           <TableCell className="align-top text-right">
                             <DropdownMenu>
@@ -428,21 +390,25 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
                                 </DropdownMenuLabel>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
-                                  onClick={() => openDetails(row)}
+                                  onClick={() =>
+                                    router.push(
+                                      `/meters?q=${encodeURIComponent(row.serialNumber)}`
+                                    )
+                                  }
                                 >
-                                  View details
+                                  Open meter
                                 </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  View route
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    router.push(
+                                      `/readings?meter=${encodeURIComponent(row.serialNumber)}`
+                                    )
+                                  }
+                                >
+                                  Open readings
                                 </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  View reads
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  Open commands
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  View diagnostics
+                                <DropdownMenuItem onClick={() => router.push("/scanner")}>
+                                  Open scanner
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -458,15 +424,10 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
 
           {!loading && fetchFailed ? (
             <TableEmpty
-              title="Unable to load catalog"
+              title="Unable to load connectivity"
               description={error ?? "Request failed."}
               action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={reload}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={reload}>
                   Retry
                 </Button>
               }
@@ -475,26 +436,17 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
 
           {!loading && !fetchFailed && emptyCatalog ? (
             <TableEmpty
-              title="No connectivity endpoints"
-              description={
-                staticMode
-                  ? "Use an empty rows prop to verify this layout."
-                  : "The catalog source returned no rows. If this is unexpected, verify data/connectivity.json or the upstream feed."
-              }
+              title="No meters in registry"
+              description="Add meters under Meters before connectivity can be shown."
             />
           ) : null}
 
           {!loading && !fetchFailed && noResults ? (
             <TableEmpty
-              title="No endpoints match filters"
-              description="Clear filters or widen communication, network, and health criteria."
+              title="No rows match"
+              description="Clear filters or widen search."
               action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={clearFilters}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={clearFilters}>
                   Clear filters
                 </Button>
               }
@@ -515,12 +467,6 @@ export function ConnectivityList({ rows: rowsProp }: ConnectivityListProps) {
           />
         </TableShell>
       </SectionCard>
-
-      <ConnectivityDetailsSheet
-        row={selected}
-        open={sheetOpen}
-        onOpenChange={onSheetOpenChange}
-      />
     </div>
   )
 }
