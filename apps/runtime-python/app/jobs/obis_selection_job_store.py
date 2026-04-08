@@ -446,3 +446,78 @@ def peek_request(job_id: str) -> Optional[ReadObisSelectionRequest]:
     with _lock:
         j = _store.get(job_id)
         return j.request if j else None
+
+
+def _parse_iso_ts_seconds(s: str) -> float:
+    try:
+        t = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return t.timestamp()
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+_ACTIVE_STATUSES = frozenset(
+    {
+        ObisSelectionJobStatus.queued,
+        ObisSelectionJobStatus.running,
+        ObisSelectionJobStatus.waiting_for_restage,
+    }
+)
+_TERMINAL_STATUSES = frozenset(
+    {
+        ObisSelectionJobStatus.completed,
+        ObisSelectionJobStatus.failed,
+        ObisSelectionJobStatus.cancelled,
+    }
+)
+
+
+def lookup_jobs_for_meter_reattach(
+    meter_id: str,
+    terminal_max_age_seconds: float = 604800.0,
+) -> tuple[Optional[ObisSelectionJobView], Optional[ObisSelectionJobView]]:
+    """
+    Find (active_job, recent_terminal_job) for operator UI reattachment after navigation/refresh.
+
+    Active: non-terminal job for this meterId with greatest updatedAt.
+    Recent terminal: latest completed/failed/cancelled for this meter within max_age (only if needed for results hydration).
+    """
+    mid = (meter_id or "").strip()
+    if not mid:
+        return None, None
+
+    now_ts = datetime.now(timezone.utc).timestamp()
+    best_active: Optional[tuple[float, str]] = None
+    best_terminal: Optional[tuple[float, str]] = None
+
+    with _lock:
+        for jid, j in _store.items():
+            if j.request.meterId.strip() != mid:
+                continue
+            ts = _parse_iso_ts_seconds(j.updated_at)
+            if j.status in _ACTIVE_STATUSES:
+                if best_active is None or ts >= best_active[0]:
+                    best_active = (ts, jid)
+            elif j.status in _TERMINAL_STATUSES:
+                if now_ts - ts <= terminal_max_age_seconds:
+                    if best_terminal is None or ts >= best_terminal[0]:
+                        best_terminal = (ts, jid)
+
+    active_view: Optional[ObisSelectionJobView] = None
+    terminal_view: Optional[ObisSelectionJobView] = None
+
+    if best_active:
+        j = _store.get(best_active[1])
+        if j:
+            _maybe_reconcile_stale_job_locked(j)
+            active_view = _to_view_locked(j)
+
+    if best_terminal:
+        jt = _store.get(best_terminal[1])
+        if jt:
+            terminal_view = _to_view_locked(jt)
+
+    if active_view is not None:
+        return active_view, None
+
+    return None, terminal_view

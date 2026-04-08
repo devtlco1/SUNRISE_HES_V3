@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -139,6 +139,27 @@ def post_tcp_listener_read_obis_selection_start(body: ReadObisSelectionRequest) 
         ctl.end_inbound_operator_action()
         raise
     return JSONResponse(content={"jobId": jid})
+
+
+@router.get(
+    "/read-obis-selection/job/lookup",
+    dependencies=[Depends(verify_service_token)],
+)
+def get_tcp_listener_read_obis_selection_job_lookup(
+    meterId: str = Query(..., min_length=1, max_length=256),
+) -> JSONResponse:
+    """
+    Operator reattachment: active in-flight job for this meter, else most recent terminal job
+    (completed/failed/cancelled) within retention window — for hydrating UI after navigation/refresh.
+    """
+    active, terminal = obis_job_store.lookup_jobs_for_meter_reattach(meterId)
+    return JSONResponse(
+        content={
+            "meterId": meterId.strip(),
+            "activeJob": active.model_dump(mode="json") if active else None,
+            "recentTerminalJob": terminal.model_dump(mode="json") if terminal else None,
+        }
+    )
 
 
 @router.get(

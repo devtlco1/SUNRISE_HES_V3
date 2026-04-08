@@ -12,7 +12,8 @@ import type {
 } from "@/types/runtime"
 
 export const READINGS_WORKSPACE_STORAGE_KEY = "sunrise-readings-workspace-v1"
-export const READINGS_WORKSPACE_VERSION = 1
+/** v2: snapshots no longer carry in-flight row phases (pending/running) — those come from live job polling only. */
+export const READINGS_WORKSPACE_VERSION = 2
 
 export type ReadingsTransportMode = "inbound" | "direct"
 
@@ -67,9 +68,37 @@ function stripLastEnvFromPerMeter(
   return next
 }
 
+/** Strip volatile execution phases from persisted row state (authoritative state is server job + poll). */
+export function sanitizeVolatileObisRowStateForSnapshot(
+  rowState: Record<string, ObisRowReadState>
+): Record<string, ObisRowReadState> {
+  const next: Record<string, ObisRowReadState> = {}
+  for (const [obis, cell] of Object.entries(rowState)) {
+    if (!cell) continue
+    if (cell.status === "pending" || cell.status === "running") {
+      next[obis] = {
+        result: "",
+        status: "not_attempted",
+        error: "workspace_snapshot",
+        lastReadAt: cell.lastReadAt,
+      }
+      continue
+    }
+    next[obis] = cell
+  }
+  return next
+}
+
 function trimForStorage(
   data: Omit<PersistedReadingsWorkspace, "v">
 ): PersistedReadingsWorkspace {
+  const perMeterSanitized: PersistedReadingsWorkspace["perMeter"] = {}
+  for (const [k, v] of Object.entries(data.perMeter)) {
+    perMeterSanitized[k] = {
+      ...v,
+      rowState: sanitizeVolatileObisRowStateForSnapshot(v.rowState),
+    }
+  }
   return {
     v: READINGS_WORKSPACE_VERSION,
     meterId: data.meterId,
@@ -77,7 +106,7 @@ function trimForStorage(
     pack: data.pack,
     transport: data.transport,
     selectedObis: data.selectedObis.slice(0, 5000),
-    perMeter: data.perMeter,
+    perMeter: perMeterSanitized,
     diagnosticsOpen: data.diagnosticsOpen,
     expandedLogIds: data.expandedLogIds.slice(0, 500),
     actionLog: data.actionLog.slice(0, 100),
@@ -90,7 +119,7 @@ export function loadReadingsWorkspace(): PersistedReadingsWorkspace | null {
     const raw = sessionStorage.getItem(READINGS_WORKSPACE_STORAGE_KEY)
     if (!raw) return null
     const p = JSON.parse(raw) as Partial<PersistedReadingsWorkspace>
-    if (p.v !== READINGS_WORKSPACE_VERSION) return null
+    if (p.v !== READINGS_WORKSPACE_VERSION && p.v !== 1) return null
     if (typeof p.meterId !== "string") return null
     if (!isFamilyTab(p.familyTab)) return null
     if (typeof p.pack !== "string" || p.pack.length > 200) return null
@@ -109,8 +138,9 @@ export function loadReadingsWorkspace(): PersistedReadingsWorkspace | null {
       const k = serial.trim()
       if (!k || typeof rawMeter !== "object" || !rawMeter) continue
       const m = rawMeter as Record<string, unknown>
-      const rowState =
+      const rawRowState =
         m.rowState && typeof m.rowState === "object" ? (m.rowState as Record<string, ObisRowReadState>) : {}
+      const rowState = sanitizeVolatileObisRowStateForSnapshot(rawRowState)
       perMeter[k] = {
         relayState:
           m.relayState === "on" || m.relayState === "off" || m.relayState === "unknown"
@@ -157,7 +187,7 @@ export function loadReadingsWorkspace(): PersistedReadingsWorkspace | null {
 
     return {
       v: READINGS_WORKSPACE_VERSION,
-      meterId: p.meterId,
+      meterId: p.meterId.trim(),
       familyTab: p.familyTab,
       pack: p.pack,
       transport: p.transport,

@@ -294,6 +294,42 @@ export async function postTcpListenerReadObisSelectionStartToPythonSidecar(
 /**
  * Server-only: GET /v1/runtime/tcp-listener/read-obis-selection/job/{jobId}
  */
+/**
+ * Server-only: GET /v1/runtime/tcp-listener/read-obis-selection/job/lookup?meterId=
+ */
+export async function getTcpListenerObisSelectionJobLookupFromPythonSidecar(
+  meterId: string
+): Promise<unknown> {
+  const base = getPythonSidecarBaseUrl()
+  if (!base) {
+    throw new PythonSidecarNotConfiguredError()
+  }
+
+  const headers: Record<string, string> = {}
+  const token = getPythonSidecarBearerToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const q = new URLSearchParams({ meterId: meterId.trim() })
+  const url = `${base}/v1/runtime/tcp-listener/read-obis-selection/job/lookup?${q.toString()}`
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new PythonSidecarHttpError(res.status, text, url)
+  }
+
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw new Error("Python sidecar returned non-JSON job lookup body")
+  }
+}
+
 export async function getTcpListenerReadObisSelectionJobFromPythonSidecar(
   jobId: string
 ): Promise<unknown> {

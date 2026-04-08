@@ -47,6 +47,22 @@ function isObisSelectionJobPollView(v: unknown): v is ObisSelectionJobPollView {
   return typeof o.jobId === "string" && typeof o.status === "string" && okStatus && Array.isArray(o.rows)
 }
 
+export type ReadingsObisJobLookupPayload = {
+  meterId: string
+  activeJob: ObisSelectionJobPollView | null
+  recentTerminalJob: ObisSelectionJobPollView | null
+}
+
+function isReadingsObisJobLookupPayload(v: unknown): v is ReadingsObisJobLookupPayload {
+  if (!v || typeof v !== "object") return false
+  const o = v as Record<string, unknown>
+  if (typeof o.meterId !== "string") return false
+  if (!("activeJob" in o) || !("recentTerminalJob" in o)) return false
+  if (o.activeJob !== null && !isObisSelectionJobPollView(o.activeJob)) return false
+  if (o.recentTerminalJob !== null && !isObisSelectionJobPollView(o.recentTerminalJob)) return false
+  return true
+}
+
 function formatReadingsProxyFailure(parsed: unknown, status: number): string {
   if (parsed && typeof parsed === "object") {
     const p = parsed as Record<string, unknown>
@@ -356,6 +372,38 @@ export async function postTcpListenerObisJobSkipRow(
       return { ok: false, error: "Skip rejected or invalid response." }
     }
     return { ok: true, data: { ok: true } }
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw e
+    return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }
+  }
+}
+
+export async function getReadingsObisJobLookup(
+  meterId: string,
+  signal?: AbortSignal
+): Promise<ReadingsApiResult<ReadingsObisJobLookupPayload>> {
+  const mid = meterId.trim()
+  if (!mid) {
+    return { ok: false, error: "Meter id required for job lookup." }
+  }
+  try {
+    const q = new URLSearchParams({ meterId: mid })
+    const res = await fetch(
+      `/api/readings/tcp-listener/read-obis-selection/job/lookup?${q.toString()}`,
+      { method: "GET", cache: "no-store", signal }
+    )
+    const parsed = await parseJson(res)
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatReadingsProxyFailure(parsed, res.status),
+        status: res.status,
+      }
+    }
+    if (!isReadingsObisJobLookupPayload(parsed)) {
+      return { ok: false, error: "Invalid job lookup response from readings API." }
+    }
+    return { ok: true, data: parsed }
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") throw e
     return { ok: false, error: READINGS_FETCH_NETWORK_ERROR }

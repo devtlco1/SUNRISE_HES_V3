@@ -40,6 +40,7 @@ import {
 } from "@/lib/readings/csv-export"
 import {
   fetchTcpListenerStatus,
+  getReadingsObisJobLookup,
   getTcpListenerObisSelectionJobPoll,
   postReadObisSelectionDirect,
   postStartTcpListenerObisSelectionJob,
@@ -52,6 +53,10 @@ import {
   tcpListenerStrictRouteAvailableForSerial,
   type TcpListenerStatus,
 } from "@/lib/readings/api"
+import {
+  obisInboundJobProgressLine,
+  obisInboundJobTerminalPatch,
+} from "@/lib/readings/inbound-obis-job-ui"
 import {
   loadReadingsWorkspace,
   saveReadingsWorkspace,
@@ -333,12 +338,25 @@ export function ReadingsWorkspaceClient() {
   )
 
   const inFlightTargetRef = useRef<string>("")
+  /** Invalidates stale async job-lookup results (read start / meter change). */
+  const reattachGenRef = useRef(0)
+  /** Skip re-applying the same server terminal job on SPA navigations (avoids clobbering newer local/direct results). */
+  const terminalHydratedKeyByMeterRef = useRef<Map<string, string>>(new Map())
 
   const meterKey = meterId.trim()
   const currentMeterState = useMemo(
     () => perMeter[meterKey] ?? emptyPerMeterState(),
     [perMeter, meterKey]
   )
+
+  useEffect(() => {
+    reattachGenRef.current += 1
+    terminalHydratedKeyByMeterRef.current.clear()
+    setInboundObisJobId(null)
+    setObisJobRowPhases({})
+    setObisJobCancelling(false)
+    setBusy(false)
+  }, [meterKey])
 
   const patchMeter = useCallback((serial: string, patch: Partial<PerMeterReadingsState>) => {
     const k = serial.trim()
@@ -593,6 +611,200 @@ export function ReadingsWorkspaceClient() {
     return () => clearInterval(id)
   }, [loadStatus])
 
+  /** Reattach to Python-backed OBIS job after refresh/navigation; hydrate terminal results without fake pending. */
+  useEffect(() => {
+    if (!workspaceHydrated) return
+    if (pathname !== "/readings") return
+    if (transport !== "inbound") return
+    const mid = meterKey.trim()
+    if (!mid) return
+
+    let cancelled = false
+    const g0 = reattachGenRef.current
+
+    void (async () => {
+      const r = await getReadingsObisJobLookup(mid)
+      if (cancelled || g0 !== reattachGenRef.current) return
+      if (!r.ok) return
+
+      const { activeJob, recentTerminalJob } = r.data
+      if (activeJob && activeJob.meterId.trim() === mid) {
+        setInboundObisJobId(activeJob.jobId)
+        setObisJobRowPhases(
+          Object.fromEntries(activeJob.rows.map((row) => [row.obis, row.phase]))
+        )
+        flushSync(() => {
+          patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, activeJob))
+        })
+        patchMeter(mid, {
+          obisJobProgress: obisInboundJobProgressLine(activeJob),
+          actionError: null,
+        })
+        setBusy(true)
+        return
+      }
+
+      if (recentTerminalJob && recentTerminalJob.meterId.trim() === mid) {
+        const snap = recentTerminalJob
+        const tk = `${snap.jobId}:${snap.updatedAt}`
+        if (terminalHydratedKeyByMeterRef.current.get(mid) === tk) return
+        terminalHydratedKeyByMeterRef.current.set(mid, tk)
+        setObisJobRowPhases(
+          Object.fromEntries(snap.rows.map((row) => [row.obis, row.phase]))
+        )
+        flushSync(() => {
+          patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, snap))
+        })
+        const { finalActionErr, lastEnv } = obisInboundJobTerminalPatch(snap)
+        patchMeter(mid, {
+          ...(lastEnv ? { lastEnv } : {}),
+          actionError: finalActionErr,
+          obisJobProgress: null,
+        })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceHydrated, pathname, transport, meterKey, patchMeter, patchMeterRowState])
+
+  /** Inbound job polling survives page navigation; execution stays in Python runtime. */
+  useEffect(() => {
+    if (!workspaceHydrated) return
+    if (transport !== "inbound" || !inboundObisJobId) return
+    const mid = meterKey.trim()
+    if (!mid) return
+
+    let cancelled = false
+    const ac = new AbortController()
+    const jobId = inboundObisJobId
+    const deadline = Date.now() + OBIS_JOB_MAX_MS
+
+    const run = async () => {
+      let pollAborted = false
+      let last: ObisSelectionJobPollView | null = null
+      try {
+        while (!cancelled && Date.now() < deadline) {
+          const jr = await getTcpListenerObisSelectionJobPoll(jobId, ac.signal)
+          if (cancelled) return
+          if (!jr.ok) {
+            pollAborted = true
+            patchMeter(mid, { actionError: jr.error, obisJobProgress: null })
+            setInboundObisJobId(null)
+            setObisJobRowPhases({})
+            setBusy(false)
+            await loadStatus()
+            pushActionLog({
+              level: "error",
+              serial: mid,
+              tag: "read_obis",
+              summary: "Read poll failed",
+              detail: jr.error,
+            })
+            return
+          }
+          const snap = jr.data
+          if (snap.meterId.trim() !== mid) {
+            patchMeter(mid, {
+              actionError: "Job belongs to a different meter — stopped polling.",
+              obisJobProgress: null,
+            })
+            setInboundObisJobId(null)
+            setObisJobRowPhases({})
+            setBusy(false)
+            return
+          }
+          last = snap
+          setObisJobRowPhases(
+            Object.fromEntries(snap.rows.map((row) => [row.obis, row.phase]))
+          )
+          flushSync(() => {
+            patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, snap))
+          })
+          patchMeter(mid, { obisJobProgress: obisInboundJobProgressLine(snap) })
+
+          if (
+            snap.status === "completed" ||
+            snap.status === "failed" ||
+            snap.status === "cancelled"
+          ) {
+            const { readOk, finalActionErr, lastEnv } = obisInboundJobTerminalPatch(snap)
+            if (lastEnv) patchMeter(mid, { lastEnv })
+            patchMeter(mid, { actionError: finalActionErr, obisJobProgress: null })
+            setInboundObisJobId(null)
+            setObisJobRowPhases({})
+            setObisJobCancelling(false)
+            setBusy(false)
+            await loadStatus()
+            const n = snap.totalRows ?? snap.rows.length
+            if (readOk && !finalActionErr) {
+              pushActionLog({
+                level: "info",
+                serial: mid,
+                tag: "read_obis_job",
+                summary: `Read OK (${n} row(s))`,
+              })
+            } else if (finalActionErr) {
+              pushActionLog({
+                level: "error",
+                serial: mid,
+                tag: "read_obis",
+                summary: "Read finished with error",
+                detail: finalActionErr,
+              })
+            }
+            terminalHydratedKeyByMeterRef.current.set(
+              mid,
+              `${snap.jobId}:${snap.updatedAt}`
+            )
+            return
+          }
+          await new Promise((r) => setTimeout(r, OBIS_JOB_POLL_MS))
+        }
+        if (
+          !cancelled &&
+          !pollAborted &&
+          last &&
+          (last.status === "running" || last.status === "waiting_for_restage") &&
+          Date.now() >= deadline
+        ) {
+          patchMeter(mid, {
+            actionError:
+              "Timed out waiting for OBIS job (still running). Check listener / modem.",
+            obisJobProgress: null,
+          })
+          setInboundObisJobId(null)
+          setObisJobRowPhases({})
+          setBusy(false)
+          await loadStatus()
+        }
+      } catch (e) {
+        if (cancelled || (e instanceof Error && e.name === "AbortError")) return
+        const msg = e instanceof Error ? e.message : String(e)
+        patchMeter(mid, { actionError: msg, obisJobProgress: null })
+        setInboundObisJobId(null)
+        setObisJobRowPhases({})
+        setBusy(false)
+      }
+    }
+
+    void run()
+    return () => {
+      cancelled = true
+      ac.abort()
+    }
+  }, [
+    workspaceHydrated,
+    transport,
+    inboundObisJobId,
+    meterKey,
+    patchMeter,
+    patchMeterRowState,
+    pushActionLog,
+    loadStatus,
+  ])
+
   const stagedPresent = listenerStatus ? boolish(listenerStatus.stagedPresent) : false
   const triggerInProgress = listenerStatus
     ? boolish(listenerStatus.sessionTriggerInProgress)
@@ -666,122 +878,37 @@ export function ReadingsWorkspaceClient() {
   }
 
   /**
-   * One meter read (inbound job or direct). Does not toggle page `busy` — caller owns that.
-   * Updates per-meter state, listener job UI, and action log for this serial only.
+   * One meter read: inbound starts a durable Python job (polling in useEffect); direct completes here.
    */
   async function performObisRead(
     mid: string,
     items: ObisSelectionItemInput[]
-  ): Promise<void> {
+  ): Promise<{ jobStarted: boolean }> {
     patchMeter(mid, { actionError: null })
     patchMeter(mid, { obisJobProgress: null })
     setInboundObisJobId(null)
     setObisJobRowPhases({})
+    const body = { meterId: mid, selectedItems: items }
+
+    if (transport === "inbound") {
+      const start = await postStartTcpListenerObisSelectionJob(body)
+      if (!start.ok) {
+        patchMeter(mid, { actionError: start.error })
+        return { jobStarted: false }
+      }
+      setInboundObisJobId(start.data.jobId)
+      return { jobStarted: true }
+    }
+
     let finalActionErr: string | null = null
     let readOk = false
-    const body = { meterId: mid, selectedItems: items }
     try {
-      if (transport === "inbound") {
-        const start = await postStartTcpListenerObisSelectionJob(body)
-        if (!start.ok) {
-          finalActionErr = start.error
-          patchMeter(mid, { actionError: start.error })
-          return
-        }
-        const jobId = start.data.jobId
-        setInboundObisJobId(jobId)
-        const deadline = Date.now() + OBIS_JOB_MAX_MS
-        let last: ObisSelectionJobPollView | null = null
-        let pollAborted = false
-        while (Date.now() < deadline) {
-          const jr = await getTcpListenerObisSelectionJobPoll(jobId)
-          if (!jr.ok) {
-            finalActionErr = jr.error
-            patchMeter(mid, { actionError: jr.error })
-            pollAborted = true
-            break
-          }
-          const snap = jr.data
-          last = snap
-          setObisJobRowPhases(
-            Object.fromEntries(snap.rows.map((row) => [row.obis, row.phase]))
-          )
-          flushSync(() => {
-            patchMeterRowState(mid, (p) => mergeObisJobPollIntoRowState(p, snap))
-          })
-          const wDone = snap.completedWire
-          const wTot = snap.wireTotal
-          const cur = snap.currentObis
-          let line = `${wDone} / ${wTot} wire rows`
-          if (snap.status === "waiting_for_restage") {
-            line = `Waiting for restage — ${wDone} / ${wTot} wire rows`
-            const rm = snap.restageMessage
-            if (typeof rm === "string" && rm.trim()) line += `. ${rm.trim()}`
-          } else if (cur) {
-            line += ` — running: ${cur}`
-          }
-          if (
-            snap.stale &&
-            (snap.status === "running" || snap.status === "waiting_for_restage")
-          ) {
-            line += " (stale: job may be stuck)"
-          }
-          patchMeter(mid, { obisJobProgress: line })
-          if (
-            snap.status === "completed" ||
-            snap.status === "failed" ||
-            snap.status === "cancelled"
-          ) {
-            if (snap.envelope) {
-              patchMeter(mid, {
-                lastEnv: snap.envelope as RuntimeResponseEnvelope<ReadObisSelectionPayload>,
-              })
-            }
-            const okWire = snap.rows.filter((r) => r.row?.status === "ok").length
-            if (snap.status === "cancelled") {
-              finalActionErr =
-                okWire > 0
-                  ? `Stopped after ${okWire} ok row(s).`
-                  : snap.envelope?.error?.message ??
-                    snap.envelope?.message ??
-                    "Stopped by operator."
-              patchMeter(mid, { actionError: finalActionErr })
-            } else if (snap.fatalError) {
-              finalActionErr =
-                okWire > 0
-                  ? `Session ended after ${okWire} ok row(s). ${snap.fatalError}`
-                  : snap.fatalError
-              patchMeter(mid, { actionError: finalActionErr })
-            } else if (snap.envelope && !snap.envelope.ok) {
-              const msg =
-                snap.envelope.error?.message ??
-                snap.envelope.message ??
-                "readObisSelection failed"
-              finalActionErr = okWire > 0 ? `Session ended after ${okWire} ok row(s). ${msg}` : msg
-              patchMeter(mid, { actionError: finalActionErr })
-            } else {
-              finalActionErr = null
-              patchMeter(mid, { actionError: null })
-              readOk = true
-            }
-            break
-          }
-          await new Promise((r) => setTimeout(r, OBIS_JOB_POLL_MS))
-        }
-        if (!pollAborted && last?.status === "running" && Date.now() >= deadline) {
-          finalActionErr =
-            "Timed out waiting for OBIS job (still running). Check listener / modem."
-          patchMeter(mid, { actionError: finalActionErr })
-        }
-        return
-      }
-
       const r = await postReadObisSelectionDirect(body)
 
       if (!r.ok) {
         finalActionErr = r.error
         patchMeter(mid, { actionError: r.error })
-        return
+        return { jobStarted: false }
       }
 
       const env = r.data
@@ -803,17 +930,12 @@ export function ReadingsWorkspaceClient() {
       }
     } finally {
       patchMeter(mid, { obisJobProgress: null })
-      setInboundObisJobId(null)
-      setObisJobRowPhases({})
       setObisJobCancelling(false)
-      if (transport === "inbound") {
-        await loadStatus()
-      }
       if (readOk && !finalActionErr) {
         pushActionLog({
           level: "info",
           serial: mid,
-          tag: transport === "inbound" ? "read_obis_job" : "read_obis_direct",
+          tag: "read_obis_direct",
           summary: `Read OK (${items.length} item(s))`,
         })
       } else if (finalActionErr) {
@@ -826,6 +948,7 @@ export function ReadingsWorkspaceClient() {
         })
       }
     }
+    return { jobStarted: false }
   }
 
   async function executeReadObisSelection(items: ObisSelectionItemInput[]): Promise<void> {
@@ -836,11 +959,14 @@ export function ReadingsWorkspaceClient() {
       inFlightTargetRef.current = ""
       return
     }
+    reattachGenRef.current += 1
     setBusy(true)
     try {
-      await performObisRead(mid, items)
+      const { jobStarted } = await performObisRead(mid, items)
+      if (transport !== "inbound" || !jobStarted) {
+        setBusy(false)
+      }
     } finally {
-      setBusy(false)
       inFlightTargetRef.current = ""
     }
   }
