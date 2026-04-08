@@ -13,6 +13,7 @@ import {
 import { readObisCatalog } from "@/lib/obis/catalog-store"
 import { readMetersJsonRaw } from "@/lib/meters/meters-file"
 import { normalizeMeterRows } from "@/lib/meters/normalize"
+import { computeNextRunAt } from "@/lib/commands/schedule-next-run"
 import type {
   CommandActionGroup,
   OperatorActionType,
@@ -68,14 +69,20 @@ async function recordScheduleRunFinished(
     const s = schedules[idx]!
     const next = [...schedules]
     const onceDone = s.scheduleType === "once"
-    next[idx] = {
+    const merged = {
       ...s,
       lastRunAt: now,
       lastRunId: runId,
       lastOutcomeSummary: `${outcome}: ${summary}`.slice(0, 500),
       updatedAt: now,
       enabled: onceDone ? false : s.enabled,
-      nextRunAt: onceDone ? null : s.nextRunAt,
+    }
+    const nextAtIso = onceDone
+      ? null
+      : computeNextRunAt(merged, new Date()).toISOString()
+    next[idx] = {
+      ...merged,
+      nextRunAt: nextAtIso,
     }
     return { next, result: undefined }
   })

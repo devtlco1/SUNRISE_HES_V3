@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 
+import { CommandRunStatusBadge } from "@/components/commands/command-run-status-badge"
 import { SectionCard } from "@/components/shared/section-card"
 import { Button } from "@/components/ui/button"
 import {
@@ -12,7 +13,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
+import { formatCommandBaghdadDateTime } from "@/lib/format/command-baghdad-datetime"
+import { isCommandScheduleFarNextRun } from "@/lib/commands/schedule-next-run"
 import type {
   CommandActionGroup,
   CommandGroup,
@@ -163,10 +165,26 @@ export function RunCommandTabClient() {
           obisGroup.objectCodes.length > 0)
     )
 
+  const scheduleIdsWithActiveRun = useMemo(() => {
+    const ids = new Set<string>()
+    for (const r of operatorRows) {
+      if (r.source !== "operator" || !r.scheduleId) continue
+      if (r.status === "queued" || r.status === "running") {
+        ids.add(r.scheduleId)
+      }
+    }
+    return ids
+  }, [operatorRows])
+
   const upcomingScheduleRows = useMemo(() => {
-    const now = Date.now()
     return schedules
-      .filter((s) => s.enabled && s.nextRunAt)
+      .filter(
+        (s) =>
+          s.enabled &&
+          s.nextRunAt &&
+          !isCommandScheduleFarNextRun(s.nextRunAt) &&
+          !scheduleIdsWithActiveRun.has(s.id)
+      )
       .map((s) => {
         const nextTs = Date.parse(s.nextRunAt!)
         const mg = groups.find((g) => g.id === s.meterGroupId)
@@ -181,7 +199,7 @@ export function RunCommandTabClient() {
       })
       .filter((x) => Number.isFinite(x.nextTs))
       .sort((a, b) => a.nextTs - b.nextTs)
-  }, [schedules, groups, obisGroups])
+  }, [schedules, groups, obisGroups, scheduleIdsWithActiveRun])
 
   const maxPage = Math.max(1, Math.ceil(operatorTotal / RUN_PAGE_SIZE))
   const safePage = Math.min(runPage, maxPage)
@@ -325,7 +343,7 @@ export function RunCommandTabClient() {
 
       <SectionCard
         title="Upcoming scheduled fires"
-        description="Schedule definitions with a future nextRunAt — not run rows. A materialized run appears below after the server scheduler enqueues it."
+        description="Enabled schedules with a real next fire time (Baghdad). Rows hide while a queued or running auto-run exists for that schedule; completed runs appear in the table below."
       >
         <div className="border-t border-border px-5 py-4">
           {upcomingScheduleRows.length === 0 ? (
@@ -339,7 +357,7 @@ export function RunCommandTabClient() {
                   <TableHead>Schedule</TableHead>
                   <TableHead>Meter group</TableHead>
                   <TableHead>Action group</TableHead>
-                  <TableHead>Next fire (UTC)</TableHead>
+                  <TableHead>Next fire (Baghdad)</TableHead>
                   <TableHead>Queue state</TableHead>
                 </TableRow>
               </TableHeader>
@@ -363,7 +381,7 @@ export function RunCommandTabClient() {
                         ) : null}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {formatOperatorDateTime(row.schedule.nextRunAt)}
+                        {formatCommandBaghdadDateTime(row.schedule.nextRunAt)}
                       </TableCell>
                       <TableCell className="text-xs">
                         {isFuture ? (
@@ -415,7 +433,9 @@ export function RunCommandTabClient() {
                 {operatorRows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="text-xs font-medium">
-                      {r.operatorDisplayStatus ?? r.status}
+                      <CommandRunStatusBadge
+                        status={r.operatorDisplayStatus ?? r.status}
+                      />
                     </TableCell>
                     <TableCell className="text-xs">
                       {r.operatorTrigger ?? "—"}
@@ -430,13 +450,13 @@ export function RunCommandTabClient() {
                       {r.scheduleName ?? r.scheduleId ?? "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatOperatorDateTime(r.createdAt)}
+                      {formatCommandBaghdadDateTime(r.createdAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatOperatorDateTime(r.startedAt)}
+                      {formatCommandBaghdadDateTime(r.startedAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatOperatorDateTime(r.finishedAt)}
+                      {formatCommandBaghdadDateTime(r.finishedAt)}
                     </TableCell>
                     <TableCell
                       className="max-w-[130px] truncate text-xs"

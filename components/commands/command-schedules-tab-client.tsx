@@ -20,7 +20,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
+import { formatCommandBaghdadDateTime } from "@/lib/format/command-baghdad-datetime"
+import { isCommandScheduleFarNextRun } from "@/lib/commands/schedule-next-run"
 import type {
   CommandActionGroup,
   CommandGroup,
@@ -240,7 +241,7 @@ export function CommandSchedulesTabClient() {
                   <TableHead>Meter grp</TableHead>
                   <TableHead>Action grp</TableHead>
                   <TableHead>Act. type</TableHead>
-                  <TableHead>Next</TableHead>
+                  <TableHead>Next (Baghdad)</TableHead>
                   <TableHead className="w-24 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -282,7 +283,9 @@ export function CommandSchedulesTabClient() {
                         : "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatOperatorDateTime(s.nextRunAt)}
+                      {isCommandScheduleFarNextRun(s.nextRunAt)
+                        ? "—"
+                        : formatCommandBaghdadDateTime(s.nextRunAt)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
@@ -369,7 +372,7 @@ export function CommandSchedulesTabClient() {
             ) : null}
             <label className="space-y-1 text-sm">
               <span className="text-xs font-medium text-muted-foreground">
-                Run at (HH:mm, server local)
+                Run at (HH:mm, Baghdad)
               </span>
               <Input
                 placeholder="02:00"

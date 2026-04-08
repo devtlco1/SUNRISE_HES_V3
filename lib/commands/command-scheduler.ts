@@ -15,6 +15,7 @@ import { readCommandGroupsRaw } from "@/lib/commands/operator-file"
 import { normalizeCommandGroups } from "@/lib/commands/operator-normalize"
 import { resolveCommandExecutionContext } from "@/lib/commands/resolve-command-context"
 import {
+  COMMAND_SCHEDULE_FAR_MS,
   computeNextRunAt,
   isScheduleContextuallyAllowed,
   minuteMatchesRunAt,
@@ -162,7 +163,11 @@ async function appendScheduledRunAndBumpNext(
     const idx = rows.findIndex((s) => s.id === schedule.id)
     if (idx < 0) return { next: rows, result: undefined }
     const s = rows[idx]!
-    const nextAt = computeNextRunAt(s, new Date())
+    /** One-shot: do not compute a following calendar fire; completion handler clears nextRunAt. */
+    const nextAt =
+      s.scheduleType === "once"
+        ? new Date(COMMAND_SCHEDULE_FAR_MS)
+        : computeNextRunAt(s, new Date())
     const next = [...rows]
     next[idx] = {
       ...s,

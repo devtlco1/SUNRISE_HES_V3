@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 
+import { CommandRunStatusBadge } from "@/components/commands/command-run-status-badge"
 import { FilterBar } from "@/components/shared/filter-bar"
 import { SectionCard } from "@/components/shared/section-card"
 import {
@@ -12,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatOperatorDateTime } from "@/lib/format/operator-datetime"
+import { formatCommandBaghdadDateTime } from "@/lib/format/command-baghdad-datetime"
 import type { UnifiedCommandRunRow } from "@/types/command-operator"
 
 type ApiResponse = {
@@ -175,19 +176,21 @@ export function CommandsUnifiedRunsClient() {
                       {r.targetSummary}
                     </TableCell>
                     <TableCell className="text-xs font-medium">
-                      {r.operatorDisplayStatus ?? r.status}
+                      <CommandRunStatusBadge
+                        status={r.operatorDisplayStatus ?? r.status}
+                      />
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {r.meterOutcomeBrief ?? "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatOperatorDateTime(r.createdAt)}
+                      {formatCommandBaghdadDateTime(r.createdAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatOperatorDateTime(r.startedAt)}
+                      {formatCommandBaghdadDateTime(r.startedAt)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatOperatorDateTime(r.finishedAt)}
+                      {formatCommandBaghdadDateTime(r.finishedAt)}
                     </TableCell>
                     <TableCell
                       className="max-w-[160px] truncate text-xs"
