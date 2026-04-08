@@ -2,6 +2,7 @@ import {
   readCommandGroupsRaw,
   writeCommandGroupsArray,
 } from "@/lib/commands/operator-file"
+import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import {
   normalizeCommandGroup,
   normalizeCommandGroups,
@@ -28,6 +29,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const gate = await requireApiPermission("commands.groups.manage")
+  if (!gate.ok) return gate.response
   let body: unknown
   try {
     body = await req.json()

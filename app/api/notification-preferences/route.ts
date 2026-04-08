@@ -3,6 +3,7 @@ import {
   readNotificationPreferences,
   writeNotificationPreferences,
 } from "@/lib/alarms/notification-preferences-store"
+import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import type { NotificationPreferences } from "@/types/operational-alarm"
 import { NextResponse } from "next/server"
 
@@ -14,6 +15,8 @@ function isSeverity(v: unknown): v is NotificationPreferences["minimumSeverity"]
 }
 
 export async function GET() {
+  const gate = await requireApiPermission("alarms.view")
+  if (!gate.ok) return gate.response
   const preferences = await readNotificationPreferences()
   return NextResponse.json(preferences, {
     headers: { "Cache-Control": "no-store" },
@@ -21,6 +24,8 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+  const gate = await requireApiPermission("alarms.preferences.manage")
+  if (!gate.ok) return gate.response
   let body: unknown
   try {
     body = await req.json()

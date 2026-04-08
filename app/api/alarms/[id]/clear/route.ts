@@ -1,4 +1,5 @@
 import { markOperationalAlarmCleared } from "@/lib/alarms/operational-mutations"
+import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
@@ -8,6 +9,8 @@ export async function POST(
   _req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
+  const gate = await requireApiPermission("alarms.clear")
+  if (!gate.ok) return gate.response
   const { id } = await ctx.params
   if (!id) {
     return NextResponse.json({ error: "MISSING_ID" }, { status: 400 })

@@ -5,12 +5,15 @@ import {
   writeNotificationPreferences,
 } from "@/lib/alarms/notification-preferences-store"
 import { syncOperationalAlarmsFromSources } from "@/lib/alarms/sync-operational-alarms"
+import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function POST(req: Request) {
+  const gate = await requireApiPermission("alarms.preferences.manage")
+  if (!gate.ok) return gate.response
   let body: unknown
   try {
     body = await req.json()

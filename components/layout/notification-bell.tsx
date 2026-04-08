@@ -40,7 +40,15 @@ export function NotificationBell() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/notifications", { cache: "no-store" })
+      const res = await fetch("/api/notifications", {
+        cache: "no-store",
+        credentials: "include",
+      })
+      if (res.status === 403 || res.status === 401) {
+        setItems([])
+        setUnreadCount(0)
+        return
+      }
       if (!res.ok) return
       const data = (await res.json()) as {
         items: NotificationItem[]

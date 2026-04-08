@@ -6,6 +6,7 @@ import { TableShell } from "@/components/data-table/table-shell"
 import { TableToolbar } from "@/components/data-table/table-toolbar"
 import { FilterBar } from "@/components/shared/filter-bar"
 import { FilterSelect } from "@/components/shared/filter-select"
+import { Can } from "@/components/rbac/can"
 import { SectionCard } from "@/components/shared/section-card"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -77,7 +78,10 @@ export function OperationalAlarmsClient() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/alarms", { cache: "no-store" })
+      const res = await fetch("/api/alarms", {
+        cache: "no-store",
+        credentials: "include",
+      })
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(j.error ?? `HTTP ${res.status}`)
@@ -134,6 +138,7 @@ export function OperationalAlarmsClient() {
       const res = await fetch("/api/notification-preferences", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(patch),
       })
       if (!res.ok) throw new Error("Save failed")
@@ -152,7 +157,7 @@ export function OperationalAlarmsClient() {
     try {
       const res = await fetch(
         `/api/alarms/${encodeURIComponent(id)}/clear`,
-        { method: "POST" }
+        { method: "POST", credentials: "include" }
       )
       if (!res.ok) throw new Error("Clear failed")
       await load()
@@ -209,6 +214,19 @@ export function OperationalAlarmsClient() {
         </div>
       </div>
 
+      <Can
+        permission="alarms.preferences.manage"
+        fallback={
+          <SectionCard
+            title="Notification preferences"
+            description="Requires alarms.preferences.manage to edit. Header notifications still follow saved settings."
+          >
+            <p className="border-t border-border px-5 py-4 text-xs text-muted-foreground">
+              You can view alarms but not change notification preferences.
+            </p>
+          </SectionCard>
+        }
+      >
       <SectionCard
         title="Notification preferences"
         description="Controls what appears in the header bell. Alarms always remain listed here unless cleared; disabled types stay off the notification menu."
@@ -302,6 +320,7 @@ export function OperationalAlarmsClient() {
           )}
         </div>
       </SectionCard>
+      </Can>
 
       <FilterBar>
         <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -448,18 +467,23 @@ export function OperationalAlarmsClient() {
                             >
                               View
                             </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 px-2"
-                              disabled={
-                                row.status !== "active" || clearingId === row.id
-                              }
-                              onClick={() => void clearAlarm(row.id)}
+                            <Can
+                              permission="alarms.clear"
+                              fallback={<span className="px-1 text-muted-foreground">—</span>}
                             >
-                              Clear
-                            </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2"
+                                disabled={
+                                  row.status !== "active" || clearingId === row.id
+                                }
+                                onClick={() => void clearAlarm(row.id)}
+                              >
+                                Clear
+                              </Button>
+                            </Can>
                             <Link
                               href={href}
                               className={cn(

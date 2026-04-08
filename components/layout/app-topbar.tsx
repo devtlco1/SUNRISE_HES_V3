@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/sheet"
 import { MainNavList } from "@/components/layout/main-nav-list"
 import { NotificationBell } from "@/components/layout/notification-bell"
+import { useOperatorSession } from "@/components/rbac/operator-session-context"
 import {
   configurationModuleHref,
   configurationModules,
@@ -71,6 +72,16 @@ export function AppTopbar({ className }: { className?: string }) {
   const pathname = usePathname()
   const pageTitle = titleFromPath(pathname)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const { user, role, switchableUsers, switchUser, loading: sessionLoading } =
+    useOperatorSession()
+
+  const initials =
+    user?.displayName
+      ?.split(/\s+/)
+      .map((w) => w[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "OP"
 
   return (
     <header
@@ -138,18 +149,40 @@ export function AppTopbar({ className }: { className?: string }) {
           aria-label="User menu"
         >
           <Avatar size="sm" className="size-7 border-0 after:hidden">
-            <AvatarFallback className="text-xs font-medium">OP</AvatarFallback>
+            <AvatarFallback className="text-xs font-medium">
+              {initials}
+            </AvatarFallback>
           </Avatar>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel className="font-normal">
             <div className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium">Operator</span>
+              <span className="text-sm font-medium">
+                {sessionLoading ? "…" : user?.displayName ?? "No session"}
+              </span>
               <span className="text-xs text-muted-foreground">
-                Signed-in user (placeholder)
+                {role ? `${role.name} · @${user?.username ?? "—"}` : "—"}
               </span>
             </div>
           </DropdownMenuLabel>
+          {switchableUsers && switchableUsers.length > 0 ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Switch operator
+              </DropdownMenuLabel>
+              {switchableUsers.map((u) => (
+                <DropdownMenuItem
+                  key={u.id}
+                  onClick={() => void switchUser(u.id)}
+                  className={u.id === user?.id ? "bg-muted" : ""}
+                >
+                  <span className="truncate">{u.displayName}</span>
+                  <span className="text-muted-foreground">@{u.username}</span>
+                </DropdownMenuItem>
+              ))}
+            </>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled>Profile</DropdownMenuItem>
           <DropdownMenuItem disabled>Sign out</DropdownMenuItem>

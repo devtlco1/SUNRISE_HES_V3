@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo } from "react"
 
+import { useCan } from "@/components/rbac/operator-session-context"
 import {
   parseCommandsTabParam,
   type CommandsWorkspaceTab,
@@ -14,26 +15,57 @@ import { CommandSchedulesTabClient } from "@/components/commands/command-schedul
 import { ObisCodeGroupsTabClient } from "@/components/commands/obis-code-groups-tab-client"
 import { RunCommandTabClient } from "@/components/commands/run-command-tab-client"
 
-const TABS: { id: CommandsWorkspaceTab; label: string }[] = [
-  { id: "meter-groups", label: "Meter Groups" },
-  { id: "obis-groups", label: "OBIS / Actions" },
-  { id: "schedules", label: "Schedules" },
-  { id: "run", label: "Run" },
+const TABS: {
+  id: CommandsWorkspaceTab
+  label: string
+  permission: string
+}[] = [
+  { id: "meter-groups", label: "Meter Groups", permission: "commands.tab.meter_groups" },
+  { id: "obis-groups", label: "OBIS / Actions", permission: "commands.tab.obis_actions" },
+  { id: "schedules", label: "Schedules", permission: "commands.tab.schedules" },
+  { id: "run", label: "Run", permission: "commands.tab.run" },
 ]
 
 export function CommandsWorkspaceClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const tab = useMemo(
-    () => parseCommandsTabParam(searchParams.get("tab")),
-    [searchParams]
+  const canView = useCan("commands.view")
+  const canMeter = useCan("commands.tab.meter_groups")
+  const canObis = useCan("commands.tab.obis_actions")
+  const canSched = useCan("commands.tab.schedules")
+  const canRun = useCan("commands.tab.run")
+  const permMap = useMemo(
+    () => ({
+      "meter-groups": canMeter,
+      "obis-groups": canObis,
+      schedules: canSched,
+      run: canRun,
+    }),
+    [canMeter, canObis, canSched, canRun]
   )
 
+  const visibleTabs = useMemo(
+    () => TABS.filter((t) => permMap[t.id]),
+    [permMap]
+  )
+
+  const tab = useMemo(() => {
+    const raw = parseCommandsTabParam(searchParams.get("tab"))
+    if (permMap[raw]) return raw
+    return visibleTabs[0]?.id ?? "meter-groups"
+  }, [searchParams, permMap, visibleTabs])
+
   useEffect(() => {
-    if (searchParams.get("tab") == null) {
-      router.replace("/commands?tab=meter-groups", { scroll: false })
+    if (!canView) return
+    const q = searchParams.get("tab")
+    const parsed = parseCommandsTabParam(q)
+    if (q == null || !permMap[parsed]) {
+      const first = visibleTabs[0]?.id
+      if (first) {
+        router.replace(`/commands?tab=${first}`, { scroll: false })
+      }
     }
-  }, [router, searchParams])
+  }, [router, searchParams, canView, permMap, visibleTabs])
 
   const setTab = useCallback(
     (id: CommandsWorkspaceTab) => {
@@ -42,6 +74,22 @@ export function CommandsWorkspaceClient() {
     [router]
   )
 
+  if (!canView) {
+    return (
+      <p className="rounded-lg border border-border bg-muted/40 px-4 py-6 text-sm text-muted-foreground">
+        You do not have permission to open the Commands workspace.
+      </p>
+    )
+  }
+
+  if (visibleTabs.length === 0) {
+    return (
+      <p className="rounded-lg border border-border bg-muted/40 px-4 py-6 text-sm text-muted-foreground">
+        No commands tabs are enabled for your role.
+      </p>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div
@@ -49,7 +97,7 @@ export function CommandsWorkspaceClient() {
         role="tablist"
         aria-label="Commands workspace"
       >
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             type="button"

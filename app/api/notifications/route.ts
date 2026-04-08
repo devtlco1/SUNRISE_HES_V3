@@ -5,6 +5,7 @@ import {
 } from "@/lib/alarms/notification-filter"
 import { readNotificationPreferences } from "@/lib/alarms/notification-preferences-store"
 import { syncOperationalAlarmsFromSources } from "@/lib/alarms/sync-operational-alarms"
+import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import type { OperationalAlarmRecord } from "@/types/operational-alarm"
 import { NextResponse } from "next/server"
 
@@ -25,6 +26,8 @@ export type NotificationFeedItem = {
 }
 
 export async function GET() {
+  const gate = await requireApiPermission("alarms.view")
+  if (!gate.ok) return gate.response
   const sync = await syncOperationalAlarmsFromSources()
   if (!sync.ok) {
     return NextResponse.json({ error: sync.error }, { status: 500 })

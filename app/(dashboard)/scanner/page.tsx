@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 
+import { PagePermissionGate } from "@/components/rbac/page-permission-gate"
 import { ScannerWorkspaceClient } from "@/components/scanner/scanner-workspace-client"
 
 export const metadata: Metadata = {
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 }
 
 export default function ScannerPage() {
-  return <ScannerWorkspaceClient />
+  return (
+    <PagePermissionGate permission="scanner.view" title="Scanner">
+      <ScannerWorkspaceClient />
+    </PagePermissionGate>
+  )
 }

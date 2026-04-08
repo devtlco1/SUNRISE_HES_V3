@@ -15,11 +15,19 @@ import {
   connectivityChildActive,
   connectivityScopeActive,
 } from "@/lib/connectivity/nav"
+import { useOperatorSession } from "@/components/rbac/operator-session-context"
 import {
   mainNavEntries,
   type MainNavConfigurationItem,
   type MainNavConnectivityItem,
 } from "@/lib/nav/main-nav"
+import {
+  configurationChildHrefVisible,
+  configurationNavGroupVisible,
+  connectivityChildHrefVisible,
+  connectivityNavGroupVisible,
+  navFlatLinkVisible,
+} from "@/lib/rbac/nav-helpers"
 import { cn } from "@/lib/utils"
 
 const CONFIG_NAV_OPEN_KEY = "sunrise-nav-configuration-open"
@@ -42,15 +50,21 @@ function MainNavFlatLink({
   icon: Icon,
   variant,
   onNavigate,
+  permissions,
 }: {
   href: string
   label: string
   icon: LucideIcon
   variant: "sidebar" | "mobile"
   onNavigate?: () => void
+  permissions: Set<string>
 }) {
   const pathname = usePathname()
   const active = linkActive(pathname, href)
+
+  if (!navFlatLinkVisible(permissions, href)) {
+    return null
+  }
 
   if (variant === "mobile") {
     return (
@@ -86,10 +100,12 @@ function ConfigurationNavGroup({
   entry,
   variant,
   onNavigate,
+  permissions,
 }: {
   entry: MainNavConfigurationItem
   variant: "sidebar" | "mobile"
   onNavigate?: () => void
+  permissions: Set<string>
 }) {
   const pathname = usePathname()
   const Icon = entry.icon
@@ -140,6 +156,14 @@ function ConfigurationNavGroup({
 
   const childRail = isSidebar ? "border-sidebar-border" : "border-border"
 
+  const visibleChildren = configurationNavChildren.filter((child) =>
+    configurationChildHrefVisible(permissions, child.href)
+  )
+
+  if (!configurationNavGroupVisible(permissions) || visibleChildren.length === 0) {
+    return null
+  }
+
   return (
     <div className="flex flex-col gap-0.5">
       <button
@@ -161,7 +185,7 @@ function ConfigurationNavGroup({
           className={cn("ml-2 flex flex-col gap-0.5 border-l pl-2", childRail)}
           role="list"
         >
-          {configurationNavChildren.map((child) => {
+          {visibleChildren.map((child) => {
             const childMatch = pathname === child.href
             return (
               <li key={child.href}>
@@ -188,10 +212,12 @@ function ConnectivityNavGroup({
   entry,
   variant,
   onNavigate,
+  permissions,
 }: {
   entry: MainNavConnectivityItem
   variant: "sidebar" | "mobile"
   onNavigate?: () => void
+  permissions: Set<string>
 }) {
   const pathname = usePathname()
   const Icon = entry.icon
@@ -241,6 +267,14 @@ function ConnectivityNavGroup({
 
   const childRail = isSidebar ? "border-sidebar-border" : "border-border"
 
+  const visibleChildren = connectivityNavChildren.filter((child) =>
+    connectivityChildHrefVisible(permissions, child.href)
+  )
+
+  if (!connectivityNavGroupVisible(permissions) || visibleChildren.length === 0) {
+    return null
+  }
+
   return (
     <div className="flex flex-col gap-0.5">
       <button
@@ -262,7 +296,7 @@ function ConnectivityNavGroup({
           className={cn("ml-2 flex flex-col gap-0.5 border-l pl-2", childRail)}
           role="list"
         >
-          {connectivityNavChildren.map((child) => {
+          {visibleChildren.map((child) => {
             const childMatch = connectivityChildActive(pathname, child.href)
             return (
               <li key={child.href}>
@@ -286,6 +320,9 @@ function ConnectivityNavGroup({
 }
 
 export function MainNavList({ variant, onNavigate }: MainNavListProps) {
+  const { permissions, loading } = useOperatorSession()
+  const perms = loading ? new Set<string>() : permissions
+
   return (
     <>
       {mainNavEntries.map((entry) => {
@@ -296,6 +333,7 @@ export function MainNavList({ variant, onNavigate }: MainNavListProps) {
               entry={entry}
               variant={variant}
               onNavigate={onNavigate}
+              permissions={perms}
             />
           )
         }
@@ -306,6 +344,7 @@ export function MainNavList({ variant, onNavigate }: MainNavListProps) {
               entry={entry}
               variant={variant}
               onNavigate={onNavigate}
+              permissions={perms}
             />
           )
         }
@@ -317,6 +356,7 @@ export function MainNavList({ variant, onNavigate }: MainNavListProps) {
             icon={entry.icon}
             variant={variant}
             onNavigate={onNavigate}
+            permissions={perms}
           />
         )
       })}

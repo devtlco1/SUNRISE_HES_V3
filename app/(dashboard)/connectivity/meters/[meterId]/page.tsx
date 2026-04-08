@@ -1,4 +1,5 @@
 import { ConnectivityMeterDetailClient } from "@/components/connectivity/connectivity-meter-detail-client"
+import { PagePermissionGate } from "@/components/rbac/page-permission-gate"
 import { getConnectivityMeterDetailPayload } from "@/lib/connectivity/meter-detail-data"
 import { notFound } from "next/navigation"
 
@@ -11,6 +12,8 @@ export default async function ConnectivityMeterDetailPage({ params }: Props) {
     notFound()
   }
   return (
-    <ConnectivityMeterDetailClient initial={initial} meterSlug={meterId} />
+    <PagePermissionGate permission="connectivity.meters.view" title="Meter connectivity">
+      <ConnectivityMeterDetailClient initial={initial} meterSlug={meterId} />
+    </PagePermissionGate>
   )
 }

@@ -1,26 +1,10 @@
-import { UsersList } from "@/components/users/users-list"
-import { PageHeader } from "@/components/shared/page-header"
-import { Button } from "@/components/ui/button"
+import { AccessControlWorkspaceClient } from "@/components/users/access-control-workspace-client"
+import { PagePermissionGate } from "@/components/rbac/page-permission-gate"
 
 export default function UsersPage() {
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Users"
-        subtitle="Console operators and administrators. Roles, scopes, and sign-in state are illustrative until identity is integrated."
-        actions={
-          <>
-            <Button type="button" size="sm" variant="outline" disabled>
-              SSO settings (mock)
-            </Button>
-            <Button type="button" size="sm" variant="secondary" disabled>
-              Audit log (mock)
-            </Button>
-          </>
-        }
-      />
-
-      <UsersList />
-    </div>
+    <PagePermissionGate permission="users.view" title="Access control">
+      <AccessControlWorkspaceClient />
+    </PagePermissionGate>
   )
 }

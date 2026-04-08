@@ -2,6 +2,7 @@ import {
   readCommandGroupsRaw,
   writeCommandGroupsArray,
 } from "@/lib/commands/operator-file"
+import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import {
   normalizeCommandGroup,
   normalizeCommandGroups,
@@ -32,6 +33,8 @@ export async function GET(_req: Request, ctx: Ctx) {
 }
 
 export async function PUT(req: Request, ctx: Ctx) {
+  const gate = await requireApiPermission("commands.groups.manage")
+  if (!gate.ok) return gate.response
   const { id } = await ctx.params
   let body: unknown
   try {
@@ -97,6 +100,8 @@ export async function PUT(req: Request, ctx: Ctx) {
 }
 
 export async function DELETE(_req: Request, ctx: Ctx) {
+  const gate = await requireApiPermission("commands.groups.manage")
+  if (!gate.ok) return gate.response
   const { id } = await ctx.params
   const raw = await readCommandGroupsRaw()
   if (!raw.ok) {
