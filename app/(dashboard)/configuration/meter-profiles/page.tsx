@@ -1,5 +1,5 @@
-import { ConfigurationModulePage } from "@/components/configuration/configuration-module-page"
+import { MeterProfilesPageClient } from "@/components/configuration/meter-profiles-page-client"
 
 export default function MeterProfilesConfigurationPage() {
-  return <ConfigurationModulePage moduleId="meter-profiles" />
+  return <MeterProfilesPageClient />
 }

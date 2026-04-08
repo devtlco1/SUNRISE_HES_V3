@@ -1,5 +1,5 @@
-import { ConfigurationModulePage } from "@/components/configuration/configuration-module-page"
+import { GridTopologyPageClient } from "@/components/configuration/grid-topology-page-client"
 
 export default function GridTopologyConfigurationPage() {
-  return <ConfigurationModulePage moduleId="grid-topology" />
+  return <GridTopologyPageClient />
 }

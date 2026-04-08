@@ -1,5 +1,5 @@
-import { ConfigurationModulePage } from "@/components/configuration/configuration-module-page"
+import { TariffProfilesPageClient } from "@/components/configuration/tariff-profiles-page-client"
 
 export default function TariffProfilesConfigurationPage() {
-  return <ConfigurationModulePage moduleId="tariff-profiles" />
+  return <TariffProfilesPageClient />
 }

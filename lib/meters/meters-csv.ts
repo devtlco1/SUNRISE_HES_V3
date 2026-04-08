@@ -20,6 +20,11 @@ export const METERS_CSV_HEADERS = [
   "Manufacturer",
   "Model",
   "Firmware",
+  "Meter profile ID",
+  "Feeder ID",
+  "Transformer ID",
+  "Zone ID",
+  "Tariff profile ID",
 ] as const
 
 function csvEscape(cell: string): string {
@@ -83,6 +88,11 @@ export function csvRecordToMeterFields(
     manufacturer: pick(row, ["Manufacturer", "manufacturer"]),
     model: pick(row, ["Model", "model"]),
     firmwareVersion: pick(row, ["Firmware", "firmware", "firmwareVersion"]),
+    meterProfileId: pick(row, ["Meter profile ID", "meter profile id", "meterProfileId"]),
+    feederId: pick(row, ["Feeder ID", "feeder id", "feederId"]),
+    transformerId: pick(row, ["Transformer ID", "transformer id", "transformerId"]),
+    zoneId: pick(row, ["Zone ID", "zone id", "zoneId"]),
+    tariffProfileId: pick(row, ["Tariff profile ID", "tariff profile id", "tariffProfileId"]),
   }
 }
 
@@ -103,6 +113,11 @@ export function meterRowToCsvLine(row: MeterListRow): string {
     row.manufacturer,
     row.model,
     row.firmwareVersion,
+    row.meterProfileId,
+    row.feederId,
+    row.transformerId,
+    row.zoneId,
+    row.tariffProfileId,
   ]
   return cells.map((c) => csvEscape(String(c))).join(",")
 }
@@ -133,6 +148,11 @@ export function metersTemplateCsv(): string {
     "ExampleMfr",
     "EX-100",
     "1.0.0",
+    "",
+    "",
+    "",
+    "",
+    "",
   ]
   const ex2 = [
     "",
@@ -150,6 +170,11 @@ export function metersTemplateCsv(): string {
     "OtherCo",
     "OC-9",
     "2.1.0",
+    "",
+    "",
+    "",
+    "",
+    "",
   ]
   return [
     h.map(csvEscape).join(","),

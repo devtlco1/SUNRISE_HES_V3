@@ -34,6 +34,11 @@ export function createMeterRowFromSerial(
     alarmState: "none",
     phaseType: "single",
     firmwareVersion: "—",
+    meterProfileId: "",
+    feederId: "",
+    transformerId: "",
+    zoneId: "",
+    tariffProfileId: "",
   }
 }
 

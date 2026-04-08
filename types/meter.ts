@@ -23,4 +23,10 @@ export type MeterListRow = {
   alarmState: MeterAlarmState
   phaseType: MeterPhaseType
   firmwareVersion: string
+  /** Reference IDs from Configuration (empty = unset). Display strings stay in feeder/transformer/zone. */
+  meterProfileId: string
+  feederId: string
+  transformerId: string
+  zoneId: string
+  tariffProfileId: string
 }

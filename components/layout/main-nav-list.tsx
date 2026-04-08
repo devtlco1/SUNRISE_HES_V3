@@ -1,6 +1,5 @@
 "use client"
 
-import { ChevronDownIcon } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -13,6 +12,8 @@ import {
 } from "@/lib/configuration/modules"
 import { mainNavEntries, type MainNavConfigurationItem } from "@/lib/nav/main-nav"
 import { cn } from "@/lib/utils"
+
+const CONFIG_NAV_OPEN_KEY = "sunrise-nav-configuration-open"
 
 type MainNavListProps = {
   variant: "sidebar" | "mobile"
@@ -83,30 +84,41 @@ function ConfigurationNavGroup({
   const pathname = usePathname()
   const Icon = entry.icon
   const inScope = configurationScopeActive(pathname)
-  const onHub = pathname === configurationHubHref
-  const [open, setOpen] = useState(inScope)
+  const [open, setOpen] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    if (inScope) setOpen(true)
-  }, [inScope])
+    try {
+      const s = sessionStorage.getItem(CONFIG_NAV_OPEN_KEY)
+      if (s === "1") setOpen(true)
+      else if (s === "0") setOpen(false)
+      else if (configurationScopeActive(pathname)) setOpen(true)
+    } catch {
+      if (configurationScopeActive(pathname)) setOpen(true)
+    }
+    setHydrated(true)
+    // Intentionally mount-only: pathname is read once for default when no stored preference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!hydrated) return
+    try {
+      sessionStorage.setItem(CONFIG_NAV_OPEN_KEY, open ? "1" : "0")
+    } catch {
+      /* ignore */
+    }
+  }, [open, hydrated])
 
   const isSidebar = variant === "sidebar"
 
-  const hubLink = isSidebar
-    ? onHub
-      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-      : inScope && !onHub
-        ? "bg-sidebar-accent/45 text-sidebar-foreground"
-        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-    : onHub
-      ? "bg-accent text-accent-foreground"
-      : inScope && !onHub
-        ? "bg-accent/50 text-foreground"
-        : "text-foreground/80 hover:bg-muted"
-
-  const chevronBtn = isSidebar
-    ? "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-    : "text-muted-foreground hover:bg-muted"
+  const parentRow = isSidebar
+    ? inScope
+      ? "bg-sidebar-accent/45 text-sidebar-foreground"
+      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+    : inScope
+      ? "bg-accent/50 text-foreground"
+      : "text-foreground/80 hover:bg-muted"
 
   const childBase = isSidebar
     ? "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
@@ -120,39 +132,23 @@ function ConfigurationNavGroup({
 
   return (
     <div className="flex flex-col gap-0.5">
-      <div className="flex items-stretch gap-0.5 rounded-md">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls="nav-configuration-children"
-          title={open ? "Collapse" : "Expand"}
-          className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-md outline-none transition-colors",
-            chevronBtn
-          )}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <ChevronDownIcon
-            className={cn("size-4 transition-transform", open ? "rotate-0" : "-rotate-90")}
-            aria-hidden
-          />
-        </button>
-        <Link
-          href={configurationHubHref}
-          onClick={onNavigate}
-          className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-sm font-medium transition-colors",
-            hubLink
-          )}
-        >
-          <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
-          <span className="truncate">{entry.label}</span>
-        </Link>
-      </div>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="nav-configuration-children"
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm font-medium transition-colors outline-none",
+          parentRow
+        )}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
+        <span className="truncate">{entry.label}</span>
+      </button>
       {open ? (
         <ul
           id="nav-configuration-children"
-          className={cn("ml-4 flex flex-col gap-0.5 border-l pl-2", childRail)}
+          className={cn("ml-2 flex flex-col gap-0.5 border-l pl-2", childRail)}
           role="list"
         >
           {configurationNavChildren.map((child) => {

@@ -34,6 +34,11 @@ import {
   operationalSheetHeaderPlaceholder,
 } from "@/lib/ui/operational"
 import type {
+  GridTopologyDoc,
+  MeterProfileRow,
+  TariffProfileRow,
+} from "@/types/configuration"
+import type {
   MeterAlarmState,
   MeterCommStatus,
   MeterListRow,
@@ -41,6 +46,30 @@ import type {
   MeterRelayStatus,
 } from "@/types/meter"
 import { useCallback, useEffect, useState } from "react"
+
+function lineLabel(code: string, name: string): string {
+  const c = code.trim()
+  const n = name.trim()
+  if (c && n) return `${c} — ${n}`
+  return c || n || "—"
+}
+
+function applyMeterProfileDefaults(
+  d: MeterListRow,
+  p: MeterProfileRow
+): MeterListRow {
+  return {
+    ...d,
+    meterProfileId: p.id,
+    manufacturer: p.manufacturer.trim() || d.manufacturer,
+    model: p.model.trim() || d.model,
+    firmwareVersion: p.firmware.trim() || d.firmwareVersion,
+    phaseType: p.phaseType,
+    relayStatus: p.defaultRelayStatus,
+    commStatus: p.defaultCommStatus,
+    tariffProfileId: p.defaultTariffProfileId.trim() || d.tariffProfileId,
+  }
+}
 
 export type MeterSheetIntent = "add" | "detail"
 
@@ -85,6 +114,11 @@ function emptyAdd(): MeterListRow {
     alarmState: "none",
     phaseType: "single",
     firmwareVersion: "—",
+    meterProfileId: "",
+    feederId: "",
+    transformerId: "",
+    zoneId: "",
+    tariffProfileId: "",
   }
 }
 
@@ -124,6 +158,9 @@ export function MeterDetailsSheet({
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [meterProfiles, setMeterProfiles] = useState<MeterProfileRow[]>([])
+  const [tariffProfiles, setTariffProfiles] = useState<TariffProfileRow[]>([])
+  const [grid, setGrid] = useState<GridTopologyDoc | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -136,6 +173,41 @@ export function MeterDetailsSheet({
       setUi(formInitially ? "form" : "view")
     }
   }, [open, intent, meter?.id, meter?.serialNumber, formInitially])
+
+  useEffect(() => {
+    if (!open || staticMode) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const [mp, tf, gr] = await Promise.all([
+          fetch("/api/configuration/meter-profiles", { cache: "no-store" }).then(
+            (r) => r.json()
+          ),
+          fetch("/api/configuration/tariff-profiles", { cache: "no-store" }).then(
+            (r) => r.json()
+          ),
+          fetch("/api/configuration/grid-topology", { cache: "no-store" }).then(
+            (r) => r.json()
+          ),
+        ])
+        if (cancelled) return
+        if (Array.isArray(mp)) setMeterProfiles(mp as MeterProfileRow[])
+        if (Array.isArray(tf)) setTariffProfiles(tf as TariffProfileRow[])
+        if (
+          gr &&
+          typeof gr === "object" &&
+          Array.isArray((gr as GridTopologyDoc).feeders)
+        ) {
+          setGrid(gr as GridTopologyDoc)
+        }
+      } catch {
+        /* keep prior cache */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, staticMode])
 
   const close = useCallback(() => {
     onOpenChange(false)
@@ -213,6 +285,47 @@ export function MeterDetailsSheet({
   const comm = m ? formatCommStatus(m.commStatus) : null
   const relay = m ? formatRelayStatus(m.relayStatus) : null
   const alarm = m ? formatAlarmState(m.alarmState) : null
+
+  const transformersOpts =
+    grid?.transformers.filter(
+      (t) =>
+        !draft.feederId ||
+        t.feederId === draft.feederId ||
+        t.id === draft.transformerId
+    ) ?? []
+  const zonesOpts =
+    grid?.zones.filter(
+      (z) =>
+        !draft.feederId ||
+        z.feederId === draft.feederId ||
+        z.id === draft.zoneId
+    ) ?? []
+
+  const resolveProfileLabel = (id: string) => {
+    if (!id) return "—"
+    const p = meterProfiles.find((x) => x.id === id)
+    return p ? p.name : id
+  }
+  const resolveTariffLabel = (id: string) => {
+    if (!id) return "—"
+    const t = tariffProfiles.find((x) => x.id === id)
+    return t ? `${t.code} · ${t.name}` : id
+  }
+  const resolveFeederLabel = (id: string) => {
+    if (!id) return "—"
+    const f = grid?.feeders.find((x) => x.id === id)
+    return f ? lineLabel(f.code, f.name) : id
+  }
+  const resolveTransformerLabel = (id: string) => {
+    if (!id) return "—"
+    const t = grid?.transformers.find((x) => x.id === id)
+    return t ? lineLabel(t.code, t.name) : id
+  }
+  const resolveZoneLabel = (id: string) => {
+    if (!id) return "—"
+    const z = grid?.zones.find((x) => x.id === id)
+    return z ? lineLabel(z.code, z.name) : id
+  }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -303,42 +416,196 @@ export function MeterDetailsSheet({
 
                   <Separator />
 
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Location
-                  </p>
-                  <div>
-                    {fieldLabel("m-fdr", "Feeder")}
-                    <Input
-                      id="m-fdr"
-                      className="mt-1"
-                      value={draft.feeder}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, feeder: e.target.value }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    {fieldLabel("m-tx", "Transformer")}
-                    <Input
-                      id="m-tx"
-                      className="mt-1"
-                      value={draft.transformer}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, transformer: e.target.value }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    {fieldLabel("m-zone", "Zone")}
-                    <Input
-                      id="m-zone"
-                      className="mt-1"
-                      value={draft.zone}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, zone: e.target.value }))
-                      }
-                    />
-                  </div>
+                  {!staticMode ? (
+                    <>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Profiles & grid
+                      </p>
+                      <div>
+                        {fieldLabel("m-prof", "Meter profile")}
+                        <select
+                          id="m-prof"
+                          className={selectClass()}
+                          value={draft.meterProfileId}
+                          onChange={(e) => {
+                            const id = e.target.value
+                            if (!id) {
+                              setDraft((d) => ({ ...d, meterProfileId: "" }))
+                              return
+                            }
+                            const p = meterProfiles.find((x) => x.id === id)
+                            if (!p) return
+                            setDraft((d) => applyMeterProfileDefaults(d, p))
+                          }}
+                        >
+                          <option value="">—</option>
+                          {meterProfiles
+                            .filter((p) => p.active)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      <div>
+                        {fieldLabel("m-tar", "Tariff profile")}
+                        <select
+                          id="m-tar"
+                          className={selectClass()}
+                          value={draft.tariffProfileId}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              tariffProfileId: e.target.value,
+                            }))
+                          }
+                        >
+                          <option value="">—</option>
+                          {tariffProfiles.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.code} · {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        {fieldLabel("m-fdr-id", "Feeder")}
+                        <select
+                          id="m-fdr-id"
+                          className={selectClass()}
+                          value={draft.feederId}
+                          onChange={(e) => {
+                            const feederId = e.target.value
+                            const f = grid?.feeders.find((x) => x.id === feederId)
+                            setDraft((d) => ({
+                              ...d,
+                              feederId,
+                              feeder: f ? lineLabel(f.code, f.name) : "—",
+                              transformerId: "",
+                              transformer: "—",
+                              zoneId: "",
+                              zone: "—",
+                            }))
+                          }}
+                        >
+                          <option value="">—</option>
+                          {(grid?.feeders ?? []).map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {lineLabel(f.code, f.name)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        {fieldLabel("m-tx-id", "Transformer")}
+                        <select
+                          id="m-tx-id"
+                          className={selectClass()}
+                          value={draft.transformerId}
+                          onChange={(e) => {
+                            const tid = e.target.value
+                            if (!tid) {
+                              setDraft((d) => ({
+                                ...d,
+                                transformerId: "",
+                                transformer: "—",
+                              }))
+                              return
+                            }
+                            const t = grid?.transformers.find((x) => x.id === tid)
+                            if (!t || !grid) return
+                            const fd = grid.feeders.find((x) => x.id === t.feederId)
+                            setDraft((d) => ({
+                              ...d,
+                              feederId: t.feederId,
+                              feeder: fd ? lineLabel(fd.code, fd.name) : "—",
+                              transformerId: t.id,
+                              transformer: lineLabel(t.code, t.name),
+                            }))
+                          }}
+                        >
+                          <option value="">—</option>
+                          {transformersOpts.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {lineLabel(t.code, t.name)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        {fieldLabel("m-zone-id", "Zone")}
+                        <select
+                          id="m-zone-id"
+                          className={selectClass()}
+                          value={draft.zoneId}
+                          onChange={(e) => {
+                            const zid = e.target.value
+                            if (!zid) {
+                              setDraft((d) => ({ ...d, zoneId: "", zone: "—" }))
+                              return
+                            }
+                            const z = grid?.zones.find((x) => x.id === zid)
+                            if (!z || !grid) return
+                            const fd = grid.feeders.find((x) => x.id === z.feederId)
+                            setDraft((d) => ({
+                              ...d,
+                              feederId: z.feederId,
+                              feeder: fd ? lineLabel(fd.code, fd.name) : "—",
+                              zoneId: z.id,
+                              zone: lineLabel(z.code, z.name),
+                            }))
+                          }}
+                        >
+                          <option value="">—</option>
+                          {zonesOpts.map((z) => (
+                            <option key={z.id} value={z.id}>
+                              {lineLabel(z.code, z.name)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Location
+                      </p>
+                      <div>
+                        {fieldLabel("m-fdr", "Feeder")}
+                        <Input
+                          id="m-fdr"
+                          className="mt-1"
+                          value={draft.feeder}
+                          onChange={(e) =>
+                            setDraft((d) => ({ ...d, feeder: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        {fieldLabel("m-tx", "Transformer")}
+                        <Input
+                          id="m-tx"
+                          className="mt-1"
+                          value={draft.transformer}
+                          onChange={(e) =>
+                            setDraft((d) => ({ ...d, transformer: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        {fieldLabel("m-zone", "Zone")}
+                        <Input
+                          id="m-zone"
+                          className="mt-1"
+                          value={draft.zone}
+                          onChange={(e) =>
+                            setDraft((d) => ({ ...d, zone: e.target.value }))
+                          }
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <Separator />
 
@@ -504,16 +771,56 @@ export function MeterDetailsSheet({
                     />
                   </DetailBlock>
                   <Separator />
-                  <DetailBlock title="Location">
-                    <DlGrid
-                      items={[
-                        { label: "Feeder", value: meter.feeder },
-                        { label: "Transformer", value: meter.transformer },
-                        { label: "Zone", value: meter.zone },
-                      ]}
-                    />
-                  </DetailBlock>
-                  <Separator />
+                  {!staticMode ? (
+                    <>
+                      <DetailBlock title="Profiles & grid">
+                        <DlGrid
+                          items={[
+                            {
+                              label: "Meter profile",
+                              value: resolveProfileLabel(meter.meterProfileId),
+                            },
+                            {
+                              label: "Tariff profile",
+                              value: resolveTariffLabel(meter.tariffProfileId),
+                            },
+                            {
+                              label: "Feeder",
+                              value: meter.feederId
+                                ? resolveFeederLabel(meter.feederId)
+                                : meter.feeder,
+                            },
+                            {
+                              label: "Transformer",
+                              value: meter.transformerId
+                                ? resolveTransformerLabel(meter.transformerId)
+                                : meter.transformer,
+                            },
+                            {
+                              label: "Zone",
+                              value: meter.zoneId
+                                ? resolveZoneLabel(meter.zoneId)
+                                : meter.zone,
+                            },
+                          ]}
+                        />
+                      </DetailBlock>
+                      <Separator />
+                    </>
+                  ) : (
+                    <>
+                      <DetailBlock title="Location">
+                        <DlGrid
+                          items={[
+                            { label: "Feeder", value: meter.feeder },
+                            { label: "Transformer", value: meter.transformer },
+                            { label: "Zone", value: meter.zone },
+                          ]}
+                        />
+                      </DetailBlock>
+                      <Separator />
+                    </>
+                  )}
                   <DetailBlock title="Communication">
                     <div className="flex flex-wrap items-center gap-2">
                       {comm ? (

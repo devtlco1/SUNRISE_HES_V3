@@ -67,6 +67,11 @@ export function normalizeMeterRow(raw: unknown): MeterListRow | null {
   if (!isMember(r.alarmState, ALARM)) return null
   if (!isMember(r.phaseType, PHASE)) return null
 
+  function optId(k: string): string {
+    const v = r[k]
+    return typeof v === "string" ? v.trim() : ""
+  }
+
   return {
     id,
     serialNumber,
@@ -83,6 +88,11 @@ export function normalizeMeterRow(raw: unknown): MeterListRow | null {
     alarmState: r.alarmState,
     phaseType: r.phaseType,
     firmwareVersion,
+    meterProfileId: optId("meterProfileId"),
+    feederId: optId("feederId"),
+    transformerId: optId("transformerId"),
+    zoneId: optId("zoneId"),
+    tariffProfileId: optId("tariffProfileId"),
   }
 }
 

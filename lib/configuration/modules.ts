@@ -56,7 +56,7 @@ export function configurationModuleHref(
   return `${configurationHubHref}/${mod.segment}`
 }
 
-/** Sidebar / mobile nested links under Configuration. */
+/** Sidebar / mobile nested links under Configuration (modules only; hub is still routable). */
 export const configurationNavChildren: { href: string; label: string }[] =
   configurationModules.map((m) => ({
     href: configurationModuleHref(m),

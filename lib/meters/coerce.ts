@@ -104,6 +104,11 @@ export function coerceMeterRow(
     opts.usedIds.add(id)
   }
 
+  function optRef(k: string): string {
+    const v = r[k]
+    return typeof v === "string" ? v.trim() : ""
+  }
+
   return {
     id,
     serialNumber,
@@ -131,5 +136,10 @@ export function coerceMeterRow(
         ? (r.phaseType as MeterPhaseType)
         : parsePhase(str(r.phaseType, "single")),
     firmwareVersion: str(r.firmwareVersion),
+    meterProfileId: optRef("meterProfileId"),
+    feederId: optRef("feederId"),
+    transformerId: optRef("transformerId"),
+    zoneId: optRef("zoneId"),
+    tariffProfileId: optRef("tariffProfileId"),
   }
 }
