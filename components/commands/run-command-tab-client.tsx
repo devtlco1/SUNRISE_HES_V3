@@ -13,9 +13,9 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type {
+  CommandActionGroup,
   CommandGroup,
   CommandSchedule,
-  ObisCodeGroup,
   UnifiedCommandRunRow,
 } from "@/types/command-operator"
 
@@ -36,6 +36,29 @@ function scheduleSummary(s: CommandSchedule): string {
   return `${t} @ ${rt}${range}${win}`
 }
 
+function actionGroupOptionLabel(g: CommandActionGroup): string {
+  const mode =
+    g.actionMode === "read_catalog"
+      ? "read"
+      : g.actionMode === "relay_on"
+        ? "relay on"
+        : "relay off"
+  const detail =
+    g.actionMode === "read_catalog"
+      ? `${g.objectCodes.length} code(s)`
+      : "no codes"
+  return `${g.name} · ${mode} · ${detail}`
+}
+
+function reviewActionLine(g: CommandActionGroup | undefined): string {
+  if (!g) return "—"
+  if (g.actionMode === "read_catalog") {
+    return `Read ${g.objectCodes.length} catalog code(s)`
+  }
+  if (g.actionMode === "relay_on") return "Relay on (reconnect)"
+  return "Relay off (disconnect)"
+}
+
 type ApiRuns = {
   rows: UnifiedCommandRunRow[]
   operatorRuns: unknown[]
@@ -45,7 +68,7 @@ type ApiRuns = {
 export function RunCommandTabClient() {
   const [groups, setGroups] = useState<CommandGroup[]>([])
   const [schedules, setSchedules] = useState<CommandSchedule[]>([])
-  const [obisGroups, setObisGroups] = useState<ObisCodeGroup[]>([])
+  const [obisGroups, setObisGroups] = useState<CommandActionGroup[]>([])
   const [runsData, setRunsData] = useState<ApiRuns | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -67,10 +90,10 @@ export function RunCommandTabClient() {
       ])
       if (!gr.ok) throw new Error("Failed to load meter groups")
       if (!sr.ok) throw new Error("Failed to load schedules")
-      if (!or.ok) throw new Error("Failed to load OBIS groups")
+      if (!or.ok) throw new Error("Failed to load action groups")
       const gRows: CommandGroup[] = await gr.json()
       const sRows: CommandSchedule[] = await sr.json()
-      const oRows: ObisCodeGroup[] = await or.json()
+      const oRows: CommandActionGroup[] = await or.json()
       setGroups(gRows)
       setSchedules(sRows)
       setObisGroups(oRows)
@@ -107,6 +130,18 @@ export function RunCommandTabClient() {
   const group = groups.find((g) => g.id === meterGroupId)
   const schedule = schedules.find((s) => s.id === scheduleId)
   const obisGroup = obisGroups.find((g) => g.id === obisCodeGroupId)
+
+  const canStart =
+    Boolean(
+      meterGroupId &&
+        scheduleId &&
+        obisCodeGroupId &&
+        group &&
+        group.memberMeterIds.length > 0 &&
+        obisGroup &&
+        (obisGroup.actionMode !== "read_catalog" ||
+          obisGroup.objectCodes.length > 0)
+    )
 
   const operatorRows = useMemo(
     () => runsData?.rows.filter((r) => r.source === "operator") ?? [],
@@ -165,7 +200,7 @@ export function RunCommandTabClient() {
         </div>
       ) : null}
 
-      <SectionCard title="Compose read run">
+      <SectionCard title="Compose run">
         <div className="grid gap-4 border-t border-border px-5 py-4 md:grid-cols-2">
           <div className="space-y-3 text-sm">
             <label className="space-y-1">
@@ -202,7 +237,7 @@ export function RunCommandTabClient() {
             </label>
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">
-                C · OBIS code group
+                C · OBIS / Action group
               </span>
               <select
                 className="h-9 w-full rounded-md border border-input bg-background px-2"
@@ -211,7 +246,7 @@ export function RunCommandTabClient() {
               >
                 {obisGroups.map((g) => (
                   <option key={g.id} value={g.id}>
-                    {g.name} ({g.objectCodes.length} codes)
+                    {actionGroupOptionLabel(g)}
                   </option>
                 ))}
               </select>
@@ -227,8 +262,8 @@ export function RunCommandTabClient() {
               {group ? group.memberMeterIds.length : 0}
             </p>
             <p>
-              <span className="text-muted-foreground">Object codes:</span>{" "}
-              {obisGroup ? obisGroup.objectCodes.length : 0}
+              <span className="text-muted-foreground">Action:</span>{" "}
+              {reviewActionLine(obisGroup)}
             </p>
             <p>
               <span className="text-muted-foreground">Schedule:</span>{" "}
@@ -237,14 +272,7 @@ export function RunCommandTabClient() {
             <Button
               type="button"
               className="mt-2 w-full"
-              disabled={
-                submitting ||
-                !meterGroupId ||
-                !scheduleId ||
-                !obisCodeGroupId ||
-                !group?.memberMeterIds.length ||
-                !obisGroup?.objectCodes.length
-              }
+              disabled={submitting || !canStart}
               onClick={() => void startRun()}
             >
               D · Start run
@@ -264,7 +292,7 @@ export function RunCommandTabClient() {
                   <TableHead>Status</TableHead>
                   <TableHead>Trigger</TableHead>
                   <TableHead>Meter group</TableHead>
-                  <TableHead>OBIS group</TableHead>
+                  <TableHead>Action group</TableHead>
                   <TableHead>Schedule</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Started</TableHead>
@@ -276,7 +304,9 @@ export function RunCommandTabClient() {
               <TableBody>
                 {operatorRows.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="text-xs">{r.status}</TableCell>
+                    <TableCell className="text-xs font-medium">
+                      {r.operatorDisplayStatus ?? r.status}
+                    </TableCell>
                     <TableCell className="text-xs">
                       {r.operatorTrigger ?? "—"}
                     </TableCell>

@@ -27,16 +27,26 @@ export type CommandGroup = {
   updatedAt: string
 }
 
-/** Saved OBIS catalog object codes for read composition. */
-export type ObisCodeGroup = {
+/** How an action group executes against each meter in the batch. */
+export type CommandActionGroupMode = "read_catalog" | "relay_on" | "relay_off"
+
+/**
+ * Reusable execution preset: OBIS catalog read and/or relay actions.
+ * Persisted in `data/command-obis-groups.json` (historic path).
+ */
+export type CommandActionGroup = {
   id: string
   name: string
   description: string
-  /** PRM `object_code` values from canonical catalog. */
+  actionMode: CommandActionGroupMode
+  /** Required when `actionMode === read_catalog"`; must be empty for relay modes. */
   objectCodes: string[]
   createdAt: string
   updatedAt: string
 }
+
+/** @deprecated Use `CommandActionGroup`; kept for searches during migration. */
+export type ObisCodeGroup = CommandActionGroup
 
 /**
  * Temporal schedule + defaults for automatic fires (meter + OBIS group).
@@ -93,6 +103,8 @@ export type OperatorCommandRun = {
   groupId: string | null
   meterGroupId: string | null
   obisCodeGroupId: string | null
+  /** Denormalized from action group when queued (for display / debugging). */
+  actionGroupMode: CommandActionGroupMode | null
   meterGroupName: string
   obisCodeGroupName: string
   scheduleName: string
@@ -110,6 +122,9 @@ export type OperatorCommandRun = {
 
 export type UnifiedCommandRunSource = "operator" | "legacy_catalog"
 
+/** Operator-facing run state (mapped from persisted `OperatorCommandRun`). */
+export type OperatorRunDisplayStatus = "pending" | "running" | "failed" | "success"
+
 export type UnifiedCommandRunRow = {
   id: string
   source: UnifiedCommandRunSource
@@ -121,6 +136,8 @@ export type UnifiedCommandRunRow = {
   obisCodeGroupName: string | null
   scheduleName: string | null
   actionType: string
+  /** pending = queued/draft, success = completed with all meters ok, etc. */
+  operatorDisplayStatus: OperatorRunDisplayStatus | null
   targetSummary: string
   status: string
   createdAt: string

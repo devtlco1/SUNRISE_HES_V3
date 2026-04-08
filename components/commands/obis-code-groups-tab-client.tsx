@@ -22,18 +22,29 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { ObisCatalogEntry } from "@/lib/obis/types"
-import type { ObisCodeGroup } from "@/types/command-operator"
+import type {
+  CommandActionGroup,
+  CommandActionGroupMode,
+} from "@/types/command-operator"
+
+function modeLabel(m: CommandActionGroupMode): string {
+  if (m === "read_catalog") return "Read (catalog)"
+  if (m === "relay_on") return "Relay on"
+  return "Relay off"
+}
 
 export function ObisCodeGroupsTabClient() {
-  const [groups, setGroups] = useState<ObisCodeGroup[]>([])
+  const [groups, setGroups] = useState<CommandActionGroup[]>([])
   const [catalog, setCatalog] = useState<ObisCatalogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [editing, setEditing] = useState<ObisCodeGroup | null>(null)
+  const [editing, setEditing] = useState<CommandActionGroup | null>(null)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
+  const [actionMode, setActionMode] =
+    useState<CommandActionGroupMode>("read_catalog")
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
 
@@ -45,7 +56,7 @@ export function ObisCodeGroupsTabClient() {
         fetch("/api/command-obis-groups", { cache: "no-store" }),
         fetch("/api/obis-catalog", { cache: "no-store" }),
       ])
-      if (!gr.ok) throw new Error("Failed to load OBIS code groups")
+      if (!gr.ok) throw new Error("Failed to load action groups")
       if (!cr.ok) throw new Error("Failed to load catalog")
       setGroups(await gr.json())
       setCatalog(await cr.json())
@@ -82,14 +93,16 @@ export function ObisCodeGroupsTabClient() {
     setEditing(null)
     setName("")
     setDescription("")
+    setActionMode("read_catalog")
     setSelectedCodes(new Set())
     setSheetOpen(true)
   }
 
-  function openEdit(g: ObisCodeGroup) {
+  function openEdit(g: CommandActionGroup) {
     setEditing(g)
     setName(g.name)
     setDescription(g.description)
+    setActionMode(g.actionMode)
     setSelectedCodes(new Set(g.objectCodes))
     setSheetOpen(true)
   }
@@ -101,7 +114,9 @@ export function ObisCodeGroupsTabClient() {
       const body = {
         name: name.trim(),
         description: description.trim(),
-        objectCodes: [...selectedCodes],
+        actionMode,
+        objectCodes:
+          actionMode === "read_catalog" ? [...selectedCodes] : [],
       }
       const url = editing
         ? `/api/command-obis-groups/${editing.id}`
@@ -125,7 +140,7 @@ export function ObisCodeGroupsTabClient() {
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Delete this OBIS code group?")) return
+    if (!window.confirm("Delete this action group?")) return
     setError(null)
     try {
       const res = await fetch(`/api/command-obis-groups/${id}`, {
@@ -159,8 +174,8 @@ export function ObisCodeGroupsTabClient() {
       ) : null}
 
       <SectionCard
-        title="OBIS code groups"
-        description="Reusable lists of PRM catalog object codes for scheduled and manual reads."
+        title="OBIS / Actions"
+        description="Read presets from the PRM catalog, or relay on/off presets. Schedules and Run use these groups."
         headerActions={
           <Button type="button" size="sm" onClick={openCreate}>
             <PlusIcon className="size-3.5" aria-hidden />
@@ -172,13 +187,14 @@ export function ObisCodeGroupsTabClient() {
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : groups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No OBIS code groups.</p>
+            <p className="text-sm text-muted-foreground">No action groups.</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Codes</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Detail</TableHead>
                   <TableHead className="w-24 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -186,8 +202,13 @@ export function ObisCodeGroupsTabClient() {
                 {groups.map((g) => (
                   <TableRow key={g.id}>
                     <TableCell className="font-medium">{g.name}</TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
-                      {g.objectCodes.length}
+                    <TableCell className="text-xs text-muted-foreground">
+                      {modeLabel(g.actionMode)}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {g.actionMode === "read_catalog"
+                        ? `${g.objectCodes.length} code(s)`
+                        : "—"}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
@@ -223,7 +244,7 @@ export function ObisCodeGroupsTabClient() {
         <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
           <SheetHeader className="border-b border-border px-4 py-4">
             <SheetTitle>
-              {editing ? "Edit OBIS code group" : "New OBIS code group"}
+              {editing ? "Edit action group" : "New action group"}
             </SheetTitle>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3">
@@ -240,53 +261,83 @@ export function ObisCodeGroupsTabClient() {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </label>
-            <div className="text-xs text-muted-foreground">
-              Selected {selectedCodes.size} code(s)
-            </div>
-            <FilterBar>
-              <Input
-                className="h-8 max-w-xs text-sm"
-                placeholder="Filter catalog…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </FilterBar>
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
-              <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-muted/80 backdrop-blur">
-                  <tr>
-                    <th className="w-8 px-2 py-1.5" />
-                    <th className="px-2 py-1.5">Code</th>
-                    <th className="px-2 py-1.5">Name</th>
-                    <th className="px-2 py-1.5">Class / subclass</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredCatalog.map((e) => (
-                    <tr
-                      key={e.object_code}
-                      className="border-t border-border/80 hover:bg-muted/40"
-                    >
-                      <td className="px-2 py-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedCodes.has(e.object_code)}
-                          onChange={() => toggleCode(e.object_code)}
-                          aria-label={`Select ${e.object_code}`}
-                        />
-                      </td>
-                      <td className="px-2 py-1 font-mono">{e.object_code}</td>
-                      <td className="max-w-[160px] truncate px-2 py-1">
-                        {e.object_name}
-                      </td>
-                      <td className="max-w-[180px] truncate px-2 py-1 text-muted-foreground">
-                        {e.class_name} · {e.subclass_name} · {e.sort_no}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">
+                Action mode
+              </span>
+              <select
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                value={actionMode}
+                onChange={(e) =>
+                  setActionMode(e.target.value as CommandActionGroupMode)
+                }
+              >
+                <option value="read_catalog">Read — OBIS catalog codes</option>
+                <option value="relay_on">Relay on (reconnect)</option>
+                <option value="relay_off">Relay off (disconnect)</option>
+              </select>
+            </label>
+
+            {actionMode === "read_catalog" ? (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  Selected {selectedCodes.size} code(s)
+                </div>
+                <FilterBar>
+                  <Input
+                    className="h-8 max-w-xs text-sm"
+                    placeholder="Filter catalog…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </FilterBar>
+                <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                      <tr>
+                        <th className="w-8 px-2 py-1.5" />
+                        <th className="px-2 py-1.5">Code</th>
+                        <th className="px-2 py-1.5">Name</th>
+                        <th className="px-2 py-1.5">Class / subclass</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredCatalog.map((e) => (
+                        <tr
+                          key={e.object_code}
+                          className="border-t border-border/80 hover:bg-muted/40"
+                        >
+                          <td className="px-2 py-1">
+                            <input
+                              type="checkbox"
+                              checked={selectedCodes.has(e.object_code)}
+                              onChange={() => toggleCode(e.object_code)}
+                              aria-label={`Select ${e.object_code}`}
+                            />
+                          </td>
+                          <td className="px-2 py-1 font-mono">
+                            {e.object_code}
+                          </td>
+                          <td className="max-w-[160px] truncate px-2 py-1">
+                            {e.object_name}
+                          </td>
+                          <td className="max-w-[180px] truncate px-2 py-1 text-muted-foreground">
+                            {e.class_name} · {e.subclass_name} · {e.sort_no}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No catalog selection. This group runs{" "}
+                {actionMode === "relay_on" ? "relay reconnect" : "relay disconnect"}{" "}
+                on each meter in the batch.
+              </p>
+            )}
+
             <Button
               type="button"
               className="w-full shrink-0"

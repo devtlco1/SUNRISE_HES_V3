@@ -8,7 +8,7 @@ export default function CommandsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Commands"
-        subtitle="Meter groups, schedules, OBIS selections, and read runs in one workspace."
+        subtitle="Meter groups, OBIS/actions, schedules, and runs in one workspace."
       />
       <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
         <CommandsWorkspaceClient />

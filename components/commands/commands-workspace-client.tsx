@@ -16,8 +16,8 @@ import { RunCommandTabClient } from "@/components/commands/run-command-tab-clien
 
 const TABS: { id: CommandsWorkspaceTab; label: string }[] = [
   { id: "meter-groups", label: "Meter Groups" },
+  { id: "obis-groups", label: "OBIS / Actions" },
   { id: "schedules", label: "Schedules" },
-  { id: "obis-groups", label: "OBIS Code Groups" },
   { id: "run", label: "Run" },
 ]
 
@@ -70,8 +70,8 @@ export function CommandsWorkspaceClient() {
 
       <div role="tabpanel" className="min-h-[320px]">
         {tab === "meter-groups" ? <CommandGroupsPageClient /> : null}
-        {tab === "schedules" ? <CommandSchedulesTabClient /> : null}
         {tab === "obis-groups" ? <ObisCodeGroupsTabClient /> : null}
+        {tab === "schedules" ? <CommandSchedulesTabClient /> : null}
         {tab === "run" ? <RunCommandTabClient /> : null}
       </div>
     </div>

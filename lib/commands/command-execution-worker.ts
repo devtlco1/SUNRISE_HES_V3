@@ -14,6 +14,8 @@ import { readObisCatalog } from "@/lib/obis/catalog-store"
 import { readMetersJsonRaw } from "@/lib/meters/meters-file"
 import { normalizeMeterRows } from "@/lib/meters/normalize"
 import type {
+  CommandActionGroup,
+  OperatorActionType,
   OperatorCommandMeterResult,
   OperatorCommandRun,
   OperatorCommandRunStatus,
@@ -98,10 +100,58 @@ function aggregateStatus(
     }
   }
   return {
-    status: "completed",
+    status: "failed",
     resultSummary: `${ok} succeeded, ${fail} failed (partial)`,
     errorSummary: `${fail} meter(s) failed in batch`,
   }
+}
+
+type Plan =
+  | { kind: "read_obis"; items: ObisSelectionItemInput[] }
+  | { kind: "runtime"; action: OperatorActionType }
+  | { kind: "fatal"; message: string }
+
+async function planFromActionGroup(ag: CommandActionGroup): Promise<Plan> {
+  if (ag.actionMode === "relay_on") {
+    return { kind: "runtime", action: "relay_on" }
+  }
+  if (ag.actionMode === "relay_off") {
+    return { kind: "runtime", action: "relay_off" }
+  }
+
+  if (ag.objectCodes.length === 0) {
+    return {
+      kind: "fatal",
+      message:
+        "read_catalog group has no object codes — fix the action group definition",
+    }
+  }
+
+  const catalog = await readObisCatalog()
+  const items = catalogEntriesToSelectionItems(ag.objectCodes, catalog)
+  if (items.length === 0) {
+    return {
+      kind: "fatal",
+      message: `No enabled catalog rows matched ${ag.objectCodes.length} object code(s). Codes may be wrong, disabled in the PRM catalog, or missing from data/obis-catalog.json.`,
+    }
+  }
+  return { kind: "read_obis", items }
+}
+
+async function buildExecutionPlan(snapshot: OperatorCommandRun): Promise<Plan> {
+  if (snapshot.obisCodeGroupId) {
+    const groups = await loadObisCodeGroupsUnsafe()
+    const ag = groups.find((g) => g.id === snapshot.obisCodeGroupId)
+    if (!ag) {
+      return {
+        kind: "fatal",
+        message: `Action group id ${snapshot.obisCodeGroupId} not found`,
+      }
+    }
+    return planFromActionGroup(ag)
+  }
+
+  return { kind: "runtime", action: snapshot.actionType }
 }
 
 async function runOperatorCommandExecution(runId: string): Promise<void> {
@@ -132,31 +182,27 @@ async function runOperatorCommandExecution(runId: string): Promise<void> {
       return
     }
 
+    const plan = await buildExecutionPlan(snapshot)
+    if (plan.kind === "fatal") {
+      await markRunEngineFailure(runId, plan.message)
+      return
+    }
+
     const metersRaw = await readMetersJsonRaw()
     const meters = metersRaw.ok ? normalizeMeterRows(metersRaw.parsed) : []
     const metersById = new Map(meters.map((m) => [m.id, m]))
 
-    let obisItems: ObisSelectionItemInput[] | null = null
-    if (snapshot.actionType === "read" && snapshot.obisCodeGroupId) {
-      const groups = await loadObisCodeGroupsUnsafe()
-      const og = groups.find((g) => g.id === snapshot.obisCodeGroupId)
-      const catalog = await readObisCatalog()
-      obisItems = og
-        ? catalogEntriesToSelectionItems(og.objectCodes, catalog)
-        : []
-    }
-
     const perMeter: OperatorCommandMeterResult[] = []
     for (const meterId of snapshot.resolvedMeterIds) {
       const out =
-        obisItems !== null
+        plan.kind === "read_obis"
           ? await executeMeterReadObisSelection({
               meterId,
-              selectedItems: obisItems,
+              selectedItems: plan.items,
             })
           : await executeMeterRuntimeAction({
               meterId,
-              action: snapshot.actionType,
+              action: plan.action,
               readProfileMode: snapshot.readProfileMode,
             })
       const m = metersById.get(meterId)

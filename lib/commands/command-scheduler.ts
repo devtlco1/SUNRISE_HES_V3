@@ -1,3 +1,4 @@
+import { actionModeToOperatorAction } from "@/lib/commands/action-group-helpers"
 import { kickOperatorCommandExecution } from "@/lib/commands/command-execution-worker"
 import {
   COMMAND_ENGINE_LIMITS_NOTE,
@@ -18,7 +19,11 @@ import {
   isScheduleContextuallyAllowed,
   minuteMatchesRunAt,
 } from "@/lib/commands/schedule-next-run"
-import type { CommandSchedule, OperatorCommandRun } from "@/types/command-operator"
+import type {
+  CommandActionGroup,
+  CommandSchedule,
+  OperatorCommandRun,
+} from "@/types/command-operator"
 
 const TICK_MS = 15_000
 
@@ -44,7 +49,7 @@ async function resolveScheduleAutoRunContext(schedule: CommandSchedule): Promise
       meterIds: string[]
       targetSummary: string
       meterGroupName: string
-      obisCodeGroupName: string
+      actionGroup: CommandActionGroup
     }
   | { ok: false; error: string }
 > {
@@ -82,7 +87,7 @@ async function resolveScheduleAutoRunContext(schedule: CommandSchedule): Promise
     meterIds: ctx.meterIds,
     targetSummary: ctx.targetSummary,
     meterGroupName: g.name,
-    obisCodeGroupName: og.name,
+    actionGroup: og,
   }
 }
 
@@ -91,14 +96,14 @@ function buildScheduledOperatorRun(
   meterIds: string[],
   targetSummary: string,
   meterGroupName: string,
-  obisCodeGroupName: string
+  actionGroup: CommandActionGroup
 ): OperatorCommandRun {
   const now = new Date().toISOString()
   return {
     id: `cr-${crypto.randomUUID()}`,
     sourceType: "schedule",
     scheduleId: schedule.id,
-    actionType: "read",
+    actionType: actionModeToOperatorAction(actionGroup.actionMode),
     targetType: "saved_group",
     targetSummary,
     meterIds,
@@ -106,8 +111,9 @@ function buildScheduledOperatorRun(
     groupId: schedule.meterGroupId,
     meterGroupId: schedule.meterGroupId,
     obisCodeGroupId: schedule.obisCodeGroupId,
+    actionGroupMode: actionGroup.actionMode,
     meterGroupName,
-    obisCodeGroupName,
+    obisCodeGroupName: actionGroup.name,
     scheduleName: schedule.name,
     status: "queued",
     createdAt: now,
@@ -220,7 +226,7 @@ export async function tickCommandSchedulerOnce(): Promise<void> {
       ctx.meterIds,
       ctx.targetSummary,
       ctx.meterGroupName,
-      ctx.obisCodeGroupName
+      ctx.actionGroup
     )
     await appendScheduledRunAndBumpNext(schedule, newRun)
     runs = [...runs, newRun]

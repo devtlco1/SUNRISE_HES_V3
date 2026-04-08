@@ -1,6 +1,8 @@
+import { operatorRunDisplayStatus } from "@/lib/commands/operator-run-display-status"
 import type { CommandJobRow, CommandTemplateId } from "@/types/command"
 import type {
   OperatorCommandRun,
+  OperatorRunDisplayStatus,
   UnifiedCommandRunRow,
 } from "@/types/command-operator"
 
@@ -14,6 +16,24 @@ function templateToActionLabel(id: CommandTemplateId): string {
 function parseRunDate(s: string): number {
   const t = Date.parse(s)
   return Number.isFinite(t) ? t : 0
+}
+
+function legacyJobDisplayStatus(
+  row: CommandJobRow
+): OperatorRunDisplayStatus | null {
+  const q = row.queueState
+  if (q === "submitted" || q === "queued" || q === "dispatching") {
+    return "pending"
+  }
+  if (q === "running") return "running"
+  if (q === "failed" || q === "partial_failure" || q === "cancelled") {
+    return "failed"
+  }
+  if (q === "completed") {
+    if (row.failedCount > 0) return "failed"
+    return "success"
+  }
+  return "failed"
 }
 
 function meterOutcomeBrief(row: OperatorCommandRun): string | null {
@@ -35,6 +55,7 @@ export function operatorRunToUnified(row: OperatorCommandRun): UnifiedCommandRun
     obisCodeGroupName: row.obisCodeGroupName || null,
     scheduleName: row.scheduleName || null,
     actionType: row.actionType,
+    operatorDisplayStatus: operatorRunDisplayStatus(row),
     targetSummary: row.targetSummary,
     status: row.status,
     createdAt: row.createdAt,
@@ -59,6 +80,7 @@ export function legacyJobToUnified(row: CommandJobRow): UnifiedCommandRunRow {
     obisCodeGroupName: null,
     scheduleName: null,
     actionType: templateToActionLabel(row.templateId),
+    operatorDisplayStatus: legacyJobDisplayStatus(row),
     targetSummary: `${row.targetCount} meter(s) · ${row.templateName}`,
     status: row.queueState,
     createdAt: row.submittedAt,

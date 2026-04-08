@@ -12,8 +12,8 @@ import {
   normalizeOperatorRuns,
 } from "@/lib/commands/operator-normalize"
 import type {
+  CommandActionGroup,
   CommandSchedule,
-  ObisCodeGroup,
   OperatorCommandRun,
 } from "@/types/command-operator"
 
@@ -103,8 +103,8 @@ export async function loadSchedulesUnsafe(): Promise<CommandSchedule[]> {
 let obisGroupsWriteChain: Promise<void> = Promise.resolve()
 
 export function withObisCodeGroupsLock<T>(
-  fn: (rows: ObisCodeGroup[]) => Promise<{
-    next: ObisCodeGroup[]
+  fn: (rows: CommandActionGroup[]) => Promise<{
+    next: CommandActionGroup[]
     result: T
   }>
 ): Promise<T> {
@@ -117,8 +117,8 @@ export function withObisCodeGroupsLock<T>(
 }
 
 async function runObisGroupsMutation<T>(
-  fn: (rows: ObisCodeGroup[]) => Promise<{
-    next: ObisCodeGroup[]
+  fn: (rows: CommandActionGroup[]) => Promise<{
+    next: CommandActionGroup[]
     result: T
   }>
 ): Promise<T> {
@@ -135,7 +135,7 @@ async function runObisGroupsMutation<T>(
   return result
 }
 
-export async function loadObisCodeGroupsUnsafe(): Promise<ObisCodeGroup[]> {
+export async function loadObisCodeGroupsUnsafe(): Promise<CommandActionGroup[]> {
   const raw = await readObisCodeGroupsRaw()
   if (!raw.ok) return []
   return normalizeObisCodeGroups(raw.parsed)

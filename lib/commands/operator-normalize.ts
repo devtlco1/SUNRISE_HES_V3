@@ -1,8 +1,9 @@
 import type {
+  CommandActionGroup,
+  CommandActionGroupMode,
   CommandGroup,
   CommandSchedule,
   CommandScheduleType,
-  ObisCodeGroup,
   OperatorActionType,
   OperatorCommandMeterResult,
   OperatorCommandRun,
@@ -32,6 +33,11 @@ const SCHEDULE_TYPES: readonly CommandScheduleType[] = [
   "once",
   "daily",
   "every_n_days",
+]
+const ACTION_GROUP_MODES: readonly CommandActionGroupMode[] = [
+  "read_catalog",
+  "relay_on",
+  "relay_off",
 ]
 
 function isMember<T extends string>(
@@ -92,7 +98,9 @@ export function normalizeCommandGroups(rows: unknown[]): CommandGroup[] {
   return rows.map(normalizeCommandGroup).filter((x): x is CommandGroup => x !== null)
 }
 
-export function normalizeObisCodeGroup(raw: unknown): ObisCodeGroup | null {
+export function normalizeCommandActionGroup(
+  raw: unknown
+): CommandActionGroup | null {
   if (!raw || typeof raw !== "object") return null
   const r = raw as Record<string, unknown>
   const id = nonEmptyString(r.id)
@@ -102,18 +110,32 @@ export function normalizeObisCodeGroup(raw: unknown): ObisCodeGroup | null {
     typeof r.description === "string" ? r.description.trim() : ""
   const createdAt = nonEmptyString(r.createdAt) ?? new Date().toISOString()
   const updatedAt = nonEmptyString(r.updatedAt) ?? createdAt
+  const objectCodes = stringArray(r.objectCodes)
+  const mode = isMember(r.actionMode, ACTION_GROUP_MODES)
+    ? r.actionMode
+    : ("read_catalog" as const)
   return {
     id,
     name,
     description,
-    objectCodes: stringArray(r.objectCodes),
+    actionMode: mode,
+    objectCodes,
     createdAt,
     updatedAt,
   }
 }
 
-export function normalizeObisCodeGroups(rows: unknown[]): ObisCodeGroup[] {
-  return rows.map(normalizeObisCodeGroup).filter((x): x is ObisCodeGroup => x !== null)
+/** @deprecated use normalizeCommandActionGroup */
+export function normalizeObisCodeGroup(raw: unknown): CommandActionGroup | null {
+  return normalizeCommandActionGroup(raw)
+}
+
+export function normalizeObisCodeGroups(
+  rows: unknown[]
+): CommandActionGroup[] {
+  return rows
+    .map(normalizeCommandActionGroup)
+    .filter((x): x is CommandActionGroup => x !== null)
 }
 
 /** Migrate pre-refactor schedules (cadenceType / recurrence / embedded targets). */
@@ -323,6 +345,18 @@ export function normalizeOperatorRun(raw: unknown): OperatorCommandRun | null {
   const scheduleName =
     typeof r.scheduleName === "string" ? r.scheduleName : ""
 
+  let actionGroupMode: CommandActionGroupMode | null =
+    r.actionGroupMode === null || r.actionGroupMode === undefined
+      ? null
+      : isMember(r.actionGroupMode, ACTION_GROUP_MODES)
+        ? r.actionGroupMode
+        : null
+  if (actionGroupMode === null && obisCodeGroupId) {
+    if (actionType === "relay_on") actionGroupMode = "relay_on"
+    else if (actionType === "relay_off") actionGroupMode = "relay_off"
+    else actionGroupMode = "read_catalog"
+  }
+
   const readProfileMode = nonEmptyString(r.readProfileMode) ?? undefined
   const createdAt = nonEmptyString(r.createdAt) ?? new Date().toISOString()
   const queuedAt = nonEmptyString(r.queuedAt) ?? createdAt
@@ -360,6 +394,7 @@ export function normalizeOperatorRun(raw: unknown): OperatorCommandRun | null {
     groupId,
     meterGroupId,
     obisCodeGroupId,
+    actionGroupMode,
     meterGroupName,
     obisCodeGroupName,
     scheduleName,

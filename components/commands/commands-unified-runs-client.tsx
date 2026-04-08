@@ -130,7 +130,7 @@ export function CommandsUnifiedRunsClient() {
                   <TableHead>Sched. name</TableHead>
                   <TableHead>Action</TableHead>
                   <TableHead>Target</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>State</TableHead>
                   <TableHead>Meters</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Started</TableHead>
@@ -173,7 +173,9 @@ export function CommandsUnifiedRunsClient() {
                     >
                       {r.targetSummary}
                     </TableCell>
-                    <TableCell className="text-xs">{r.status}</TableCell>
+                    <TableCell className="text-xs font-medium">
+                      {r.operatorDisplayStatus ?? r.status}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {r.meterOutcomeBrief ?? "—"}
                     </TableCell>

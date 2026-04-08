@@ -21,10 +21,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type {
+  CommandActionGroup,
   CommandGroup,
   CommandSchedule,
   CommandScheduleType,
-  ObisCodeGroup,
 } from "@/types/command-operator"
 
 function typeLabel(s: CommandSchedule): string {
@@ -32,6 +32,13 @@ function typeLabel(s: CommandSchedule): string {
     return `Every ${s.intervalDays ?? "?"}d`
   }
   return s.scheduleType === "once" ? "Once" : "Daily"
+}
+
+function actionGroupTypeLabel(g: CommandActionGroup | undefined): string {
+  if (!g) return "—"
+  if (g.actionMode === "read_catalog") return "Read"
+  if (g.actionMode === "relay_on") return "Relay on"
+  return "Relay off"
 }
 
 function windowSummary(s: CommandSchedule): string {
@@ -48,7 +55,7 @@ function windowSummary(s: CommandSchedule): string {
 export function CommandSchedulesTabClient() {
   const [schedules, setSchedules] = useState<CommandSchedule[]>([])
   const [groups, setGroups] = useState<CommandGroup[]>([])
-  const [obisGroups, setObisGroups] = useState<ObisCodeGroup[]>([])
+  const [obisGroups, setObisGroups] = useState<CommandActionGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -88,7 +95,7 @@ export function CommandSchedulesTabClient() {
       ])
       if (!sr.ok) throw new Error("Failed to load schedules")
       if (!gr.ok) throw new Error("Failed to load groups")
-      if (!or.ok) throw new Error("Failed to load OBIS code groups")
+      if (!or.ok) throw new Error("Failed to load action groups")
       setSchedules(await sr.json())
       setGroups(await gr.json())
       setObisGroups(await or.json())
@@ -230,7 +237,8 @@ export function CommandSchedulesTabClient() {
                   <TableHead>Run at</TableHead>
                   <TableHead>Window</TableHead>
                   <TableHead>Meter grp</TableHead>
-                  <TableHead>OBIS grp</TableHead>
+                  <TableHead>Action grp</TableHead>
+                  <TableHead>Act. type</TableHead>
                   <TableHead>Next</TableHead>
                   <TableHead className="w-24 text-right">Actions</TableHead>
                 </TableRow>
@@ -263,6 +271,13 @@ export function CommandSchedulesTabClient() {
                       {s.obisCodeGroupId
                         ? (obisById.get(s.obisCodeGroupId)?.name ??
                             s.obisCodeGroupId)
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {s.obisCodeGroupId
+                        ? actionGroupTypeLabel(
+                            obisById.get(s.obisCodeGroupId)
+                          )
                         : "—"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
@@ -416,7 +431,7 @@ export function CommandSchedulesTabClient() {
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-xs font-medium text-muted-foreground">
-                OBIS code group (auto-run reads)
+                Action group — read or relay (auto-run)
               </span>
               <select
                 className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"

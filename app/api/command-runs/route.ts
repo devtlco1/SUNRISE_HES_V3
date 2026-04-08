@@ -1,3 +1,7 @@
+import {
+  actionModeToOperatorAction,
+  assertActionGroupForApi,
+} from "@/lib/commands/action-group-helpers"
 import { kickOperatorCommandExecution } from "@/lib/commands/command-execution-worker"
 import { COMMAND_ENGINE_LIMITS_NOTE } from "@/lib/commands/engine-constants"
 import { loadLegacyCommandJobs } from "@/lib/commands/legacy-jobs-load"
@@ -103,6 +107,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "UNKNOWN_OBIS_CODE_GROUP_ID" }, { status: 400 })
     }
 
+    const shapeOk = assertActionGroupForApi(obisGroup)
+    if (!shapeOk.ok) {
+      return NextResponse.json({ error: shapeOk.error }, { status: 400 })
+    }
+
     const ctx = await resolveCommandExecutionContext({
       targetType: "saved_group",
       meterIds: [],
@@ -118,11 +127,13 @@ export async function POST(req: Request) {
     const now = new Date().toISOString()
     const id = `cr-${crypto.randomUUID()}`
 
+    const actionType = actionModeToOperatorAction(obisGroup.actionMode)
+
     const draft = {
       id,
       sourceType: "manual" as const,
       scheduleId,
-      actionType: "read" as const,
+      actionType,
       targetType: "saved_group" as const,
       targetSummary: ctx.targetSummary,
       meterIds: ctx.meterIds,
@@ -130,17 +141,20 @@ export async function POST(req: Request) {
       groupId: meterGroupId,
       meterGroupId,
       obisCodeGroupId,
+      actionGroupMode: obisGroup.actionMode,
       meterGroupName: group.name,
       obisCodeGroupName: obisGroup.name,
       scheduleName: schedule.name,
       status: "queued" as const,
+      readProfileMode:
+        actionType === "read" ? "default_register_pull" : undefined,
       createdAt: now,
       queuedAt: now,
       startedAt: null,
       finishedAt: null,
       resultSummary: "Queued for execution",
       errorSummary: null,
-      executionNote: `${COMMAND_ENGINE_LIMITS_NOTE} · Manual read bundle`,
+      executionNote: `${COMMAND_ENGINE_LIMITS_NOTE} · Manual bundle (${obisGroup.actionMode})`,
       perMeterResults: [] as const,
     }
 
@@ -217,6 +231,7 @@ export async function POST(req: Request) {
     groupId,
     meterGroupId: targetType === "saved_group" ? groupId : null,
     obisCodeGroupId: null,
+    actionGroupMode: null,
     meterGroupName: "",
     obisCodeGroupName: "",
     scheduleName: "",
