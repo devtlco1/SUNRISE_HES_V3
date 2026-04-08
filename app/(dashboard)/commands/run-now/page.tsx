@@ -1,14 +1,7 @@
-import { CommandsRunNowClient } from "@/components/commands/commands-run-now-client"
-import { PageHeader } from "@/components/shared/page-header"
+import { commandsLegacyPathToTab } from "@/lib/commands/nav"
+import { redirect } from "next/navigation"
 
-export default function CommandsRunNowPage() {
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Run now"
-        subtitle="Compose target + action; the server queues and executes against the Python sidecar (direct TCP path)."
-      />
-      <CommandsRunNowClient />
-    </div>
-  )
+export default function CommandsRunNowRedirectPage() {
+  const tab = commandsLegacyPathToTab("/commands/run-now")
+  redirect(`/commands?tab=${tab}`)
 }

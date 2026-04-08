@@ -1,8 +1,19 @@
 import { kickOperatorCommandExecution } from "@/lib/commands/command-execution-worker"
 import { COMMAND_ENGINE_LIMITS_NOTE } from "@/lib/commands/engine-constants"
 import { loadLegacyCommandJobs } from "@/lib/commands/legacy-jobs-load"
-import { readOperatorRunsRaw } from "@/lib/commands/operator-file"
-import { normalizeOperatorRun, normalizeOperatorRuns } from "@/lib/commands/operator-normalize"
+import {
+  readCommandGroupsRaw,
+  readCommandSchedulesRaw,
+  readObisCodeGroupsRaw,
+  readOperatorRunsRaw,
+} from "@/lib/commands/operator-file"
+import {
+  normalizeCommandGroups,
+  normalizeCommandSchedules,
+  normalizeObisCodeGroups,
+  normalizeOperatorRun,
+  normalizeOperatorRuns,
+} from "@/lib/commands/operator-normalize"
 import { withOperatorRunsLock } from "@/lib/commands/operator-persistence"
 import { resolveCommandExecutionContext } from "@/lib/commands/resolve-command-context"
 import { mergeAndSortUnifiedRuns } from "@/lib/commands/unified-runs"
@@ -18,6 +29,12 @@ const TARGETS: readonly OperatorTargetType[] = [
   "selected_meters",
   "saved_group",
 ]
+
+function nonEmptyId(v: unknown): string | null {
+  if (typeof v !== "string") return null
+  const t = v.trim()
+  return t === "" ? null : t
+}
 
 export async function GET() {
   const opRaw = await readOperatorRunsRaw()
@@ -50,6 +67,101 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "INVALID_JSON" }, { status: 400 })
   }
   const o = body && typeof body === "object" ? (body as Record<string, unknown>) : {}
+
+  const meterGroupId = nonEmptyId(o.meterGroupId)
+  const scheduleId = nonEmptyId(o.scheduleId)
+  const obisCodeGroupId = nonEmptyId(o.obisCodeGroupId)
+
+  if (meterGroupId && scheduleId && obisCodeGroupId) {
+    const graw = await readCommandGroupsRaw()
+    if (!graw.ok) {
+      return NextResponse.json({ error: graw.error }, { status: 500 })
+    }
+    const groups = normalizeCommandGroups(graw.parsed)
+    const group = groups.find((g) => g.id === meterGroupId)
+    if (!group) {
+      return NextResponse.json({ error: "UNKNOWN_METER_GROUP_ID" }, { status: 400 })
+    }
+
+    const sraw = await readCommandSchedulesRaw()
+    if (!sraw.ok) {
+      return NextResponse.json({ error: sraw.error }, { status: 500 })
+    }
+    const schedules = normalizeCommandSchedules(sraw.parsed)
+    const schedule = schedules.find((s) => s.id === scheduleId)
+    if (!schedule) {
+      return NextResponse.json({ error: "UNKNOWN_SCHEDULE_ID" }, { status: 400 })
+    }
+
+    const oraw = await readObisCodeGroupsRaw()
+    if (!oraw.ok) {
+      return NextResponse.json({ error: oraw.error }, { status: 500 })
+    }
+    const obisGroups = normalizeObisCodeGroups(oraw.parsed)
+    const obisGroup = obisGroups.find((g) => g.id === obisCodeGroupId)
+    if (!obisGroup) {
+      return NextResponse.json({ error: "UNKNOWN_OBIS_CODE_GROUP_ID" }, { status: 400 })
+    }
+
+    const ctx = await resolveCommandExecutionContext({
+      targetType: "saved_group",
+      meterIds: [],
+      groupId: meterGroupId,
+    })
+    if (!ctx.ok) {
+      return NextResponse.json(
+        { error: "INVALID_TARGET", detail: ctx.error },
+        { status: 400 }
+      )
+    }
+
+    const now = new Date().toISOString()
+    const id = `cr-${crypto.randomUUID()}`
+
+    const draft = {
+      id,
+      sourceType: "manual" as const,
+      scheduleId,
+      actionType: "read" as const,
+      targetType: "saved_group" as const,
+      targetSummary: ctx.targetSummary,
+      meterIds: ctx.meterIds,
+      resolvedMeterIds: ctx.meterIds,
+      groupId: meterGroupId,
+      meterGroupId,
+      obisCodeGroupId,
+      meterGroupName: group.name,
+      obisCodeGroupName: obisGroup.name,
+      scheduleName: schedule.name,
+      status: "queued" as const,
+      createdAt: now,
+      queuedAt: now,
+      startedAt: null,
+      finishedAt: null,
+      resultSummary: "Queued for execution",
+      errorSummary: null,
+      executionNote: `${COMMAND_ENGINE_LIMITS_NOTE} · Manual read bundle`,
+      perMeterResults: [] as const,
+    }
+
+    const row = normalizeOperatorRun(draft)
+    if (!row) {
+      return NextResponse.json({ error: "INVALID_RUN_ROW" }, { status: 500 })
+    }
+
+    try {
+      await withOperatorRunsLock(async (runs) => ({
+        next: [...runs, row],
+        result: undefined,
+      }))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "PERSIST_FAILED"
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+
+    kickOperatorCommandExecution(row.id)
+    return NextResponse.json(row, { status: 201 })
+  }
 
   const actionType = o.actionType
   const targetType = o.targetType
@@ -103,6 +215,11 @@ export async function POST(req: Request) {
     meterIds: ctx.meterIds,
     resolvedMeterIds: ctx.meterIds,
     groupId,
+    meterGroupId: targetType === "saved_group" ? groupId : null,
+    obisCodeGroupId: null,
+    meterGroupName: "",
+    obisCodeGroupName: "",
+    scheduleName: "",
     status: "queued" as const,
     readProfileMode:
       actionType === "read" ? readProfileMode ?? "default_register_pull" : undefined,

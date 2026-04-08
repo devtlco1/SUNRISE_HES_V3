@@ -15,6 +15,10 @@ export function commandOperatorRunsJsonPath(): string {
   return path.join(process.cwd(), DIR, "command-runs.json")
 }
 
+export function commandObisCodeGroupsJsonPath(): string {
+  return path.join(process.cwd(), DIR, "command-obis-groups.json")
+}
+
 async function readJsonArray(
   filePath: string
 ): Promise<
@@ -86,4 +90,17 @@ export async function writeOperatorRunsArray(
   next: unknown[]
 ): Promise<{ ok: true } | { ok: false; error: "WRITE_FAILED" }> {
   return writeJsonArray(commandOperatorRunsJsonPath(), next)
+}
+
+export async function readObisCodeGroupsRaw(): Promise<
+  | { ok: true; parsed: unknown[] }
+  | { ok: false; error: "LOAD_FAILED" | "INVALID_PAYLOAD" }
+> {
+  return readJsonArray(commandObisCodeGroupsJsonPath())
+}
+
+export async function writeObisCodeGroupsArray(
+  next: unknown[]
+): Promise<{ ok: true } | { ok: false; error: "WRITE_FAILED" }> {
+  return writeJsonArray(commandObisCodeGroupsJsonPath(), next)
 }

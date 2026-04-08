@@ -1,14 +1,18 @@
-import { CommandsOverviewClient } from "@/components/commands/commands-overview-client"
+import { Suspense } from "react"
+
+import { CommandsWorkspaceClient } from "@/components/commands/commands-workspace-client"
 import { PageHeader } from "@/components/shared/page-header"
 
-export default function CommandsOverviewPage() {
+export default function CommandsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
         title="Commands"
-        subtitle="Section overview — groups, schedules, and execution records. Use child pages for workflows."
+        subtitle="Meter groups, schedules, OBIS selections, and read runs in one workspace."
       />
-      <CommandsOverviewClient />
+      <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+        <CommandsWorkspaceClient />
+      </Suspense>
     </div>
   )
 }

@@ -1,15 +1,19 @@
 import {
   readCommandSchedulesRaw,
+  readObisCodeGroupsRaw,
   readOperatorRunsRaw,
   writeCommandSchedulesArray,
+  writeObisCodeGroupsArray,
   writeOperatorRunsArray,
 } from "@/lib/commands/operator-file"
 import {
   normalizeCommandSchedules,
+  normalizeObisCodeGroups,
   normalizeOperatorRuns,
 } from "@/lib/commands/operator-normalize"
 import type {
   CommandSchedule,
+  ObisCodeGroup,
   OperatorCommandRun,
 } from "@/types/command-operator"
 
@@ -94,4 +98,45 @@ export async function loadSchedulesUnsafe(): Promise<CommandSchedule[]> {
   const raw = await readCommandSchedulesRaw()
   if (!raw.ok) return []
   return normalizeCommandSchedules(raw.parsed)
+}
+
+let obisGroupsWriteChain: Promise<void> = Promise.resolve()
+
+export function withObisCodeGroupsLock<T>(
+  fn: (rows: ObisCodeGroup[]) => Promise<{
+    next: ObisCodeGroup[]
+    result: T
+  }>
+): Promise<T> {
+  const p = obisGroupsWriteChain.then(() => runObisGroupsMutation(fn))
+  obisGroupsWriteChain = p.then(
+    () => undefined,
+    () => undefined
+  )
+  return p
+}
+
+async function runObisGroupsMutation<T>(
+  fn: (rows: ObisCodeGroup[]) => Promise<{
+    next: ObisCodeGroup[]
+    result: T
+  }>
+): Promise<T> {
+  const raw = await readObisCodeGroupsRaw()
+  if (!raw.ok) {
+    throw new Error(raw.error)
+  }
+  const rows = normalizeObisCodeGroups(raw.parsed)
+  const { next, result } = await fn(rows)
+  const w = await writeObisCodeGroupsArray(next as unknown[])
+  if (!w.ok) {
+    throw new Error(w.error)
+  }
+  return result
+}
+
+export async function loadObisCodeGroupsUnsafe(): Promise<ObisCodeGroup[]> {
+  const raw = await readObisCodeGroupsRaw()
+  if (!raw.ok) return []
+  return normalizeObisCodeGroups(raw.parsed)
 }

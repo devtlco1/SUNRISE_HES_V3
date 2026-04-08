@@ -1,14 +1,7 @@
-import { CommandsUnifiedRunsClient } from "@/components/commands/commands-unified-runs-client"
-import { PageHeader } from "@/components/shared/page-header"
+import { commandsLegacyPathToTab } from "@/lib/commands/nav"
+import { redirect } from "next/navigation"
 
-export default function CommandsRunsPage() {
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Runs"
-        subtitle="Operator-recorded runs plus legacy catalog jobs — real persisted data only."
-      />
-      <CommandsUnifiedRunsClient />
-    </div>
-  )
+export default function CommandsRunsRedirectPage() {
+  const tab = commandsLegacyPathToTab("/commands/runs")
+  redirect(`/commands?tab=${tab}`)
 }

@@ -1,4 +1,4 @@
-/** Operator command section — persisted definitions and run records. */
+/** Operator command workspace — meter groups, schedules, OBIS groups, runs. */
 
 export type OperatorActionType = "read" | "relay_on" | "relay_off"
 
@@ -7,19 +7,7 @@ export type OperatorTargetType =
   | "selected_meters"
   | "saved_group"
 
-export type CommandScheduleCadenceType =
-  | "interval_minutes"
-  | "daily_time"
-  | "weekly"
-
-/** Loose recurrence payload; execution engine interprets in a later phase. */
-export type CommandScheduleRecurrence = {
-  intervalMinutes?: number
-  /** Local time HH:mm for daily_time */
-  timeLocal?: string
-  /** 0 = Sunday … 6 = Saturday for weekly */
-  daysOfWeek?: number[]
-}
+export type CommandScheduleType = "once" | "daily" | "every_n_days"
 
 export type OperatorCommandRunStatus =
   | "draft"
@@ -29,6 +17,7 @@ export type OperatorCommandRunStatus =
   | "failed"
   | "cancelled"
 
+/** Saved meters for command targeting (unchanged persistence). */
 export type CommandGroup = {
   id: string
   name: string
@@ -38,22 +27,42 @@ export type CommandGroup = {
   updatedAt: string
 }
 
+/** Saved OBIS catalog object codes for read composition. */
+export type ObisCodeGroup = {
+  id: string
+  name: string
+  description: string
+  /** PRM `object_code` values from canonical catalog. */
+  objectCodes: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Temporal schedule + defaults for automatic fires (meter + OBIS group).
+ * Manual Run tab still picks all three explicitly.
+ */
 export type CommandSchedule = {
   id: string
   name: string
   enabled: boolean
-  actionType: OperatorActionType
-  targetType: OperatorTargetType
-  /** Populated when target is single or selected */
-  meterIds: string[]
-  /** Populated when target is saved_group */
-  groupId: string | null
-  cadenceType: CommandScheduleCadenceType
-  recurrence: CommandScheduleRecurrence
+  scheduleType: CommandScheduleType
+  /** For `every_n_days` only. */
+  intervalDays: number | null
+  startDate: string | null
+  endDate: string | null
+  /** HH:mm local window start (optional). */
+  startTime: string | null
+  /** HH:mm local window end (optional). */
+  endTime: string | null
+  /** HH:mm anchor when the run should fire inside the window. */
+  runAtTime: string | null
   notes: string
+  /** Required for scheduler auto-runs. */
+  meterGroupId: string | null
+  obisCodeGroupId: string | null
   createdAt: string
   updatedAt: string
-  /** Scheduler / execution metadata (Phase 2). */
   lastRunAt: string | null
   nextRunAt: string | null
   lastRunId: string | null
@@ -80,11 +89,14 @@ export type OperatorCommandRun = {
   targetType: OperatorTargetType
   targetSummary: string
   meterIds: string[]
-  /** Concrete meters executed (snapshot at queue time). */
   resolvedMeterIds: string[]
   groupId: string | null
+  meterGroupId: string | null
+  obisCodeGroupId: string | null
+  meterGroupName: string
+  obisCodeGroupName: string
+  scheduleName: string
   status: OperatorCommandRunStatus
-  /** Future-safe read selection (e.g. catalog profile id). */
   readProfileMode?: string
   createdAt: string
   queuedAt: string
@@ -98,13 +110,16 @@ export type OperatorCommandRun = {
 
 export type UnifiedCommandRunSource = "operator" | "legacy_catalog"
 
-/** Table row merging operator runs with legacy jobs from commands.json. */
 export type UnifiedCommandRunRow = {
   id: string
   source: UnifiedCommandRunSource
-  /** Manual vs schedule for operator rows; null for legacy. */
   operatorTrigger: "manual" | "schedule" | null
   scheduleId: string | null
+  meterGroupId: string | null
+  obisCodeGroupId: string | null
+  meterGroupName: string | null
+  obisCodeGroupName: string | null
+  scheduleName: string | null
   actionType: string
   targetSummary: string
   status: string
@@ -114,10 +129,10 @@ export type UnifiedCommandRunRow = {
   resultSummary: string
   errorSummary: string | null
   notes: string | null
-  /** e.g. "3/4 meters ok" for operator runs with per-meter data. */
   meterOutcomeBrief: string | null
 }
 
+/** Legacy overview API / stats helper (optional dashboard use). */
 export type CommandsOverviewStats = {
   groupsCount: number
   schedulesCount: number

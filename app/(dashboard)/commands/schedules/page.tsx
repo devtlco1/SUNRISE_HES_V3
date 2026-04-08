@@ -1,14 +1,7 @@
-import { CommandSchedulesPageClient } from "@/components/commands/command-schedules-page-client"
-import { PageHeader } from "@/components/shared/page-header"
+import { commandsLegacyPathToTab } from "@/lib/commands/nav"
+import { redirect } from "next/navigation"
 
-export default function CommandsSchedulesPage() {
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Schedules"
-        subtitle="Saved cadence definitions (data/command-schedules.json); enabled rows are fired by the in-process scheduler."
-      />
-      <CommandSchedulesPageClient />
-    </div>
-  )
+export default function CommandsSchedulesRedirectPage() {
+  const tab = commandsLegacyPathToTab("/commands/schedules")
+  redirect(`/commands?tab=${tab}`)
 }

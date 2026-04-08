@@ -1,14 +1,7 @@
-import { CommandGroupsPageClient } from "@/components/commands/command-groups-page-client"
-import { PageHeader } from "@/components/shared/page-header"
+import { commandsLegacyPathToTab } from "@/lib/commands/nav"
+import { redirect } from "next/navigation"
 
-export default function CommandsGroupsPage() {
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Groups"
-        subtitle="Saved meter groups for batch targeting (data/command-groups.json)."
-      />
-      <CommandGroupsPageClient />
-    </div>
-  )
+export default function CommandsGroupsRedirectPage() {
+  const tab = commandsLegacyPathToTab("/commands/groups")
+  redirect(`/commands?tab=${tab}`)
 }

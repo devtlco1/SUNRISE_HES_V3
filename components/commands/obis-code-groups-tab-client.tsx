@@ -21,34 +21,34 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import type { CommandGroup } from "@/types/command-operator"
-import type { MeterListRow } from "@/types/meter"
+import type { ObisCatalogEntry } from "@/lib/obis/types"
+import type { ObisCodeGroup } from "@/types/command-operator"
 
-export function CommandGroupsPageClient() {
-  const [groups, setGroups] = useState<CommandGroup[]>([])
-  const [meters, setMeters] = useState<MeterListRow[]>([])
+export function ObisCodeGroupsTabClient() {
+  const [groups, setGroups] = useState<ObisCodeGroup[]>([])
+  const [catalog, setCatalog] = useState<ObisCatalogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [editing, setEditing] = useState<CommandGroup | null>(null)
+  const [editing, setEditing] = useState<ObisCodeGroup | null>(null)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [gr, mr] = await Promise.all([
-        fetch("/api/command-groups", { cache: "no-store" }),
-        fetch("/api/meters", { cache: "no-store" }),
+      const [gr, cr] = await Promise.all([
+        fetch("/api/command-obis-groups", { cache: "no-store" }),
+        fetch("/api/obis-catalog", { cache: "no-store" }),
       ])
-      if (!gr.ok) throw new Error("Failed to load groups")
-      if (!mr.ok) throw new Error("Failed to load meters")
+      if (!gr.ok) throw new Error("Failed to load OBIS code groups")
+      if (!cr.ok) throw new Error("Failed to load catalog")
       setGroups(await gr.json())
-      setMeters(await mr.json())
+      setCatalog(await cr.json())
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed")
     } finally {
@@ -60,31 +60,39 @@ export function CommandGroupsPageClient() {
     void load()
   }, [load])
 
+  const enabledCatalog = useMemo(
+    () => catalog.filter((e) => e.enabled),
+    [catalog]
+  )
+
+  const q = search.trim().toLowerCase()
+  const filteredCatalog = useMemo(() => {
+    if (!q) return enabledCatalog
+    return enabledCatalog.filter(
+      (e) =>
+        e.object_code.toLowerCase().includes(q) ||
+        e.object_name.toLowerCase().includes(q) ||
+        e.obis.toLowerCase().includes(q) ||
+        e.class_name.toLowerCase().includes(q) ||
+        e.subclass_name.toLowerCase().includes(q)
+    )
+  }, [enabledCatalog, q])
+
   function openCreate() {
     setEditing(null)
     setName("")
     setDescription("")
-    setSelectedIds(new Set())
+    setSelectedCodes(new Set())
     setSheetOpen(true)
   }
 
-  function openEdit(g: CommandGroup) {
+  function openEdit(g: ObisCodeGroup) {
     setEditing(g)
     setName(g.name)
     setDescription(g.description)
-    setSelectedIds(new Set(g.memberMeterIds))
+    setSelectedCodes(new Set(g.objectCodes))
     setSheetOpen(true)
   }
-
-  const meterSearch = search.trim().toLowerCase()
-  const filteredMeters = useMemo(() => {
-    if (!meterSearch) return meters
-    return meters.filter(
-      (m) =>
-        m.id.toLowerCase().includes(meterSearch) ||
-        m.serialNumber.toLowerCase().includes(meterSearch)
-    )
-  }, [meters, meterSearch])
 
   async function save() {
     setSaving(true)
@@ -93,11 +101,11 @@ export function CommandGroupsPageClient() {
       const body = {
         name: name.trim(),
         description: description.trim(),
-        memberMeterIds: [...selectedIds],
+        objectCodes: [...selectedCodes],
       }
       const url = editing
-        ? `/api/command-groups/${editing.id}`
-        : "/api/command-groups"
+        ? `/api/command-obis-groups/${editing.id}`
+        : "/api/command-obis-groups"
       const res = await fetch(url, {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -117,10 +125,12 @@ export function CommandGroupsPageClient() {
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Delete this group?")) return
+    if (!window.confirm("Delete this OBIS code group?")) return
     setError(null)
     try {
-      const res = await fetch(`/api/command-groups/${id}`, { method: "DELETE" })
+      const res = await fetch(`/api/command-obis-groups/${id}`, {
+        method: "DELETE",
+      })
       if (!res.ok) throw new Error("Delete failed")
       await load()
     } catch (e) {
@@ -128,11 +138,11 @@ export function CommandGroupsPageClient() {
     }
   }
 
-  function toggleMeter(id: string) {
-    setSelectedIds((prev) => {
+  function toggleCode(code: string) {
+    setSelectedCodes((prev) => {
       const n = new Set(prev)
-      if (n.has(id)) n.delete(id)
-      else n.add(id)
+      if (n.has(code)) n.delete(code)
+      else n.add(code)
       return n
     })
   }
@@ -149,12 +159,12 @@ export function CommandGroupsPageClient() {
       ) : null}
 
       <SectionCard
-        title="Meter groups"
-        description="Saved meter lists for batch targeting. Members must exist in the meters registry."
+        title="OBIS code groups"
+        description="Reusable lists of PRM catalog object codes for scheduled and manual reads."
         headerActions={
           <Button type="button" size="sm" onClick={openCreate}>
             <PlusIcon className="size-3.5" aria-hidden />
-            New group
+            New
           </Button>
         }
       >
@@ -162,16 +172,14 @@ export function CommandGroupsPageClient() {
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : groups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No groups yet.
-            </p>
+            <p className="text-sm text-muted-foreground">No OBIS code groups.</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Members</TableHead>
-                  <TableHead className="w-28 text-right">Actions</TableHead>
+                  <TableHead>Codes</TableHead>
+                  <TableHead className="w-24 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -179,7 +187,7 @@ export function CommandGroupsPageClient() {
                   <TableRow key={g.id}>
                     <TableCell className="font-medium">{g.name}</TableCell>
                     <TableCell className="tabular-nums text-muted-foreground">
-                      {g.memberMeterIds.length}
+                      {g.objectCodes.length}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
@@ -199,7 +207,7 @@ export function CommandGroupsPageClient() {
                           aria-label={`Delete ${g.name}`}
                           onClick={() => void remove(g.id)}
                         >
-                          <Trash2Icon className="size-3.5 text-destructive" />
+                          <Trash2Icon className="size-3.5" />
                         </Button>
                       </div>
                     </TableCell>
@@ -212,74 +220,81 @@ export function CommandGroupsPageClient() {
       </SectionCard>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="right" className="w-full max-w-md sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle>{editing ? "Edit group" : "New group"}</SheetTitle>
+        <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <SheetHeader className="border-b border-border px-4 py-4">
+            <SheetTitle>
+              {editing ? "Edit OBIS code group" : "New OBIS code group"}
+            </SheetTitle>
           </SheetHeader>
-          <div className="flex flex-col gap-4 px-4 pb-6">
-            <label className="space-y-1">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3">
+            <label className="space-y-1 text-sm">
               <span className="text-xs font-medium text-muted-foreground">
                 Name
               </span>
               <Input value={name} onChange={(e) => setName(e.target.value)} />
             </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Description
-              </span>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs text-muted-foreground">Description</span>
               <Input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
             </label>
-            <div className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">
-                Members ({selectedIds.size})
-              </span>
-              <FilterBar>
-                <Input
-                  placeholder="Search meters…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="max-w-xs"
-                />
-              </FilterBar>
-              <div className="max-h-64 overflow-y-auto rounded-md border border-border p-2">
-                {filteredMeters.map((m) => (
-                  <label
-                    key={m.id}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(m.id)}
-                      onChange={() => toggleMeter(m.id)}
-                      className="size-3.5 accent-primary"
-                    />
-                    <span className="truncate">
-                      {m.serialNumber}{" "}
-                      <span className="text-muted-foreground">({m.id})</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
+            <div className="text-xs text-muted-foreground">
+              Selected {selectedCodes.size} code(s)
             </div>
-            <div className="flex gap-2 pt-2">
-              <Button
-                type="button"
-                onClick={() => void save()}
-                disabled={saving || !name.trim()}
-              >
-                {saving ? "Saving…" : "Save"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setSheetOpen(false)}
-              >
-                Cancel
-              </Button>
+            <FilterBar>
+              <Input
+                className="h-8 max-w-xs text-sm"
+                placeholder="Filter catalog…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </FilterBar>
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                  <tr>
+                    <th className="w-8 px-2 py-1.5" />
+                    <th className="px-2 py-1.5">Code</th>
+                    <th className="px-2 py-1.5">Name</th>
+                    <th className="px-2 py-1.5">Class / subclass</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredCatalog.map((e) => (
+                    <tr
+                      key={e.object_code}
+                      className="border-t border-border/80 hover:bg-muted/40"
+                    >
+                      <td className="px-2 py-1">
+                        <input
+                          type="checkbox"
+                          checked={selectedCodes.has(e.object_code)}
+                          onChange={() => toggleCode(e.object_code)}
+                          aria-label={`Select ${e.object_code}`}
+                        />
+                      </td>
+                      <td className="px-2 py-1 font-mono">{e.object_code}</td>
+                      <td className="max-w-[160px] truncate px-2 py-1">
+                        {e.object_name}
+                      </td>
+                      <td className="max-w-[180px] truncate px-2 py-1 text-muted-foreground">
+                        {e.class_name} · {e.subclass_name} · {e.sort_no}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+            <Button
+              type="button"
+              className="w-full shrink-0"
+              disabled={saving}
+              onClick={() => void save()}
+            >
+              Save
+            </Button>
           </div>
         </SheetContent>
       </Sheet>

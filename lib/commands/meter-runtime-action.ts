@@ -1,13 +1,14 @@
 import { logConnectivityRuntimeEnvelope } from "@/lib/connectivity-events/runtime-envelope"
 import {
   postReadBasicRegistersToPythonSidecar,
+  postReadObisSelectionToPythonSidecar,
   postRelayDisconnectToPythonSidecar,
   postRelayReconnectToPythonSidecar,
   PythonSidecarHttpError,
   PythonSidecarNotConfiguredError,
 } from "@/lib/runtime/python-sidecar/client"
 import type { OperatorActionType } from "@/types/command-operator"
-import type { RuntimeResponseEnvelope } from "@/types/runtime"
+import type { ObisSelectionItemInput, RuntimeResponseEnvelope } from "@/types/runtime"
 
 function summarizeEnvelope(
   env: RuntimeResponseEnvelope<unknown>,
@@ -70,6 +71,55 @@ export async function executeMeterRuntimeAction(input: {
     }
 
     return { ok: false, summary: "Unknown action", errorDetail: "BAD_ACTION" }
+  } catch (e) {
+    if (e instanceof PythonSidecarNotConfiguredError) {
+      return {
+        ok: false,
+        summary: "Python sidecar not configured",
+        errorDetail: e.message,
+      }
+    }
+    if (e instanceof PythonSidecarHttpError) {
+      return {
+        ok: false,
+        summary: `Sidecar HTTP ${e.status}`,
+        errorDetail: e.bodyText.slice(0, 800),
+      }
+    }
+    return {
+      ok: false,
+      summary: e instanceof Error ? e.message : "Runtime error",
+    }
+  }
+}
+
+export async function executeMeterReadObisSelection(input: {
+  meterId: string
+  selectedItems: ObisSelectionItemInput[]
+}): Promise<{ ok: boolean; summary: string; errorDetail?: string }> {
+  if (input.selectedItems.length === 0) {
+    return {
+      ok: false,
+      summary: "No OBIS items resolved for this meter",
+      errorDetail: "EMPTY_OBIS_SELECTION",
+    }
+  }
+  try {
+    const envelope = await postReadObisSelectionToPythonSidecar({
+      meterId: input.meterId,
+      selectedItems: input.selectedItems,
+    })
+    logConnectivityRuntimeEnvelope(envelope, { route: "direct_tcp" })
+    const rowCount = envelope.payload?.rows?.length ?? 0
+    return {
+      ok: envelope.ok,
+      summary: envelope.ok
+        ? `OBIS read OK (${rowCount} row(s))`
+        : envelope.error?.message ?? envelope.message ?? "OBIS read failed",
+      errorDetail: envelope.ok
+        ? undefined
+        : envelope.error?.message ?? envelope.message,
+    }
   } catch (e) {
     if (e instanceof PythonSidecarNotConfiguredError) {
       return {

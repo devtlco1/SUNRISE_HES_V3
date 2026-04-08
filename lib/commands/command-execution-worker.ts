@@ -1,10 +1,16 @@
 import { COMMAND_ENGINE_LIMITS_NOTE } from "@/lib/commands/engine-constants"
-import { executeMeterRuntimeAction } from "@/lib/commands/meter-runtime-action"
 import {
+  executeMeterReadObisSelection,
+  executeMeterRuntimeAction,
+} from "@/lib/commands/meter-runtime-action"
+import { catalogEntriesToSelectionItems } from "@/lib/commands/obis-selection-from-codes"
+import {
+  loadObisCodeGroupsUnsafe,
   loadOperatorRunsUnsafe,
   withOperatorRunsLock,
   withSchedulesLock,
 } from "@/lib/commands/operator-persistence"
+import { readObisCatalog } from "@/lib/obis/catalog-store"
 import { readMetersJsonRaw } from "@/lib/meters/meters-file"
 import { normalizeMeterRows } from "@/lib/meters/normalize"
 import type {
@@ -12,6 +18,7 @@ import type {
   OperatorCommandRun,
   OperatorCommandRunStatus,
 } from "@/types/command-operator"
+import type { ObisSelectionItemInput } from "@/types/runtime"
 
 const activeRunWorkers = new Set<string>()
 
@@ -58,12 +65,15 @@ async function recordScheduleRunFinished(
     if (idx < 0) return { next: schedules, result: undefined }
     const s = schedules[idx]!
     const next = [...schedules]
+    const onceDone = s.scheduleType === "once"
     next[idx] = {
       ...s,
       lastRunAt: now,
       lastRunId: runId,
       lastOutcomeSummary: `${outcome}: ${summary}`.slice(0, 500),
       updatedAt: now,
+      enabled: onceDone ? false : s.enabled,
+      nextRunAt: onceDone ? null : s.nextRunAt,
     }
     return { next, result: undefined }
   })
@@ -126,13 +136,29 @@ async function runOperatorCommandExecution(runId: string): Promise<void> {
     const meters = metersRaw.ok ? normalizeMeterRows(metersRaw.parsed) : []
     const metersById = new Map(meters.map((m) => [m.id, m]))
 
+    let obisItems: ObisSelectionItemInput[] | null = null
+    if (snapshot.actionType === "read" && snapshot.obisCodeGroupId) {
+      const groups = await loadObisCodeGroupsUnsafe()
+      const og = groups.find((g) => g.id === snapshot.obisCodeGroupId)
+      const catalog = await readObisCatalog()
+      obisItems = og
+        ? catalogEntriesToSelectionItems(og.objectCodes, catalog)
+        : []
+    }
+
     const perMeter: OperatorCommandMeterResult[] = []
     for (const meterId of snapshot.resolvedMeterIds) {
-      const out = await executeMeterRuntimeAction({
-        meterId,
-        action: snapshot.actionType,
-        readProfileMode: snapshot.readProfileMode,
-      })
+      const out =
+        obisItems !== null
+          ? await executeMeterReadObisSelection({
+              meterId,
+              selectedItems: obisItems,
+            })
+          : await executeMeterRuntimeAction({
+              meterId,
+              action: snapshot.actionType,
+              readProfileMode: snapshot.readProfileMode,
+            })
       const m = metersById.get(meterId)
       perMeter.push({
         meterId,

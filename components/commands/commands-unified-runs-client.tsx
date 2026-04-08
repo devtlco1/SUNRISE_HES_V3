@@ -124,7 +124,10 @@ export function CommandsUnifiedRunsClient() {
                   <TableHead>Id</TableHead>
                   <TableHead>Source</TableHead>
                   <TableHead>Trigger</TableHead>
-                  <TableHead>Schedule</TableHead>
+                  <TableHead>Schedule id</TableHead>
+                  <TableHead>Meter grp</TableHead>
+                  <TableHead>OBIS grp</TableHead>
+                  <TableHead>Sched. name</TableHead>
                   <TableHead>Action</TableHead>
                   <TableHead>Target</TableHead>
                   <TableHead>Status</TableHead>
@@ -153,6 +156,15 @@ export function CommandsUnifiedRunsClient() {
                       title={r.scheduleId ?? ""}
                     >
                       {r.scheduleId ?? "—"}
+                    </TableCell>
+                    <TableCell className="max-w-[100px] truncate text-xs">
+                      {r.meterGroupName ?? r.meterGroupId ?? "—"}
+                    </TableCell>
+                    <TableCell className="max-w-[100px] truncate text-xs">
+                      {r.obisCodeGroupName ?? r.obisCodeGroupId ?? "—"}
+                    </TableCell>
+                    <TableCell className="max-w-[100px] truncate text-xs">
+                      {r.scheduleName ?? "—"}
                     </TableCell>
                     <TableCell className="text-xs">{r.actionType}</TableCell>
                     <TableCell

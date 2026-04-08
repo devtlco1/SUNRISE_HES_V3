@@ -4,13 +4,20 @@ import {
   SCHEDULE_OVERLAP_SKIP_NOTE,
 } from "@/lib/commands/engine-constants"
 import {
+  loadObisCodeGroupsUnsafe,
   loadOperatorRunsUnsafe,
   loadSchedulesUnsafe,
   withOperatorRunsLock,
   withSchedulesLock,
 } from "@/lib/commands/operator-persistence"
+import { readCommandGroupsRaw } from "@/lib/commands/operator-file"
+import { normalizeCommandGroups } from "@/lib/commands/operator-normalize"
 import { resolveCommandExecutionContext } from "@/lib/commands/resolve-command-context"
-import { computeNextRunAt } from "@/lib/commands/schedule-next-run"
+import {
+  computeNextRunAt,
+  isScheduleContextuallyAllowed,
+  minuteMatchesRunAt,
+} from "@/lib/commands/schedule-next-run"
 import type { CommandSchedule, OperatorCommandRun } from "@/types/command-operator"
 
 const TICK_MS = 15_000
@@ -20,10 +27,6 @@ declare global {
   var __SUNRISE_COMMAND_SCHEDULER_STARTED__: boolean | undefined
 }
 
-/**
- * Overlap policy: if a schedule already has a run in `queued` or `running`, skip the new fire,
- * bump `nextRunAt`, and record `lastSchedulerNote`. No second queue depth — avoids piling work.
- */
 function scheduleHasBlockingRun(
   runs: OperatorCommandRun[],
   scheduleId: string
@@ -35,27 +38,78 @@ function scheduleHasBlockingRun(
   )
 }
 
+async function resolveScheduleAutoRunContext(schedule: CommandSchedule): Promise<
+  | {
+      ok: true
+      meterIds: string[]
+      targetSummary: string
+      meterGroupName: string
+      obisCodeGroupName: string
+    }
+  | { ok: false; error: string }
+> {
+  if (!schedule.meterGroupId || !schedule.obisCodeGroupId) {
+    return { ok: false, error: "MISSING_METER_OR_OBIS_GROUP_ON_SCHEDULE" }
+  }
+
+  const graw = await readCommandGroupsRaw()
+  if (!graw.ok) {
+    return { ok: false, error: graw.error }
+  }
+  const groups = normalizeCommandGroups(graw.parsed)
+  const g = groups.find((x) => x.id === schedule.meterGroupId)
+  if (!g) {
+    return { ok: false, error: "UNKNOWN_METER_GROUP" }
+  }
+
+  const obisGroups = await loadObisCodeGroupsUnsafe()
+  const og = obisGroups.find((x) => x.id === schedule.obisCodeGroupId)
+  if (!og) {
+    return { ok: false, error: "UNKNOWN_OBIS_CODE_GROUP" }
+  }
+
+  const ctx = await resolveCommandExecutionContext({
+    targetType: "saved_group",
+    meterIds: [],
+    groupId: schedule.meterGroupId,
+  })
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
+  }
+
+  return {
+    ok: true,
+    meterIds: ctx.meterIds,
+    targetSummary: ctx.targetSummary,
+    meterGroupName: g.name,
+    obisCodeGroupName: og.name,
+  }
+}
+
 function buildScheduledOperatorRun(
   schedule: CommandSchedule,
   meterIds: string[],
-  targetSummary: string
+  targetSummary: string,
+  meterGroupName: string,
+  obisCodeGroupName: string
 ): OperatorCommandRun {
   const now = new Date().toISOString()
   return {
     id: `cr-${crypto.randomUUID()}`,
     sourceType: "schedule",
     scheduleId: schedule.id,
-    actionType: schedule.actionType,
-    targetType: schedule.targetType,
+    actionType: "read",
+    targetType: "saved_group",
     targetSummary,
     meterIds,
     resolvedMeterIds: meterIds,
-    groupId: schedule.targetType === "saved_group" ? schedule.groupId : null,
+    groupId: schedule.meterGroupId,
+    meterGroupId: schedule.meterGroupId,
+    obisCodeGroupId: schedule.obisCodeGroupId,
+    meterGroupName,
+    obisCodeGroupName,
+    scheduleName: schedule.name,
     status: "queued",
-    readProfileMode:
-      schedule.actionType === "read"
-        ? "default_register_pull"
-        : undefined,
     createdAt: now,
     queuedAt: now,
     startedAt: null,
@@ -134,16 +188,29 @@ export async function tickCommandSchedulerOnce(): Promise<void> {
       continue
     }
 
-    const ctx = await resolveCommandExecutionContext({
-      targetType: schedule.targetType,
-      meterIds: schedule.meterIds,
-      groupId: schedule.groupId,
-    })
+    if (!isScheduleContextuallyAllowed(schedule, now)) {
+      await bumpScheduleNextAndNote(
+        schedule.id,
+        "Skipped: outside date range or daily time window"
+      )
+      continue
+    }
 
+    if (!minuteMatchesRunAt(schedule, now)) {
+      if (Number.isFinite(nextTs) && nextTs <= now.getTime()) {
+        await bumpScheduleNextAndNote(
+          schedule.id,
+          "Missed run-at minute; rescheduled forward"
+        )
+      }
+      continue
+    }
+
+    const ctx = await resolveScheduleAutoRunContext(schedule)
     if (!ctx.ok) {
       await bumpScheduleNextAndNote(
         schedule.id,
-        `Skipped fire: target resolution failed — ${ctx.error}`
+        `Skipped fire: ${ctx.error}`
       )
       continue
     }
@@ -151,7 +218,9 @@ export async function tickCommandSchedulerOnce(): Promise<void> {
     const newRun = buildScheduledOperatorRun(
       schedule,
       ctx.meterIds,
-      ctx.targetSummary
+      ctx.targetSummary,
+      ctx.meterGroupName,
+      ctx.obisCodeGroupName
     )
     await appendScheduledRunAndBumpNext(schedule, newRun)
     runs = [...runs, newRun]

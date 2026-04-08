@@ -1,78 +1,151 @@
 import type { CommandSchedule } from "@/types/command-operator"
 
-/**
- * Computes the next fire time after `from`.
- * Uses the Node process local timezone for calendar fields (set TZ in production if needed).
- */
+const FAR_MS = Date.parse("2099-01-01T00:00:00.000Z")
 
-function parseTimeLocal(tl: string): { h: number; m: number } | null {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(tl.trim())
+export function parseHm(s: string | null | undefined): { h: number; m: number } | null {
+  if (!s) return null
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim())
   if (!m) return null
   const h = Number(m[1])
   const min = Number(m[2])
-  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) {
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59)
     return null
-  }
   return { h, m: min }
 }
 
-function nextWeeklyOccurrence(
-  from: Date,
-  daysOfWeek: number[],
-  hour: number,
-  minute: number
-): Date {
-  const sorted = [...new Set(daysOfWeek.filter((d) => d >= 0 && d <= 6))].sort(
-    (a, b) => a - b
-  )
-  if (sorted.length === 0) {
-    sorted.push(1)
-  }
-  for (let add = 0; add <= 14; add++) {
-    const d = new Date(from)
-    d.setDate(d.getDate() + add)
-    const dow = d.getDay()
-    if (!sorted.includes(dow)) continue
-    const candidate = new Date(d)
-    candidate.setHours(hour, minute, 0, 0)
-    if (candidate.getTime() > from.getTime()) {
-      return candidate
-    }
-  }
-  const fallback = new Date(from)
-  fallback.setDate(fallback.getDate() + 7)
-  fallback.setHours(hour, minute, 0, 0)
-  return fallback
+function localYmd(d: Date): string {
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${mo}-${day}`
 }
 
-export function computeNextRunAt(schedule: CommandSchedule, from: Date): Date {
-  if (schedule.cadenceType === "interval_minutes") {
-    const mins = Math.max(1, schedule.recurrence.intervalMinutes ?? 60)
-    return new Date(from.getTime() + mins * 60_000)
-  }
+function combineLocalDayAndHm(day: Date, hhmm: string): Date {
+  const hm = parseHm(hhmm) ?? { h: 2, m: 0 }
+  return new Date(
+    day.getFullYear(),
+    day.getMonth(),
+    day.getDate(),
+    hm.h,
+    hm.m,
+    0,
+    0
+  )
+}
 
-  if (schedule.cadenceType === "daily_time") {
-    const tl =
-      parseTimeLocal(schedule.recurrence.timeLocal ?? "00:00") ??
-      parseTimeLocal("00:00")!
-    const d = new Date(from)
-    d.setHours(tl.h, tl.m, 0, 0)
-    if (d.getTime() <= from.getTime()) {
-      d.setDate(d.getDate() + 1)
+/** HH:mm string comparison for same-day window (no overnight complexity beyond simple wrap). */
+function hmInOptionalWindow(
+  hm: string,
+  startT: string | null,
+  endT: string | null
+): boolean {
+  if (!startT && !endT) return true
+  if (startT && !endT) return hm >= startT
+  if (!startT && endT) return hm <= endT
+  if (!startT || !endT) return true
+  if (startT <= endT) return hm >= startT && hm <= endT
+  return hm >= startT || hm <= endT
+}
+
+function hmFromDate(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+}
+
+function daysBetweenUtcMidnight(a: Date, b: Date): number {
+  const ua = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())
+  const ub = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate())
+  return Math.round((ub - ua) / 86400000)
+}
+
+function anchorDateForEveryN(schedule: CommandSchedule): Date {
+  if (schedule.startDate) {
+    const p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(schedule.startDate)
+    if (p) {
+      return new Date(Number(p[1]), Number(p[2]) - 1, Number(p[3]), 0, 0, 0, 0)
     }
-    return d
+  }
+  const t = Date.parse(schedule.createdAt)
+  if (Number.isFinite(t)) return new Date(t)
+  return new Date()
+}
+
+function matchesEveryNDays(
+  schedule: CommandSchedule,
+  candidateDay: Date
+): boolean {
+  const n = Math.max(1, schedule.intervalDays ?? 1)
+  const anchor = anchorDateForEveryN(schedule)
+  const diff = daysBetweenUtcMidnight(anchor, candidateDay)
+  if (diff < 0) return false
+  return diff % n === 0
+}
+
+/**
+ * Whether `at` lies in schedule date range and optional daily wall-clock window.
+ * Does not require minute match to runAtTime (used when deciding to skip a due nextRunAt).
+ */
+export function isScheduleContextuallyAllowed(
+  schedule: CommandSchedule,
+  at: Date
+): boolean {
+  const ymd = localYmd(at)
+  if (schedule.startDate && ymd < schedule.startDate) return false
+  if (schedule.endDate && ymd > schedule.endDate) return false
+  const hm = hmFromDate(at)
+  return hmInOptionalWindow(hm, schedule.startTime, schedule.endTime)
+}
+
+/**
+ * Next fire strictly after `from`. Uses server local timezone.
+ * `once` schedules with `lastRunAt` set return far future.
+ */
+export function computeNextRunAt(schedule: CommandSchedule, from: Date): Date {
+  if (!schedule.enabled) {
+    return new Date(FAR_MS)
   }
 
-  if (schedule.cadenceType === "weekly") {
-    const days =
-      schedule.recurrence.daysOfWeek && schedule.recurrence.daysOfWeek.length > 0
-        ? schedule.recurrence.daysOfWeek
-        : [1]
-    const tl =
-      parseTimeLocal(schedule.recurrence.timeLocal ?? "09:00") ??
-      parseTimeLocal("09:00")!
-    return nextWeeklyOccurrence(from, days, tl.h, tl.m)
+  if (schedule.scheduleType === "once" && schedule.lastRunAt) {
+    return new Date(FAR_MS)
   }
 
-  return new Date(from.getTime() + 60_000)
+  const runAt = schedule.runAtTime ?? "02:00"
+  if (!parseHm(runAt)) {
+    return new Date(FAR_MS)
+  }
+
+  const startDay = new Date(from.getFullYear(), from.getMonth(), from.getDate(), 0, 0, 0, 0)
+
+  for (let add = 0; add < 400; add++) {
+    const day = new Date(startDay)
+    day.setDate(day.getDate() + add)
+    const ymd = localYmd(day)
+    if (schedule.startDate && ymd < schedule.startDate) continue
+    if (schedule.endDate && ymd > schedule.endDate) continue
+
+    if (schedule.scheduleType === "every_n_days") {
+      if (!matchesEveryNDays(schedule, day)) continue
+    }
+
+    const candidate = combineLocalDayAndHm(day, runAt)
+    if (candidate.getTime() <= from.getTime()) continue
+
+    const hm = hmFromDate(candidate)
+    if (!hmInOptionalWindow(hm, schedule.startTime, schedule.endTime)) continue
+
+    if (schedule.scheduleType === "once") {
+      return candidate
+    }
+
+    return candidate
+  }
+
+  return new Date(FAR_MS)
+}
+
+/** True when wall-clock minute matches `runAtTime` (scheduler tick granularity). */
+export function minuteMatchesRunAt(schedule: CommandSchedule, at: Date): boolean {
+  const rt = schedule.runAtTime ?? "02:00"
+  const want = parseHm(rt)
+  if (!want) return true
+  return at.getHours() === want.h && at.getMinutes() === want.m
 }
