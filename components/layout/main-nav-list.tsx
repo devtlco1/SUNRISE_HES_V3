@@ -10,10 +10,20 @@ import {
   configurationHubHref,
   configurationNavChildren,
 } from "@/lib/configuration/modules"
-import { mainNavEntries, type MainNavConfigurationItem } from "@/lib/nav/main-nav"
+import {
+  connectivityNavChildren,
+  connectivityChildActive,
+  connectivityScopeActive,
+} from "@/lib/connectivity/nav"
+import {
+  mainNavEntries,
+  type MainNavConfigurationItem,
+  type MainNavConnectivityItem,
+} from "@/lib/nav/main-nav"
 import { cn } from "@/lib/utils"
 
 const CONFIG_NAV_OPEN_KEY = "sunrise-nav-configuration-open"
+const CONNECTIVITY_NAV_OPEN_KEY = "sunrise-nav-connectivity-open"
 
 type MainNavListProps = {
   variant: "sidebar" | "mobile"
@@ -174,6 +184,107 @@ function ConfigurationNavGroup({
   )
 }
 
+function ConnectivityNavGroup({
+  entry,
+  variant,
+  onNavigate,
+}: {
+  entry: MainNavConnectivityItem
+  variant: "sidebar" | "mobile"
+  onNavigate?: () => void
+}) {
+  const pathname = usePathname()
+  const Icon = entry.icon
+  const inScope = connectivityScopeActive(pathname)
+  const [open, setOpen] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    try {
+      const s = sessionStorage.getItem(CONNECTIVITY_NAV_OPEN_KEY)
+      if (s === "1") setOpen(true)
+      else if (s === "0") setOpen(false)
+      else if (connectivityScopeActive(pathname)) setOpen(true)
+    } catch {
+      if (connectivityScopeActive(pathname)) setOpen(true)
+    }
+    setHydrated(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!hydrated) return
+    try {
+      sessionStorage.setItem(CONNECTIVITY_NAV_OPEN_KEY, open ? "1" : "0")
+    } catch {
+      /* ignore */
+    }
+  }, [open, hydrated])
+
+  const isSidebar = variant === "sidebar"
+
+  const parentRow = isSidebar
+    ? inScope
+      ? "bg-sidebar-accent/45 text-sidebar-foreground"
+      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+    : inScope
+      ? "bg-accent/50 text-foreground"
+      : "text-foreground/80 hover:bg-muted"
+
+  const childBase = isSidebar
+    ? "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+    : "text-foreground/80 hover:bg-muted"
+
+  const childActive = isSidebar
+    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+    : "bg-accent text-accent-foreground"
+
+  const childRail = isSidebar ? "border-sidebar-border" : "border-border"
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="nav-connectivity-children"
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm font-medium transition-colors outline-none",
+          parentRow
+        )}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
+        <span className="truncate">{entry.label}</span>
+      </button>
+      {open ? (
+        <ul
+          id="nav-connectivity-children"
+          className={cn("ml-2 flex flex-col gap-0.5 border-l pl-2", childRail)}
+          role="list"
+        >
+          {connectivityNavChildren.map((child) => {
+            const childMatch = connectivityChildActive(pathname, child.href)
+            return (
+              <li key={child.href}>
+                <Link
+                  href={child.href}
+                  onClick={onNavigate}
+                  className={cn(
+                    "block rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                    childMatch ? childActive : childBase
+                  )}
+                >
+                  {child.label}
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
 export function MainNavList({ variant, onNavigate }: MainNavListProps) {
   return (
     <>
@@ -182,6 +293,16 @@ export function MainNavList({ variant, onNavigate }: MainNavListProps) {
           return (
             <ConfigurationNavGroup
               key="configuration"
+              entry={entry}
+              variant={variant}
+              onNavigate={onNavigate}
+            />
+          )
+        }
+        if (entry.kind === "connectivity") {
+          return (
+            <ConnectivityNavGroup
+              key="connectivity"
               entry={entry}
               variant={variant}
               onNavigate={onNavigate}

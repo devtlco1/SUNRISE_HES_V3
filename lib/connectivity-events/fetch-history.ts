@@ -9,6 +9,7 @@ export async function fetchConnectivityEventsHistory(
     limit?: number
     failuresOnly?: boolean
     serial?: string
+    eventType?: string
     signal?: AbortSignal
   } = {}
 ): Promise<FetchConnectivityEventsResult> {
@@ -17,6 +18,8 @@ export async function fetchConnectivityEventsHistory(
   if (opts.failuresOnly) q.set("failuresOnly", "1")
   const s = opts.serial?.trim()
   if (s) q.set("serial", s.toLowerCase())
+  const et = opts.eventType?.trim()
+  if (et) q.set("eventType", et)
   try {
     const res = await fetch(`/api/connectivity-events?${q.toString()}`, {
       cache: "no-store",

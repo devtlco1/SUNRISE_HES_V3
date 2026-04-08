@@ -39,13 +39,17 @@ const pathTitle: Record<string, string> = {
     configurationModules.map((m) => [configurationModuleHref(m), m.title])
   ),
   "/meters": "Meters",
-  "/connectivity": "Connectivity",
+  "/connectivity": "Connectivity · Overview",
+  "/connectivity/events": "Connectivity · Events",
   "/commands": "Commands",
   "/alarms": "Alarms",
   "/users": "Users",
 }
 
 function titleFromPath(pathname: string) {
+  if (/^\/connectivity\/meters\//.test(pathname)) {
+    return "Connectivity · Meter"
+  }
   const direct = pathTitle[pathname]
   if (direct) return direct
   let best: string | undefined

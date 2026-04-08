@@ -1,5 +1,5 @@
 import type { ConnectivityEventRecord } from "@/types/connectivity-events"
-import type { MeterCommStatus } from "@/types/meter"
+import type { MeterCommStatus, MeterListRow } from "@/types/meter"
 
 /** Phase 1 live connectivity row status (registry + TCP listener join). */
 export type ConnectivityPhase1LiveStatus =
@@ -71,6 +71,30 @@ export type ConnectivityPhase1Response = {
   fetchedAt: string
   /** Newest first; `dedupeKey` stripped. */
   recentEvents: Omit<ConnectivityEventRecord, "dedupeKey">[]
+}
+
+/** Per-meter connectivity detail (registry + live row + filtered history + derived stats). */
+export type ConnectivityMeterDerived = {
+  lastConnectAt: string | null
+  lastConnectDisplay: string
+  lastDisconnectAt: string | null
+  lastDisconnectDisplay: string
+  lastRestoreAt: string | null
+  lastRestoreDisplay: string
+  lastAssociationFailureAt: string | null
+  lastAssociationFailureDisplay: string
+  lastTimeoutAt: string | null
+  lastTimeoutDisplay: string
+  recentFailures45m: number
+  recentSuccesses45m: number
+  unstable: boolean
+}
+
+export type ConnectivityMeterDetailPayload = {
+  meter: MeterListRow
+  live: ConnectivityPhase1Row
+  history: Omit<ConnectivityEventRecord, "dedupeKey">[]
+  derived: ConnectivityMeterDerived
 }
 
 export type ConnectivityHealthState =

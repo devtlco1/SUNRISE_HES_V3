@@ -1,11 +1,5 @@
-import { ConnectivityList } from "@/components/connectivity/connectivity-list"
-import { PageHeader } from "@/components/shared/page-header"
+import { ConnectivityOverview } from "@/components/connectivity/connectivity-overview"
 
-export default function ConnectivityPage() {
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Connectivity" />
-      <ConnectivityList />
-    </div>
-  )
+export default function ConnectivityOverviewPage() {
+  return <ConnectivityOverview />
 }

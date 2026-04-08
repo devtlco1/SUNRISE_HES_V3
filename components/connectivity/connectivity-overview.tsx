@@ -38,49 +38,20 @@ import {
   fetchConnectivityPhase1,
 } from "@/lib/connectivity/api"
 import { PHASE1_REGISTRY_RECENT_MS } from "@/lib/connectivity/phase1-constants"
-import { fetchConnectivityEventsHistory } from "@/lib/connectivity-events/fetch-history"
-import { formatOperatorUtc } from "@/lib/format/operator-datetime"
+import { phase1LiveStatusPresentation } from "@/lib/connectivity/phase1-status-present"
 import { formatCommStatus } from "@/lib/meters/format"
 import {
   operationalListPageStackClass,
   operationalMonoIdTriggerClass,
   operationalRowActionTriggerClass,
 } from "@/lib/ui/operational"
-import type { StatusBadgeVariant } from "@/components/shared/status-badge"
 import type {
-  ConnectivityPhase1LiveStatus,
   ConnectivityPhase1Row,
   ConnectivityPhase1Summary,
 } from "@/types/connectivity"
-import type { ConnectivityEventRecord } from "@/types/connectivity-events"
 
 const ALL = "all"
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
-
-function liveStatusBadge(
-  s: ConnectivityPhase1LiveStatus
-): { label: string; variant: StatusBadgeVariant } {
-  switch (s) {
-    case "live_inbound":
-      return { label: "Live (inbound)", variant: "success" }
-    case "online_recent_registry":
-      return { label: "Online (recent)", variant: "success" }
-    case "offline":
-      return { label: "Offline", variant: "danger" }
-    case "never_seen_registry":
-      return { label: "Never seen", variant: "neutral" }
-    case "unknown_live":
-      return { label: "Unknown", variant: "warning" }
-    default:
-      return { label: s, variant: "neutral" }
-  }
-}
-
-function eventSeverityVariant(s: ConnectivityEventRecord["severity"]): StatusBadgeVariant {
-  if (s === "error") return "danger"
-  if (s === "warning") return "warning"
-  return "neutral"
-}
 
 function ConnectivityTableHeaderRow() {
   return (
@@ -122,7 +93,7 @@ function matchesSearch(row: ConnectivityPhase1Row, q: string) {
     .includes(n)
 }
 
-export function ConnectivityList() {
+export function ConnectivityOverview() {
   const router = useRouter()
   const [data, setData] = useState<{
     summary: ConnectivityPhase1Summary
@@ -132,15 +103,7 @@ export function ConnectivityList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [historyRows, setHistoryRows] = useState<
-    Omit<ConnectivityEventRecord, "dedupeKey">[]
-  >([])
-  const [histLoading, setHistLoading] = useState(true)
-  const [histError, setHistError] = useState<string | null>(null)
-  const [histFailuresOnly, setHistFailuresOnly] = useState(false)
-
   const [search, setSearch] = useState("")
-  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>(ALL)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -175,52 +138,9 @@ export function ConnectivityList() {
     }
   }, [loadKey])
 
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 400)
-    return () => window.clearTimeout(t)
-  }, [search])
-
-  useEffect(() => {
-    const ac = new AbortController()
-    let stale = false
-    setHistLoading(true)
-    setHistError(null)
-
-    fetchConnectivityEventsHistory({
-      limit: 50,
-      failuresOnly: histFailuresOnly,
-      serial: debouncedSearch || undefined,
-      signal: ac.signal,
-    })
-      .then((r) => {
-        if (stale) return
-        setHistLoading(false)
-        if (!r.ok) {
-          setHistError(r.error)
-          setHistoryRows([])
-          return
-        }
-        setHistoryRows(r.events)
-      })
-      .catch((e) => {
-        if (e instanceof Error && e.name === "AbortError") return
-        if (stale) return
-        setHistLoading(false)
-        setHistError("Network error loading events.")
-        setHistoryRows([])
-      })
-
-    return () => {
-      stale = true
-      ac.abort()
-    }
-  }, [loadKey, histFailuresOnly, debouncedSearch])
-
   function reload() {
     setLoading(true)
-    setHistLoading(true)
     setError(null)
-    setHistError(null)
     setLoadKey((k) => k + 1)
   }
 
@@ -321,10 +241,17 @@ export function ConnectivityList() {
         </div>
       </FilterBar>
 
-      <SectionCard
-        title="Meters — live connectivity"
-        description={`Live registry + listener. Recent window: ${PHASE1_REGISTRY_RECENT_MS / 60000}m UTC. History column uses persisted events (45m failure count, ≥3 → unstable).`}
-      >
+      <SectionCard title="Meters — live connectivity">
+        <p className="mb-3 text-xs text-muted-foreground">
+          Live registry + listener; recent registry window {PHASE1_REGISTRY_RECENT_MS / 60000}m UTC. Full event log:{" "}
+          <Link
+            href="/connectivity/events"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            Connectivity → Events
+          </Link>
+          .
+        </p>
         <TableShell>
           <TableToolbar
             left={
@@ -378,7 +305,7 @@ export function ConnectivityList() {
                   </TableHeader>
                   <TableBody>
                     {pageRows.map((row) => {
-                      const st = liveStatusBadge(row.liveStatus)
+                      const st = phase1LiveStatusPresentation(row.liveStatus)
                       const reg = formatCommStatus(row.registryCommStatus)
                       const bindLabel =
                         row.bindState === "bound"
@@ -474,11 +401,18 @@ export function ConnectivityList() {
                               >
                                 <MoreHorizontalIcon className="size-4" />
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuContent align="end" className="w-56">
                                 <DropdownMenuLabel className="text-xs text-muted-foreground">
                                   {row.serialNumber}
                                 </DropdownMenuLabel>
                                 <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    router.push(`/connectivity/meters/${encodeURIComponent(row.meterId)}`)
+                                  }
+                                >
+                                  Open connectivity detail
+                                </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() =>
                                     router.push(
@@ -556,104 +490,6 @@ export function ConnectivityList() {
             }}
           />
         </TableShell>
-      </SectionCard>
-
-      <SectionCard
-        title="Recent connectivity events"
-        description="Persisted history (newest first). Uses table search as serial filter; failures-only narrows to error-class events."
-      >
-        <div className="mb-3 flex flex-wrap items-end gap-3">
-          <FilterSelect
-            id="conn-hist-filter"
-            label="Events"
-            value={histFailuresOnly ? "failures" : "all"}
-            onChange={(v) => setHistFailuresOnly(v === "failures")}
-            options={[
-              { value: "all", label: "All events" },
-              { value: "failures", label: "Failures only" },
-            ]}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8"
-            disabled={histLoading}
-            onClick={() => setLoadKey((k) => k + 1)}
-          >
-            Refresh history
-          </Button>
-        </div>
-        {histError ? (
-          <p className="text-sm text-destructive">{histError}</p>
-        ) : null}
-        {histLoading ? (
-          <div className="min-w-[720px]">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[168px]">Time (UTC)</TableHead>
-                  <TableHead className="w-[120px]">Meter</TableHead>
-                  <TableHead className="w-[140px]">Event</TableHead>
-                  <TableHead className="min-w-[200px]">Message</TableHead>
-                  <TableHead className="w-[120px]">Route</TableHead>
-                  <TableHead className="min-w-[140px]">Endpoint</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBodySkeleton rows={5} columns={6} />
-            </Table>
-          </div>
-        ) : historyRows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No events in view.</p>
-        ) : (
-          <div className="relative min-w-0 overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[168px]">Time (UTC)</TableHead>
-                  <TableHead className="w-[120px]">Meter</TableHead>
-                  <TableHead className="w-[140px]">Event</TableHead>
-                  <TableHead className="min-w-[200px]">Message</TableHead>
-                  <TableHead className="w-[120px]">Route</TableHead>
-                  <TableHead className="min-w-[140px]">Endpoint</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {historyRows.map((ev) => {
-                  const ep =
-                    ev.remoteHost && ev.remotePort != null
-                      ? `${ev.remoteHost}:${ev.remotePort}`
-                      : "—"
-                  const sev = eventSeverityVariant(ev.severity)
-                  return (
-                    <TableRow key={ev.id}>
-                      <TableCell className="align-top text-xs tabular-nums text-muted-foreground">
-                        {formatOperatorUtc(ev.createdAt)}
-                      </TableCell>
-                      <TableCell className="align-top font-mono text-xs">
-                        {ev.meterSerial?.trim() || "—"}
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <StatusBadge variant={sev} className="font-mono text-[11px]">
-                          {ev.eventType}
-                        </StatusBadge>
-                      </TableCell>
-                      <TableCell className="align-top text-xs text-foreground">
-                        <div className="max-w-md truncate" title={ev.message}>
-                          {ev.message}
-                        </div>
-                      </TableCell>
-                      <TableCell className="align-top font-mono text-[11px] text-muted-foreground">
-                        {ev.route}
-                      </TableCell>
-                      <TableCell className="align-top font-mono text-[11px]">{ep}</TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
       </SectionCard>
     </div>
   )

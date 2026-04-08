@@ -1,5 +1,9 @@
 import { readConnectivityEventsRaw, toPublicConnectivityEvent } from "@/lib/connectivity-events/store"
-import { CONNECTIVITY_FAILURE_EVENT_TYPES } from "@/types/connectivity-events"
+import {
+  CONNECTIVITY_EVENT_TYPES_LIST,
+  CONNECTIVITY_FAILURE_EVENT_TYPES,
+  type ConnectivityEventType,
+} from "@/types/connectivity-events"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
@@ -28,10 +32,18 @@ export async function GET(req: Request) {
   )
   const failuresOnly = url.searchParams.get("failuresOnly") === "1"
   const serialQ = (url.searchParams.get("serial") ?? "").trim().toLowerCase()
+  const eventTypeQ = (url.searchParams.get("eventType") ?? "").trim()
+  const typeOk =
+    !eventTypeQ ||
+    (CONNECTIVITY_EVENT_TYPES_LIST as readonly string[]).includes(eventTypeQ)
 
   let list = newestFirst(raw.events)
   if (failuresOnly) {
     list = list.filter((e) => CONNECTIVITY_FAILURE_EVENT_TYPES.has(e.eventType))
+  }
+  if (typeOk && eventTypeQ) {
+    const t = eventTypeQ as ConnectivityEventType
+    list = list.filter((e) => e.eventType === t)
   }
   if (serialQ) {
     list = list.filter((e) =>

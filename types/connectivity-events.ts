@@ -15,6 +15,21 @@ export type ConnectivityEventType =
   | "read_failed"
   | "relay_failed"
 
+/** All event types (UI filters, API validation). */
+export const CONNECTIVITY_EVENT_TYPES_LIST: ConnectivityEventType[] = [
+  "connected",
+  "disconnected",
+  "restored",
+  "auto_bind_success",
+  "auto_bind_failed",
+  "identify_failed",
+  "association_success",
+  "association_failed",
+  "timeout",
+  "read_failed",
+  "relay_failed",
+]
+
 export type ConnectivityEventSeverity = "info" | "warning" | "error"
 
 export type ConnectivityEventRecord = {

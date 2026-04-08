@@ -27,7 +27,17 @@ export type MainNavConfigurationItem = {
   icon: LucideIcon
 }
 
-export type MainNavEntry = MainNavLinkItem | MainNavConfigurationItem
+/** Expandable Connectivity group; children from `lib/connectivity/nav`. */
+export type MainNavConnectivityItem = {
+  kind: "connectivity"
+  label: string
+  icon: LucideIcon
+}
+
+export type MainNavEntry =
+  | MainNavLinkItem
+  | MainNavConfigurationItem
+  | MainNavConnectivityItem
 
 export const mainNavEntries: MainNavEntry[] = [
   { kind: "link", href: "/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
@@ -36,7 +46,7 @@ export const mainNavEntries: MainNavEntry[] = [
   { kind: "link", href: "/obis-config", label: "OBIS catalog", icon: ListTreeIcon },
   { kind: "configuration", label: "Configuration", icon: Settings2Icon },
   { kind: "link", href: "/meters", label: "Meters", icon: GaugeIcon },
-  { kind: "link", href: "/connectivity", label: "Connectivity", icon: RadioTowerIcon },
+  { kind: "connectivity", label: "Connectivity", icon: RadioTowerIcon },
   { kind: "link", href: "/commands", label: "Commands", icon: SquareTerminalIcon },
   { kind: "link", href: "/alarms", label: "Alarms", icon: BellIcon },
   { kind: "link", href: "/users", label: "Users", icon: UsersIcon },
