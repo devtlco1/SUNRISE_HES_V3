@@ -24,6 +24,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { MainNavList } from "@/components/layout/main-nav-list"
+import { NotificationBell } from "@/components/layout/notification-bell"
 import {
   configurationModuleHref,
   configurationModules,
@@ -128,6 +129,8 @@ export function AppTopbar({ className }: { className?: string }) {
           />
         </div>
       </div>
+
+      <NotificationBell />
 
       <DropdownMenu>
         <DropdownMenuTrigger
