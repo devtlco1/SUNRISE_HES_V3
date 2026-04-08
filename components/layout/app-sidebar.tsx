@@ -1,8 +1,7 @@
 import Link from "next/link"
 
-import { NavLink } from "@/components/layout/nav-link"
+import { MainNavList } from "@/components/layout/main-nav-list"
 import { Separator } from "@/components/ui/separator"
-import { mainNavItems } from "@/lib/nav/main-nav"
 import { cn } from "@/lib/utils"
 
 export function AppSidebar({ className }: { className?: string }) {
@@ -23,12 +22,7 @@ export function AppSidebar({ className }: { className?: string }) {
       </div>
       <Separator className="bg-sidebar-border" />
       <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Primary">
-        {mainNavItems.map(({ href, label, icon: Icon }) => (
-          <NavLink key={href} href={href}>
-            <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
-            <span>{label}</span>
-          </NavLink>
-        ))}
+        <MainNavList variant="sidebar" />
       </nav>
       <div className="border-t border-sidebar-border p-3">
         <p className="text-xs leading-relaxed text-muted-foreground">

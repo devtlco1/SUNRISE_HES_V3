@@ -12,21 +12,32 @@ import {
   UsersIcon,
 } from "lucide-react"
 
-export type MainNavItem = {
+/** Single top-level link (sidebar + mobile). */
+export type MainNavLinkItem = {
+  kind: "link"
   href: string
   label: string
   icon: LucideIcon
 }
 
-export const mainNavItems: MainNavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
-  { href: "/scanner", label: "Scanner", icon: ScanLineIcon },
-  { href: "/readings", label: "Readings", icon: ActivityIcon },
-  { href: "/obis-config", label: "OBIS catalog", icon: ListTreeIcon },
-  { href: "/configuration", label: "Configuration", icon: Settings2Icon },
-  { href: "/meters", label: "Meters", icon: GaugeIcon },
-  { href: "/connectivity", label: "Connectivity", icon: RadioTowerIcon },
-  { href: "/commands", label: "Commands", icon: SquareTerminalIcon },
-  { href: "/alarms", label: "Alarms", icon: BellIcon },
-  { href: "/users", label: "Users", icon: UsersIcon },
+/** Expandable Configuration group; children come from `lib/configuration/modules`. */
+export type MainNavConfigurationItem = {
+  kind: "configuration"
+  label: string
+  icon: LucideIcon
+}
+
+export type MainNavEntry = MainNavLinkItem | MainNavConfigurationItem
+
+export const mainNavEntries: MainNavEntry[] = [
+  { kind: "link", href: "/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
+  { kind: "link", href: "/scanner", label: "Scanner", icon: ScanLineIcon },
+  { kind: "link", href: "/readings", label: "Readings", icon: ActivityIcon },
+  { kind: "link", href: "/obis-config", label: "OBIS catalog", icon: ListTreeIcon },
+  { kind: "configuration", label: "Configuration", icon: Settings2Icon },
+  { kind: "link", href: "/meters", label: "Meters", icon: GaugeIcon },
+  { kind: "link", href: "/connectivity", label: "Connectivity", icon: RadioTowerIcon },
+  { kind: "link", href: "/commands", label: "Commands", icon: SquareTerminalIcon },
+  { kind: "link", href: "/alarms", label: "Alarms", icon: BellIcon },
+  { kind: "link", href: "/users", label: "Users", icon: UsersIcon },
 ]

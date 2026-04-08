@@ -1,7 +1,6 @@
 "use client"
 
 import { ChevronRightIcon, MenuIcon, SearchIcon } from "lucide-react"
-import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState } from "react"
 
@@ -24,12 +23,12 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { MainNavList } from "@/components/layout/main-nav-list"
 import {
   configurationHubHref,
   configurationModuleHref,
   configurationModules,
 } from "@/lib/configuration/modules"
-import { mainNavItems } from "@/lib/nav/main-nav"
 import { cn } from "@/lib/utils"
 
 const pathTitle: Record<string, string> = {
@@ -91,28 +90,10 @@ export function AppTopbar({ className }: { className?: string }) {
               <SheetTitle className="text-sm font-semibold">SUNRISE HES</SheetTitle>
             </SheetHeader>
             <nav className="flex flex-col gap-0.5 p-2" aria-label="Mobile primary">
-              {mainNavItems.map(({ href, label, icon: Icon }) => {
-                const active =
-                  href === "/dashboard"
-                    ? pathname === "/dashboard"
-                    : pathname === href || pathname.startsWith(`${href}/`)
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    onClick={() => setMobileOpen(false)}
-                    className={cn(
-                      "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm font-medium",
-                      active
-                        ? "bg-accent text-accent-foreground"
-                        : "text-foreground/80 hover:bg-muted"
-                    )}
-                  >
-                    <Icon className="size-4 opacity-80" aria-hidden />
-                    {label}
-                  </Link>
-                )
-              })}
+              <MainNavList
+                variant="mobile"
+                onNavigate={() => setMobileOpen(false)}
+              />
             </nav>
           </SheetContent>
         </Sheet>
