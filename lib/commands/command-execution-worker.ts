@@ -212,20 +212,30 @@ async function runOperatorCommandExecution(runId: string): Promise<void> {
     const meters = metersRaw.ok ? normalizeMeterRows(metersRaw.parsed) : []
     const metersById = new Map(meters.map((m) => [m.id, m]))
 
+    const commandLog = {
+      runId: snapshot.id,
+      actionGroupMode: snapshot.actionGroupMode,
+    }
+
     const perMeter: OperatorCommandMeterResult[] = []
     for (const meterId of snapshot.resolvedMeterIds) {
+      const m = metersById.get(meterId)
+      const meterSerial = m?.serialNumber?.trim() || meterId
       const out =
         plan.kind === "read_obis"
           ? await executeMeterReadObisSelection({
               meterId,
+              meterSerial,
               selectedItems: plan.items,
+              commandLog,
             })
           : await executeMeterRuntimeAction({
               meterId,
+              meterSerial,
               action: plan.action,
               readProfileMode: snapshot.readProfileMode,
+              commandLog,
             })
-      const m = metersById.get(meterId)
       perMeter.push({
         meterId,
         serialNumber: m?.serialNumber ?? meterId,

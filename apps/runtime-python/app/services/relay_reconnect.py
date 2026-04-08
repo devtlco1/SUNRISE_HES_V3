@@ -1,15 +1,27 @@
 """Remote relay ON (COSEM disconnect-control method 2) — delegates to protocol adapter."""
 
 import logging
+from datetime import datetime, timezone
 
 from app.adapters.factory import get_runtime_adapter
 from app.schemas.envelope import RuntimeResponseEnvelope
 from app.schemas.requests import ReadIdentityRequest
+from app.services.relay_crash_envelope import envelope_for_relay_service_crash
 
 log = logging.getLogger(__name__)
 
 
 def execute_relay_reconnect(request: ReadIdentityRequest) -> RuntimeResponseEnvelope:
-    adapter = get_runtime_adapter()
-    log.info("relay_reconnect", extra={"meter_id": request.meterId})
-    return adapter.relay_reconnect(request)
+    started = datetime.now(timezone.utc)
+    try:
+        adapter = get_runtime_adapter()
+        log.info("relay_reconnect", extra={"meter_id": request.meterId})
+        return adapter.relay_reconnect(request)
+    except Exception as exc:  # noqa: BLE001
+        return envelope_for_relay_service_crash(
+            operation="relayReconnect",
+            meter_id=request.meterId,
+            started=started,
+            exc=exc,
+            message_prefix="Relay reconnect (direct) failed unexpectedly",
+        )

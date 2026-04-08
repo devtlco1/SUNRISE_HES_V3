@@ -108,7 +108,8 @@ function sessionPendingForDisplay(s: ParsedStagedSession, serial: string): boole
   return (s.canonicalSerial ?? "").trim() === sn
 }
 
-function pickSessionForMeter(
+/** Exported for command engine: choose inbound listener session for a registry serial. */
+export function pickSessionForMeter(
   serial: string,
   sessions: ParsedStagedSession[]
 ): ParsedStagedSession | null {
