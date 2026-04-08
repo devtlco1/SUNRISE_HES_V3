@@ -13,7 +13,11 @@ export async function GET() {
   }
   const set = new Set(session.permissions)
   if (
-    !hasAnyPermission(set, ["users.permissions.view", "users.roles.manage"])
+    !hasAnyPermission(set, [
+      "users.view",
+      "users.permissions.view",
+      "users.roles.manage",
+    ])
   ) {
     return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 })
   }

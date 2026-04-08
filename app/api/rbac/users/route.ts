@@ -32,7 +32,13 @@ export async function POST(req: Request) {
   const displayName = typeof o.displayName === "string" ? o.displayName.trim() : ""
   const email = typeof o.email === "string" ? o.email.trim() : ""
   const roleId = typeof o.roleId === "string" ? o.roleId.trim() : ""
-  const active = o.active === false ? false : true
+  const invitePending = o.invitePending === true
+  const active =
+    typeof o.active === "boolean"
+      ? o.active
+      : invitePending
+        ? false
+        : true
   if (!username || !displayName || !roleId) {
     return NextResponse.json({ error: "INVALID_FIELDS" }, { status: 400 })
   }
@@ -48,6 +54,9 @@ export async function POST(req: Request) {
     email,
     roleId,
     active,
+    ...(invitePending
+      ? { invitePending: true as const, invitedAt: now }
+      : {}),
     team: typeof o.team === "string" ? o.team.trim() : undefined,
     phone: typeof o.phone === "string" ? o.phone.trim() : undefined,
     assignedScope:

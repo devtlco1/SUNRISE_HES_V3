@@ -1,6 +1,7 @@
 import { filterValidPermissionKeys } from "@/lib/rbac/permission-registry"
 import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import { readRbacRolesUnsafe, readRbacUsersUnsafe, writeRbacRoles } from "@/lib/rbac/json-store"
+import { BUILTIN_ROLE_ID_SET } from "@/lib/rbac/builtin-role-ids"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
@@ -69,6 +70,12 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   const gate = await requireApiPermission("users.roles.manage")
   if (!gate.ok) return gate.response
   const { id } = await ctx.params
+  if (BUILTIN_ROLE_ID_SET.has(id)) {
+    return NextResponse.json(
+      { error: "SYSTEM_ROLE_PROTECTED" },
+      { status: 403 }
+    )
+  }
   const users = await readRbacUsersUnsafe()
   if (users.some((u) => u.roleId === id)) {
     return NextResponse.json(

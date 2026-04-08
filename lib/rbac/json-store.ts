@@ -47,6 +47,9 @@ function parseUsers(raw: unknown): RbacUser[] {
       email: o.email,
       roleId: o.roleId,
       active: o.active,
+      invitePending:
+        typeof o.invitePending === "boolean" ? o.invitePending : undefined,
+      invitedAt: typeof o.invitedAt === "string" ? o.invitedAt : undefined,
       team: typeof o.team === "string" ? o.team : undefined,
       phone: typeof o.phone === "string" ? o.phone : undefined,
       assignedScope: typeof o.assignedScope === "string" ? o.assignedScope : undefined,

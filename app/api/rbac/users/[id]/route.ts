@@ -53,6 +53,19 @@ export async function PUT(req: Request, ctx: Ctx) {
       : prev.roleId
   const active =
     typeof o.active === "boolean" ? o.active : prev.active
+  let nextInvitePending: boolean | undefined
+  if (typeof o.invitePending === "boolean") {
+    nextInvitePending = o.invitePending ? true : undefined
+  } else {
+    nextInvitePending = prev.invitePending
+  }
+  const now = new Date().toISOString()
+  let nextInvitedAt = prev.invitedAt
+  if (nextInvitePending) {
+    if (!nextInvitedAt) nextInvitedAt = now
+  } else {
+    nextInvitedAt = undefined
+  }
   if (
     users.some(
       (u, i) =>
@@ -61,7 +74,6 @@ export async function PUT(req: Request, ctx: Ctx) {
   ) {
     return NextResponse.json({ error: "DUPLICATE_USERNAME" }, { status: 409 })
   }
-  const now = new Date().toISOString()
   const next: RbacUser = {
     ...prev,
     username,
@@ -69,6 +81,8 @@ export async function PUT(req: Request, ctx: Ctx) {
     email,
     roleId,
     active,
+    invitePending: nextInvitePending,
+    invitedAt: nextInvitedAt,
     team:
       typeof o.team === "string" ? o.team.trim() || undefined : prev.team,
     phone:
@@ -99,7 +113,13 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   }
   const now = new Date().toISOString()
   const list = [...users]
-  list[idx] = { ...list[idx]!, active: false, updatedAt: now }
+  list[idx] = {
+    ...list[idx]!,
+    active: false,
+    invitePending: undefined,
+    invitedAt: undefined,
+    updatedAt: now,
+  }
   const w = await writeRbacUsers(list)
   if (!w.ok) {
     return NextResponse.json({ error: w.error }, { status: 500 })

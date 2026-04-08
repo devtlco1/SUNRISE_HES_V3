@@ -9,6 +9,9 @@ export type RbacUser = {
   email: string
   roleId: string
   active: boolean
+  /** Pending onboarding — no outbound email is sent by this build. */
+  invitePending?: boolean
+  invitedAt?: string
   /** Optional operator metadata */
   team?: string
   phone?: string

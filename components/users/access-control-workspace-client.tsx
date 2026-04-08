@@ -3,10 +3,18 @@
 import { PageHeader } from "@/components/shared/page-header"
 import { SectionCard } from "@/components/shared/section-card"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
@@ -20,9 +28,14 @@ import {
 } from "@/components/ui/table"
 import { Can } from "@/components/rbac/can"
 import { useCan } from "@/components/rbac/operator-session-context"
+import { BUILTIN_ROLE_ID_SET } from "@/lib/rbac/builtin-role-ids"
 import { PERMISSION_REGISTRY } from "@/lib/rbac/permission-registry"
+import { operationalRowActionTriggerClass } from "@/lib/ui/operational"
+import { cn } from "@/lib/utils"
 import type { PermissionDefinition, RbacRole, RbacUser } from "@/types/rbac"
-import { useRouter, useSearchParams } from "next/navigation"
+import { MailPlus, MoreHorizontal, UserPlus } from "lucide-react"
+import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 type TabId = "users" | "roles" | "permissions"
@@ -33,25 +46,11 @@ function parseTab(s: string | null): TabId {
 }
 
 export function AccessControlWorkspaceClient() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const tab = useMemo(
     () => parseTab(searchParams.get("tab")),
     [searchParams]
   )
-
-  const setTab = useCallback(
-    (t: TabId) => {
-      router.replace(`/users?tab=${t}`, { scroll: false })
-    },
-    [router]
-  )
-
-  useEffect(() => {
-    if (searchParams.get("tab") == null) {
-      router.replace("/users?tab=users", { scroll: false })
-    }
-  }, [router, searchParams])
 
   return (
     <div className="space-y-4">
@@ -64,23 +63,12 @@ export function AccessControlWorkspaceClient() {
         role="tablist"
         aria-label="Access control sections"
       >
-        <TabButton
-          id="users"
-          label="Users"
-          active={tab === "users"}
-          onClick={() => setTab("users")}
-        />
-        <TabButton
-          id="roles"
-          label="Roles"
-          active={tab === "roles"}
-          onClick={() => setTab("roles")}
-        />
-        <TabButton
+        <TabLink id="users" label="Users" active={tab === "users"} />
+        <TabLink id="roles" label="Roles" active={tab === "roles"} />
+        <TabLink
           id="permissions"
           label="Permissions"
           active={tab === "permissions"}
-          onClick={() => setTab("permissions")}
         />
       </div>
       <div role="tabpanel">
@@ -92,33 +80,39 @@ export function AccessControlWorkspaceClient() {
   )
 }
 
-function TabButton({
+function TabLink({
   id,
   label,
   active,
-  onClick,
 }: {
-  id: string
+  id: TabId
   label: string
   active: boolean
-  onClick: () => void
 }) {
   return (
-    <button
-      type="button"
+    <Link
+      href={`/users?tab=${id}`}
+      scroll={false}
+      prefetch
       role="tab"
       aria-selected={active}
       id={`ac-tab-${id}`}
-      className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+      className={cn(
+        "inline-flex rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
         active
           ? "bg-primary text-primary-foreground"
           : "text-muted-foreground hover:bg-muted hover:text-foreground"
-      }`}
-      onClick={onClick}
+      )}
     >
       {label}
-    </button>
+    </Link>
   )
+}
+
+function userStatusLabel(u: RbacUser): string {
+  if (u.invitePending) return "Invited"
+  if (u.active) return "Active"
+  return "Disabled"
 }
 
 function UsersRbacPanel() {
@@ -132,6 +126,9 @@ function UsersRbacPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [permsOpen, setPermsOpen] = useState(false)
+  const [permsSubject, setPermsSubject] = useState<RbacUser | null>(null)
   const [editing, setEditing] = useState<RbacUser | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -140,6 +137,11 @@ function UsersRbacPanel() {
   const [email, setEmail] = useState("")
   const [roleId, setRoleId] = useState("")
   const [active, setActive] = useState(true)
+
+  const [invUsername, setInvUsername] = useState("")
+  const [invDisplayName, setInvDisplayName] = useState("")
+  const [invEmail, setInvEmail] = useState("")
+  const [invRoleId, setInvRoleId] = useState("")
 
   const load = useCallback(async () => {
     if (!canView) {
@@ -173,6 +175,12 @@ function UsersRbacPanel() {
     [roles]
   )
 
+  const effectiveKeys = useMemo(() => {
+    if (!permsSubject) return []
+    const role = rolesById.get(permsSubject.roleId)
+    return role ? [...role.permissionKeys].sort() : []
+  }, [permsSubject, rolesById])
+
   function openCreate() {
     setEditing(null)
     setUsername("")
@@ -183,6 +191,14 @@ function UsersRbacPanel() {
     setSheetOpen(true)
   }
 
+  function openInvite() {
+    setInvUsername("")
+    setInvDisplayName("")
+    setInvEmail("")
+    setInvRoleId(roles[0]?.id ?? "")
+    setInviteOpen(true)
+  }
+
   function openEdit(u: RbacUser) {
     setEditing(u)
     setUsername(u.username)
@@ -191,6 +207,11 @@ function UsersRbacPanel() {
     setRoleId(u.roleId)
     setActive(u.active)
     setSheetOpen(true)
+  }
+
+  function openEffectivePerms(u: RbacUser) {
+    setPermsSubject(u)
+    setPermsOpen(true)
   }
 
   async function saveUser() {
@@ -225,6 +246,34 @@ function UsersRbacPanel() {
     }
   }
 
+  async function saveInvite() {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/rbac/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          username: invUsername.trim(),
+          displayName: invDisplayName.trim(),
+          email: invEmail.trim(),
+          roleId: invRoleId,
+          invitePending: true,
+        }),
+      })
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(j.error ?? "Invite failed")
+      }
+      setInviteOpen(false)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Invite failed")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function deactivateUser(id: string) {
     if (!window.confirm("Deactivate this user?")) return
     const res = await fetch(`/api/rbac/users/${encodeURIComponent(id)}`, {
@@ -233,6 +282,23 @@ function UsersRbacPanel() {
     })
     if (!res.ok) {
       setError("Deactivate failed")
+      return
+    }
+    await load()
+  }
+
+  async function activateUser(u: RbacUser) {
+    const res = await fetch(`/api/rbac/users/${encodeURIComponent(u.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        active: true,
+        invitePending: false,
+      }),
+    })
+    if (!res.ok) {
+      setError("Activate failed")
       return
     }
     await load()
@@ -248,16 +314,28 @@ function UsersRbacPanel() {
 
   return (
     <SectionCard title="Users" description="Assign each user exactly one role.">
-      <div className="space-y-3 border-t border-border px-5 py-4">
+      <div className="space-y-3 border-t border-border pt-3">
         {error ? (
           <p className="text-sm text-destructive" role="alert">
             {error}
           </p>
         ) : null}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Can permission="users.create">
             <Button type="button" size="sm" onClick={openCreate}>
-              New user
+              <UserPlus className="mr-1 size-3.5" />
+              Add user
+            </Button>
+          </Can>
+          <Can permission="users.create">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={openInvite}
+            >
+              <MailPlus className="mr-1 size-3.5" />
+              Invite
             </Button>
           </Can>
           <Button
@@ -273,65 +351,87 @@ function UsersRbacPanel() {
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Username</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Active</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell className="font-medium">{u.displayName}</TableCell>
-                  <TableCell className="text-xs">{u.username}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {u.email}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {rolesById.get(u.roleId)?.name ?? u.roleId}
-                  </TableCell>
-                  <TableCell className="text-xs">{u.active ? "yes" : "no"}</TableCell>
-                  <TableCell className="text-right">
-                    <Can permission="users.edit">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7"
-                        onClick={() => openEdit(u)}
-                      >
-                        Edit
-                      </Button>
-                    </Can>
-                    <Can permission="users.delete">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 text-destructive"
-                        disabled={!u.active}
-                        onClick={() => void deactivateUser(u.id)}
-                      >
-                        Deactivate
-                      </Button>
-                    </Can>
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Username</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-[52px] text-right">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {users.map((u) => (
+                  <TableRow key={u.id}>
+                    <TableCell className="font-medium">{u.displayName}</TableCell>
+                    <TableCell className="text-xs">{u.username}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {u.email || "—"}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {rolesById.get(u.roleId)?.name ?? u.roleId}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {userStatusLabel(u)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          className={operationalRowActionTriggerClass}
+                          aria-label={`Actions for ${u.username}`}
+                        >
+                          <MoreHorizontal className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-40">
+                          <DropdownMenuItem
+                            onClick={() => openEffectivePerms(u)}
+                          >
+                            View permissions
+                          </DropdownMenuItem>
+                          {canEdit ? (
+                            <DropdownMenuItem onClick={() => openEdit(u)}>
+                              Edit user
+                            </DropdownMenuItem>
+                          ) : null}
+                          {canEdit && !u.active ? (
+                            <DropdownMenuItem
+                              onClick={() => void activateUser(u)}
+                            >
+                              Activate account
+                            </DropdownMenuItem>
+                          ) : null}
+                          {canDelete ? (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={!u.active}
+                                onClick={() => void deactivateUser(u.id)}
+                              >
+                                Deactivate
+                              </DropdownMenuItem>
+                            </>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </div>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md">
           <SheetHeader className="border-b border-border pb-4">
-            <SheetTitle>{editing ? "Edit user" : "New user"}</SheetTitle>
+            <SheetTitle>{editing ? "Edit user" : "Add user"}</SheetTitle>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-3 px-4 py-4 text-sm">
             <label className="space-y-1">
@@ -394,6 +494,97 @@ function UsersRbacPanel() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <Sheet open={inviteOpen} onOpenChange={setInviteOpen}>
+        <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md">
+          <SheetHeader className="border-b border-border pb-4">
+            <SheetTitle>Invite user</SheetTitle>
+            <SheetDescription>
+              Creates an inactive account flagged as invited. Outbound email is
+              not sent from this application — share access details through your
+              usual secure channel.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-1 flex-col gap-3 px-4 py-4 text-sm">
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">Username</span>
+              <Input
+                value={invUsername}
+                onChange={(e) => setInvUsername(e.target.value)}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">Display name</span>
+              <Input
+                value={invDisplayName}
+                onChange={(e) => setInvDisplayName(e.target.value)}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">Email (optional)</span>
+              <Input
+                type="email"
+                value={invEmail}
+                onChange={(e) => setInvEmail(e.target.value)}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">Role</span>
+              <select
+                className="h-9 w-full rounded-md border border-input bg-background px-2"
+                value={invRoleId}
+                onChange={(e) => setInvRoleId(e.target.value)}
+              >
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              type="button"
+              disabled={
+                saving ||
+                !invUsername.trim() ||
+                !invDisplayName.trim() ||
+                !invRoleId ||
+                !canCreate
+              }
+              onClick={() => void saveInvite()}
+            >
+              Create invited user
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={permsOpen} onOpenChange={setPermsOpen}>
+        <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-lg">
+          <SheetHeader className="border-b border-border pb-4">
+            <SheetTitle>
+              Effective permissions
+              {permsSubject ? ` · ${permsSubject.displayName}` : ""}
+            </SheetTitle>
+            <SheetDescription>
+              From role{" "}
+              <span className="font-medium text-foreground">
+                {permsSubject
+                  ? (rolesById.get(permsSubject.roleId)?.name ?? permsSubject.roleId)
+                  : ""}
+              </span>{" "}
+              ({effectiveKeys.length} keys)
+            </SheetDescription>
+          </SheetHeader>
+          <div className="max-h-[60vh] overflow-y-auto px-4 py-4 text-xs">
+            <ul className="space-y-1 font-mono text-[11px] text-muted-foreground">
+              {effectiveKeys.map((k) => (
+                <li key={k}>{k}</li>
+              ))}
+            </ul>
+          </div>
+        </SheetContent>
+      </Sheet>
     </SectionCard>
   )
 }
@@ -442,12 +633,8 @@ function RolesRbacPanel() {
   }, [])
 
   useEffect(() => {
-    if (!canManage) {
-      setLoading(false)
-      return
-    }
     void load()
-  }, [canManage, load])
+  }, [load])
 
   const userCountByRole = useMemo(() => {
     const m = new Map<string, number>()
@@ -532,28 +719,33 @@ function RolesRbacPanel() {
     []
   )
 
-  if (!canManage) {
-    return (
-      <SectionCard title="Roles" description="Role definitions and permission sets.">
-        <p className="border-t border-border px-5 py-4 text-sm text-muted-foreground">
-          You need <code className="text-xs">users.roles.manage</code> to edit roles.
-        </p>
-      </SectionCard>
-    )
-  }
-
   return (
-    <SectionCard title="Roles" description="Create roles and attach granular permissions.">
-      <div className="space-y-3 border-t border-border px-5 py-4">
+    <SectionCard
+      title="Roles"
+      description={
+        canManage
+          ? "Create roles and attach granular permissions."
+          : "Role definitions (view only). Request users.roles.manage to edit."
+      }
+    >
+      <div className="space-y-3 border-t border-border pt-3">
         {error ? (
           <p className="text-sm text-destructive" role="alert">
             {error}
           </p>
         ) : null}
-        <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={openCreate}>
-            New role
-          </Button>
+        {!canManage ? (
+          <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            You can review roles below. Editing requires{" "}
+            <code className="text-[11px]">users.roles.manage</code>.
+          </p>
+        ) : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          {canManage ? (
+            <Button type="button" size="sm" onClick={openCreate}>
+              Add role
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -567,130 +759,149 @@ function RolesRbacPanel() {
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="tabular-nums">Permissions</TableHead>
-                <TableHead className="tabular-nums">Active users</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {roles.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.name}</TableCell>
-                  <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
-                    {r.description}
-                  </TableCell>
-                  <TableCell className="tabular-nums text-xs">
-                    {r.permissionKeys.length}
-                  </TableCell>
-                  <TableCell className="tabular-nums text-xs">
-                    {userCountByRole.get(r.id) ?? 0}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7"
-                      onClick={() => openEdit(r)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-destructive"
-                      onClick={() => void deleteRole(r.id)}
-                    >
-                      Delete
-                    </Button>
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="tabular-nums">Permissions</TableHead>
+                  <TableHead className="tabular-nums">Active users</TableHead>
+                  <TableHead className="w-[52px] text-right">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {roles.map((r) => {
+                  const builtin = BUILTIN_ROLE_ID_SET.has(r.id)
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="font-medium">{r.name}</TableCell>
+                      <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
+                        {r.description}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-xs">
+                        {r.permissionKeys.length}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-xs">
+                        {userCountByRole.get(r.id) ?? 0}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {canManage ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              className={operationalRowActionTriggerClass}
+                              aria-label={`Actions for role ${r.name}`}
+                            >
+                              <MoreHorizontal className="size-4" />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="min-w-36">
+                              <DropdownMenuItem onClick={() => openEdit(r)}>
+                                Edit role
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={builtin}
+                                onClick={() => void deleteRole(r.id)}
+                              >
+                                Delete role
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </div>
 
-      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent className="flex w-full max-w-lg flex-col gap-0 overflow-y-auto sm:max-w-xl">
-          <SheetHeader className="border-b border-border pb-4">
-            <SheetTitle>{editing ? "Edit role" : "New role"}</SheetTitle>
-          </SheetHeader>
-          <div className="flex flex-1 flex-col gap-3 px-4 py-4 text-sm">
-            <label className="space-y-1">
-              <span className="text-xs text-muted-foreground">Name</span>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs text-muted-foreground">Description</span>
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </label>
-            <div className="text-xs font-semibold text-muted-foreground">
-              Permissions ({selectedKeys.size} selected)
-            </div>
-            <div className="max-h-[50vh] space-y-4 overflow-y-auto rounded-md border border-border p-3">
-              {[...grouped.entries()].map(([mod, defs]) => (
-                <div key={mod}>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground">
-                    {mod}
-                  </div>
-                  <ul className="space-y-1.5">
-                    {defs.map((d) => (
-                      <li key={d.key} className="flex items-start gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={selectedKeys.has(d.key)}
-                          onChange={() => toggleKey(d.key)}
-                          className="mt-0.5"
-                        />
-                        <span>
-                          <span className="font-mono text-[11px] text-muted-foreground">
-                            {d.key}
+      {canManage ? (
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <SheetContent className="flex w-full max-w-lg flex-col gap-0 overflow-y-auto sm:max-w-xl">
+            <SheetHeader className="border-b border-border pb-4">
+              <SheetTitle>{editing ? "Edit role" : "Add role"}</SheetTitle>
+            </SheetHeader>
+            <div className="flex flex-1 flex-col gap-3 px-4 py-4 text-sm">
+              <label className="space-y-1">
+                <span className="text-xs text-muted-foreground">Name</span>
+                <Input value={name} onChange={(e) => setName(e.target.value)} />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-muted-foreground">Description</span>
+                <Input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </label>
+              <div className="text-xs font-semibold text-muted-foreground">
+                Permissions ({selectedKeys.size} selected)
+              </div>
+              <div className="max-h-[50vh] space-y-4 overflow-y-auto rounded-md border border-border p-3">
+                {[...grouped.entries()].map(([mod, defs]) => (
+                  <div key={mod}>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground">
+                      {mod}
+                    </div>
+                    <ul className="space-y-1.5">
+                      {defs.map((d) => (
+                        <li key={d.key} className="flex items-start gap-2 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={selectedKeys.has(d.key)}
+                            onChange={() => toggleKey(d.key)}
+                            className="mt-0.5"
+                          />
+                          <span>
+                            <span className="font-mono text-[11px] text-muted-foreground">
+                              {d.key}
+                            </span>
+                            <br />
+                            {d.label}
                           </span>
-                          <br />
-                          {d.label}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              <Button
+                type="button"
+                disabled={saving || !name.trim()}
+                onClick={() => void saveRole()}
+              >
+                Save role
+              </Button>
             </div>
-            <Button
-              type="button"
-              disabled={saving || !name.trim()}
-              onClick={() => void saveRole()}
-            >
-              Save role
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </SectionCard>
   )
 }
 
 function PermissionsCatalogPanel() {
-  const canSee =
-    useCan("users.permissions.view") || useCan("users.roles.manage")
+  const canCatalog =
+    useCan("users.view") ||
+    useCan("users.permissions.view") ||
+    useCan("users.roles.manage")
   const [defs, setDefs] = useState<PermissionDefinition[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!canSee) {
+    if (!canCatalog) {
       setLoading(false)
       return
     }
+    setLoading(true)
     void fetch("/api/rbac/permissions", { credentials: "include" })
       .then(async (res) => {
         if (!res.ok) throw new Error("Load failed")
@@ -699,16 +910,15 @@ function PermissionsCatalogPanel() {
       })
       .catch(() => setError("Could not load catalog"))
       .finally(() => setLoading(false))
-  }, [canSee])
+  }, [canCatalog])
 
   const grouped = useMemo(() => groupByModule(defs), [defs])
 
-  if (!canSee) {
+  if (!canCatalog) {
     return (
       <SectionCard title="Permissions" description="Master catalog of keys.">
-        <p className="border-t border-border px-5 py-4 text-sm text-muted-foreground">
-          You need <code className="text-xs">users.permissions.view</code> or{" "}
-          <code className="text-xs">users.roles.manage</code>.
+        <p className="border-t border-border pt-3 text-sm text-muted-foreground">
+          You need access to the users workspace to view the catalog.
         </p>
       </SectionCard>
     )
@@ -717,42 +927,44 @@ function PermissionsCatalogPanel() {
   return (
     <SectionCard
       title="Permission catalog"
-      description="Reference list — roles grant subsets of these keys."
+      description="Grouped by module — roles grant subsets of these keys."
     >
-      <div className="border-t border-border px-5 py-4">
+      <div className="border-t border-border pt-3">
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
-          <div className="space-y-6">
+          <div className="max-h-[min(70vh,720px)] space-y-6 overflow-y-auto pr-1">
             {[...grouped.entries()].map(([mod, list]) => (
               <div key={mod}>
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   {mod}
                 </h3>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[40%]">Key</TableHead>
-                      <TableHead>Label</TableHead>
-                      <TableHead>Group</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {list.map((d) => (
-                      <TableRow key={d.key}>
-                        <TableCell className="font-mono text-[11px]">
-                          {d.key}
-                        </TableCell>
-                        <TableCell className="text-xs">{d.label}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {d.group}
-                        </TableCell>
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[40%]">Key</TableHead>
+                        <TableHead>Label</TableHead>
+                        <TableHead>Group</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {list.map((d) => (
+                        <TableRow key={d.key}>
+                          <TableCell className="font-mono text-[11px]">
+                            {d.key}
+                          </TableCell>
+                          <TableCell className="text-xs">{d.label}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {d.group}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             ))}
           </div>
