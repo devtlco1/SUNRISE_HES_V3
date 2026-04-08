@@ -41,7 +41,11 @@ const pathTitle: Record<string, string> = {
   "/meters": "Meters",
   "/connectivity": "Connectivity · Overview",
   "/connectivity/events": "Connectivity · Events",
-  "/commands": "Commands",
+  "/commands": "Commands · Overview",
+  "/commands/run-now": "Commands · Run now",
+  "/commands/groups": "Commands · Groups",
+  "/commands/schedules": "Commands · Schedules",
+  "/commands/runs": "Commands · Runs",
   "/alarms": "Alarms",
   "/users": "Users",
 }

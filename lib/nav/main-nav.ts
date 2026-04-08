@@ -34,10 +34,18 @@ export type MainNavConnectivityItem = {
   icon: LucideIcon
 }
 
+/** Expandable Commands group; children from `lib/commands/nav`. */
+export type MainNavCommandsItem = {
+  kind: "commands"
+  label: string
+  icon: LucideIcon
+}
+
 export type MainNavEntry =
   | MainNavLinkItem
   | MainNavConfigurationItem
   | MainNavConnectivityItem
+  | MainNavCommandsItem
 
 export const mainNavEntries: MainNavEntry[] = [
   { kind: "link", href: "/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
@@ -47,7 +55,7 @@ export const mainNavEntries: MainNavEntry[] = [
   { kind: "configuration", label: "Configuration", icon: Settings2Icon },
   { kind: "link", href: "/meters", label: "Meters", icon: GaugeIcon },
   { kind: "connectivity", label: "Connectivity", icon: RadioTowerIcon },
-  { kind: "link", href: "/commands", label: "Commands", icon: SquareTerminalIcon },
+  { kind: "commands", label: "Commands", icon: SquareTerminalIcon },
   { kind: "link", href: "/alarms", label: "Alarms", icon: BellIcon },
   { kind: "link", href: "/users", label: "Users", icon: UsersIcon },
 ]
