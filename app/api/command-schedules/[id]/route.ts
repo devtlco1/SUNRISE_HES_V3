@@ -8,6 +8,7 @@ import {
   normalizeCommandSchedule,
   normalizeCommandSchedules,
 } from "@/lib/commands/operator-normalize"
+import { computeNextRunAt } from "@/lib/commands/schedule-next-run"
 import { readMetersJsonRaw } from "@/lib/meters/meters-file"
 import { normalizeMeterRows } from "@/lib/meters/normalize"
 import type {
@@ -196,6 +197,28 @@ export async function PUT(req: Request, ctx: Ctx) {
   }
   const prev = existing[idx]!
   const now = new Date().toISOString()
+
+  let nextRunAt = prev.nextRunAt
+  if (!parsed.enabled) {
+    nextRunAt = null
+  } else if (!prev.enabled && parsed.enabled) {
+    nextRunAt = computeNextRunAt(
+      {
+        ...prev,
+        name: parsed.name,
+        enabled: true,
+        actionType: parsed.actionType,
+        targetType: parsed.targetType,
+        meterIds: parsed.meterIds,
+        groupId: parsed.groupId,
+        cadenceType: parsed.cadenceType,
+        recurrence: parsed.recurrence,
+        notes: parsed.notes,
+      },
+      new Date()
+    ).toISOString()
+  }
+
   const row = normalizeCommandSchedule({
     id: prev.id,
     name: parsed.name,
@@ -209,6 +232,11 @@ export async function PUT(req: Request, ctx: Ctx) {
     notes: parsed.notes,
     createdAt: prev.createdAt,
     updatedAt: now,
+    lastRunAt: prev.lastRunAt,
+    nextRunAt,
+    lastRunId: prev.lastRunId,
+    lastOutcomeSummary: prev.lastOutcomeSummary,
+    lastSchedulerNote: prev.lastSchedulerNote,
   })
   if (!row) {
     return NextResponse.json({ error: "INVALID_SCHEDULE_ROW" }, { status: 500 })

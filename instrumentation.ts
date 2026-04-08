@@ -8,4 +8,7 @@ export async function register(): Promise<void> {
     "@/lib/runtime/ingress/listener"
   )
   bootstrapMeterIngressOnce()
+
+  const { startCommandScheduler } = await import("@/lib/commands/command-scheduler")
+  startCommandScheduler()
 }

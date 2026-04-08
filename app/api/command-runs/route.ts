@@ -1,23 +1,12 @@
+import { kickOperatorCommandExecution } from "@/lib/commands/command-execution-worker"
+import { COMMAND_ENGINE_LIMITS_NOTE } from "@/lib/commands/engine-constants"
 import { loadLegacyCommandJobs } from "@/lib/commands/legacy-jobs-load"
-import {
-  readCommandGroupsRaw,
-  readOperatorRunsRaw,
-  writeOperatorRunsArray,
-} from "@/lib/commands/operator-file"
-import {
-  normalizeCommandGroups,
-  normalizeOperatorRun,
-  normalizeOperatorRuns,
-} from "@/lib/commands/operator-normalize"
-import { resolveRunTargetSummary } from "@/lib/commands/resolve-run-target"
+import { readOperatorRunsRaw } from "@/lib/commands/operator-file"
+import { normalizeOperatorRun, normalizeOperatorRuns } from "@/lib/commands/operator-normalize"
+import { withOperatorRunsLock } from "@/lib/commands/operator-persistence"
+import { resolveCommandExecutionContext } from "@/lib/commands/resolve-command-context"
 import { mergeAndSortUnifiedRuns } from "@/lib/commands/unified-runs"
-import { readMetersJsonRaw } from "@/lib/meters/meters-file"
-import { normalizeMeterRows } from "@/lib/meters/normalize"
-import type {
-  CommandGroup,
-  OperatorActionType,
-  OperatorTargetType,
-} from "@/types/command-operator"
+import type { OperatorActionType, OperatorTargetType } from "@/types/command-operator"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
@@ -29,9 +18,6 @@ const TARGETS: readonly OperatorTargetType[] = [
   "selected_meters",
   "saved_group",
 ]
-
-const PHASE1_EXECUTION_NOTE =
-  "Phase 1: recorded for audit. No automatic sidecar dispatch from this composer yet — execution engine wiring comes in a later phase."
 
 export async function GET() {
   const opRaw = await readOperatorRunsRaw()
@@ -91,85 +77,61 @@ export async function POST(req: Request) {
       ? o.readProfileMode.trim()
       : undefined
 
-  const metersRaw = await readMetersJsonRaw()
-  if (!metersRaw.ok) {
-    return NextResponse.json({ error: metersRaw.error }, { status: 500 })
-  }
-  const meters = normalizeMeterRows(metersRaw.parsed)
-  const metersById = new Map(meters.map((m) => [m.id, m]))
-
-  let group: CommandGroup | null = null
-  if (targetType === "saved_group") {
-    const graw = await readCommandGroupsRaw()
-    if (!graw.ok) {
-      return NextResponse.json({ error: graw.error }, { status: 500 })
-    }
-    const groups = normalizeCommandGroups(graw.parsed)
-    group = groupId ? groups.find((g) => g.id === groupId) ?? null : null
-  }
-
-  const resolved = resolveRunTargetSummary({
+  const ctx = await resolveCommandExecutionContext({
     targetType: targetType as OperatorTargetType,
     meterIds,
     groupId,
-    group,
-    metersById,
   })
 
-  if (
-    resolved.targetSummary.includes("Invalid") ||
-    resolved.targetSummary.includes("unknown") ||
-    resolved.targetSummary.startsWith("No meter") ||
-    resolved.targetSummary.startsWith("No meters")
-  ) {
+  if (!ctx.ok) {
     return NextResponse.json(
-      { error: "INVALID_TARGET", detail: resolved.targetSummary },
+      { error: "INVALID_TARGET", detail: ctx.error },
       { status: 400 }
     )
   }
 
-  if (resolved.meterIds.length === 0) {
-    return NextResponse.json(
-      { error: "EMPTY_TARGET", detail: resolved.targetSummary },
-      { status: 400 }
-    )
-  }
-
-  const raw = await readOperatorRunsRaw()
-  if (!raw.ok) {
-    return NextResponse.json({ error: raw.error }, { status: 500 })
-  }
-  const existing = normalizeOperatorRuns(raw.parsed)
   const now = new Date().toISOString()
   const id = `cr-${crypto.randomUUID()}`
 
-  const row = normalizeOperatorRun({
+  const draft = {
     id,
+    sourceType: "manual" as const,
+    scheduleId: null,
     actionType,
     targetType,
-    targetSummary: resolved.targetSummary,
-    meterIds: resolved.meterIds,
+    targetSummary: ctx.targetSummary,
+    meterIds: ctx.meterIds,
+    resolvedMeterIds: ctx.meterIds,
     groupId,
-    status: "queued",
+    status: "queued" as const,
     readProfileMode:
       actionType === "read" ? readProfileMode ?? "default_register_pull" : undefined,
     createdAt: now,
+    queuedAt: now,
     startedAt: null,
     finishedAt: null,
-    resultSummary: "Queued (no runtime dispatch in Phase 1)",
+    resultSummary: "Queued for execution",
     errorSummary: null,
-    executionNote: PHASE1_EXECUTION_NOTE,
-  })
+    executionNote: COMMAND_ENGINE_LIMITS_NOTE,
+    perMeterResults: [] as const,
+  }
 
+  const row = normalizeOperatorRun(draft)
   if (!row) {
     return NextResponse.json({ error: "INVALID_RUN_ROW" }, { status: 500 })
   }
 
-  const next = [...existing, row]
-  const w = await writeOperatorRunsArray(next)
-  if (!w.ok) {
-    return NextResponse.json({ error: w.error }, { status: 500 })
+  try {
+    await withOperatorRunsLock(async (runs) => ({
+      next: [...runs, row],
+      result: undefined,
+    }))
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "PERSIST_FAILED"
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
+
+  kickOperatorCommandExecution(row.id)
 
   return NextResponse.json(row, { status: 201 })
 }

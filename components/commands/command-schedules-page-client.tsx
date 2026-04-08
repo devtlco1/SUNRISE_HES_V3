@@ -249,8 +249,10 @@ export function CommandSchedulesPageClient() {
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Schedules are persisted definitions only in Phase 1 — there is no background
-        runner claiming execution yet.
+        Enabled schedules are executed by an in-process server tick (15s). Overlap: if
+        a prior run for the same schedule is still queued or running, the fire is
+        skipped and nextRunAt advances. Not distributed — survives navigation, not
+        necessarily full process restart.
       </p>
 
       {error ? (
@@ -289,6 +291,8 @@ export function CommandSchedulesPageClient() {
                   <TableHead>Action</TableHead>
                   <TableHead>Target</TableHead>
                   <TableHead>Cadence</TableHead>
+                  <TableHead>Next run</TableHead>
+                  <TableHead>Note</TableHead>
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -305,6 +309,15 @@ export function CommandSchedulesPageClient() {
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {cadenceLabel(s.cadenceType, s.recurrence)}
+                    </TableCell>
+                    <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
+                      {s.nextRunAt ?? "—"}
+                    </TableCell>
+                    <TableCell
+                      className="max-w-[160px] truncate text-xs text-muted-foreground"
+                      title={s.lastSchedulerNote}
+                    >
+                      {s.lastSchedulerNote || "—"}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">

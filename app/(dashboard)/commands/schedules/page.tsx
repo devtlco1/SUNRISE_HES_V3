@@ -6,7 +6,7 @@ export default function CommandsSchedulesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Schedules"
-        subtitle="Saved cadence definitions (data/command-schedules.json). No automatic runner in Phase 1."
+        subtitle="Saved cadence definitions (data/command-schedules.json); enabled rows are fired by the in-process scheduler."
       />
       <CommandSchedulesPageClient />
     </div>

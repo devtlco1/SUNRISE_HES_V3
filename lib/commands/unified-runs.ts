@@ -16,10 +16,19 @@ function parseRunDate(s: string): number {
   return Number.isFinite(t) ? t : 0
 }
 
+function meterOutcomeBrief(row: OperatorCommandRun): string | null {
+  const pr = row.perMeterResults
+  if (!pr || pr.length === 0) return null
+  const ok = pr.filter((p) => p.state === "success").length
+  return `${ok}/${pr.length} meters ok`
+}
+
 export function operatorRunToUnified(row: OperatorCommandRun): UnifiedCommandRunRow {
   return {
     id: row.id,
     source: "operator",
+    operatorTrigger: row.sourceType,
+    scheduleId: row.scheduleId,
     actionType: row.actionType,
     targetSummary: row.targetSummary,
     status: row.status,
@@ -29,6 +38,7 @@ export function operatorRunToUnified(row: OperatorCommandRun): UnifiedCommandRun
     resultSummary: row.resultSummary,
     errorSummary: row.errorSummary,
     notes: row.executionNote || null,
+    meterOutcomeBrief: meterOutcomeBrief(row),
   }
 }
 
@@ -36,6 +46,8 @@ export function legacyJobToUnified(row: CommandJobRow): UnifiedCommandRunRow {
   return {
     id: `legacy:${row.id}`,
     source: "legacy_catalog",
+    operatorTrigger: null,
+    scheduleId: null,
     actionType: templateToActionLabel(row.templateId),
     targetSummary: `${row.targetCount} meter(s) · ${row.templateName}`,
     status: row.queueState,
@@ -48,6 +60,7 @@ export function legacyJobToUnified(row: CommandJobRow): UnifiedCommandRunRow {
         ? `${row.failedCount} failed in batch`
         : null,
     notes: row.operatorNote ?? null,
+    meterOutcomeBrief: null,
   }
 }
 

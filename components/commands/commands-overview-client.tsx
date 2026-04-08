@@ -20,30 +20,35 @@ export function CommandsOverviewClient() {
   useEffect(() => {
     let stale = false
     const ac = new AbortController()
-    fetch("/api/commands/overview", { signal: ac.signal, cache: "no-store" })
-      .then(async (res) => {
-        if (!res.ok) {
-          const j = await res.json().catch(() => ({}))
-          throw new Error(
-            typeof j.error === "string" ? j.error : `HTTP ${res.status}`
-          )
-        }
-        return res.json() as Promise<OverviewResponse>
-      })
-      .then((r) => {
-        if (stale) return
-        setData(r)
-        setError(null)
-      })
-      .catch((e) => {
-        if (e instanceof Error && e.name === "AbortError") return
-        if (stale) return
-        setError(e instanceof Error ? e.message : "Load failed")
-        setData(null)
-      })
+    const load = () =>
+      fetch("/api/commands/overview", { signal: ac.signal, cache: "no-store" })
+        .then(async (res) => {
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}))
+            throw new Error(
+              typeof j.error === "string" ? j.error : `HTTP ${res.status}`
+            )
+          }
+          return res.json() as Promise<OverviewResponse>
+        })
+        .then((r) => {
+          if (stale) return
+          setData(r)
+          setError(null)
+        })
+        .catch((e) => {
+          if (e instanceof Error && e.name === "AbortError") return
+          if (stale) return
+          setError(e instanceof Error ? e.message : "Load failed")
+          setData(null)
+        })
+
+    void load()
+    const t = window.setInterval(() => void load(), 5000)
     return () => {
       stale = true
       ac.abort()
+      window.clearInterval(t)
     }
   }, [])
 
@@ -67,15 +72,24 @@ export function CommandsOverviewClient() {
         </p>
       ) : null}
 
+      <p className="text-xs text-muted-foreground">
+        Counts refresh every 5s. Operator execution is server-owned (in-process engine +
+        Python sidecar).
+      </p>
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Saved groups"
           value={s ? String(s.groupsCount) : "—"}
         />
         <StatCard
-          label="Schedules"
-          value={s ? String(s.schedulesCount) : "—"}
-          description="Definitions only in Phase 1"
+          label="Schedules (enabled / total)"
+          value={
+            s
+              ? `${s.enabledSchedulesCount} / ${s.schedulesCount}`
+              : "—"
+          }
+          description="Enabled schedules are driven by the in-process tick"
         />
         <StatCard
           label="Execution records"
@@ -92,7 +106,11 @@ export function CommandsOverviewClient() {
         />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Operator completed (24h)"
+          value={s ? String(s.operatorCompletedLast24h) : "—"}
+        />
         <StatCard
           label="Catalog queued / running / failed"
           value={

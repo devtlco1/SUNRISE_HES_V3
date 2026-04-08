@@ -8,6 +8,7 @@ import {
   normalizeCommandSchedule,
   normalizeCommandSchedules,
 } from "@/lib/commands/operator-normalize"
+import { computeNextRunAt } from "@/lib/commands/schedule-next-run"
 import { readMetersJsonRaw } from "@/lib/meters/meters-file"
 import { normalizeMeterRows } from "@/lib/meters/normalize"
 import type {
@@ -187,6 +188,31 @@ export async function POST(req: Request) {
   const existing = normalizeCommandSchedules(raw.parsed)
   const now = new Date().toISOString()
   const id = `cs-${crypto.randomUUID()}`
+  const nextRunAtIso = parsed.enabled
+    ? computeNextRunAt(
+        {
+          id,
+          name: parsed.name,
+          enabled: parsed.enabled,
+          actionType: parsed.actionType,
+          targetType: parsed.targetType,
+          meterIds: parsed.meterIds,
+          groupId: parsed.groupId,
+          cadenceType: parsed.cadenceType,
+          recurrence: parsed.recurrence,
+          notes: parsed.notes,
+          createdAt: now,
+          updatedAt: now,
+          lastRunAt: null,
+          nextRunAt: null,
+          lastRunId: null,
+          lastOutcomeSummary: "",
+          lastSchedulerNote: "",
+        },
+        new Date()
+      ).toISOString()
+    : null
+
   const row = normalizeCommandSchedule({
     id,
     name: parsed.name,
@@ -200,6 +226,11 @@ export async function POST(req: Request) {
     notes: parsed.notes,
     createdAt: now,
     updatedAt: now,
+    lastRunAt: null,
+    nextRunAt: nextRunAtIso,
+    lastRunId: null,
+    lastOutcomeSummary: "",
+    lastSchedulerNote: "",
   })
   if (!row) {
     return NextResponse.json({ error: "INVALID_SCHEDULE_ROW" }, { status: 500 })

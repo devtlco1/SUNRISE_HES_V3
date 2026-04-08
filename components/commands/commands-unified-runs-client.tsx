@@ -31,29 +31,34 @@ export function CommandsUnifiedRunsClient() {
   useEffect(() => {
     let stale = false
     const ac = new AbortController()
-    fetch("/api/command-runs", { signal: ac.signal, cache: "no-store" })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json() as Promise<ApiResponse>
-      })
-      .then((data) => {
-        if (stale) return
-        setRows(data.rows)
-        setLegacyAvailable(data.legacyAvailable)
-        setError(null)
-      })
-      .catch((e) => {
-        if (e instanceof Error && e.name === "AbortError") return
-        if (stale) return
-        setError(e instanceof Error ? e.message : "Load failed")
-        setRows([])
-      })
-      .finally(() => {
-        if (!stale) setLoading(false)
-      })
+    const load = () =>
+      fetch("/api/command-runs", { signal: ac.signal, cache: "no-store" })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          return res.json() as Promise<ApiResponse>
+        })
+        .then((data) => {
+          if (stale) return
+          setRows(data.rows)
+          setLegacyAvailable(data.legacyAvailable)
+          setError(null)
+        })
+        .catch((e) => {
+          if (e instanceof Error && e.name === "AbortError") return
+          if (stale) return
+          setError(e instanceof Error ? e.message : "Load failed")
+          setRows([])
+        })
+        .finally(() => {
+          if (!stale) setLoading(false)
+        })
+
+    void load()
+    const t = window.setInterval(() => void load(), 4000)
     return () => {
       stale = true
       ac.abort()
+      window.clearInterval(t)
     }
   }, [])
 
@@ -69,9 +74,8 @@ export function CommandsUnifiedRunsClient() {
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Operator runs are stored in data/command-runs.json. Rows prefixed from the
-        legacy catalog come from data/commands.json (sample history) — not simulated
-        data in the client.
+        Table refreshes every 4s. Operator runs persist in data/command-runs.json and
+        execute on the server. Legacy rows are a static catalog from data/commands.json.
       </p>
       {!legacyAvailable ? (
         <p className="text-xs text-amber-700 dark:text-amber-400">
@@ -111,8 +115,7 @@ export function CommandsUnifiedRunsClient() {
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : filtered.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No execution records match this filter. Operator submissions from Run
-              now will appear here; legacy rows require data/commands.json.
+              No execution records match this filter.
             </p>
           ) : (
             <Table>
@@ -120,9 +123,12 @@ export function CommandsUnifiedRunsClient() {
                 <TableRow>
                   <TableHead>Id</TableHead>
                   <TableHead>Source</TableHead>
+                  <TableHead>Trigger</TableHead>
+                  <TableHead>Schedule</TableHead>
                   <TableHead>Action</TableHead>
                   <TableHead>Target</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Meters</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Started</TableHead>
                   <TableHead>Finished</TableHead>
@@ -139,6 +145,15 @@ export function CommandsUnifiedRunsClient() {
                     <TableCell className="text-xs text-muted-foreground">
                       {r.source === "operator" ? "operator" : "catalog"}
                     </TableCell>
+                    <TableCell className="text-xs">
+                      {r.operatorTrigger ?? "—"}
+                    </TableCell>
+                    <TableCell
+                      className="max-w-[100px] truncate font-mono text-xs text-muted-foreground"
+                      title={r.scheduleId ?? ""}
+                    >
+                      {r.scheduleId ?? "—"}
+                    </TableCell>
                     <TableCell className="text-xs">{r.actionType}</TableCell>
                     <TableCell
                       className="max-w-[200px] truncate text-xs"
@@ -147,6 +162,9 @@ export function CommandsUnifiedRunsClient() {
                       {r.targetSummary}
                     </TableCell>
                     <TableCell className="text-xs">{r.status}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                      {r.meterOutcomeBrief ?? "—"}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {r.createdAt}
                     </TableCell>

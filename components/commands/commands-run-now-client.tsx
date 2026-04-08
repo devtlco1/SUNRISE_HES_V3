@@ -125,7 +125,7 @@ export function CommandsRunNowClient() {
         )
       }
       setDoneMessage(
-        `Recorded run ${j.id as string}. Phase 1 does not dispatch to the runtime — see Runs for the queue row.`
+        `Queued run ${j.id as string} — execution continues on the server. Open Runs to watch status.`
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submit failed")
@@ -141,9 +141,9 @@ export function CommandsRunNowClient() {
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Compose a command for audit and future execution. Submitting records a queued
-        operator run in data/command-runs.json — no automatic sidecar dispatch in Phase
-        1.
+        Submitting queues a server-owned run and executes read / relay actions via the
+        Python sidecar (direct TCP path). You can leave the page — progress is written
+        to data/command-runs.json.
       </p>
 
       {error ? (

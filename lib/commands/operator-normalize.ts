@@ -4,8 +4,10 @@ import type {
   CommandScheduleCadenceType,
   CommandScheduleRecurrence,
   OperatorActionType,
+  OperatorCommandMeterResult,
   OperatorCommandRun,
   OperatorCommandRunStatus,
+  OperatorRunSourceType,
   OperatorTargetType,
 } from "@/types/command-operator"
 
@@ -37,6 +39,8 @@ const RUN_STATUSES: readonly OperatorCommandRunStatus[] = [
   "cancelled",
 ]
 
+const RUN_SOURCES: readonly OperatorRunSourceType[] = ["manual", "schedule"]
+
 function isMember<T extends string>(
   v: unknown,
   allowed: readonly T[]
@@ -64,6 +68,28 @@ function normalizeRecurrence(raw: unknown): CommandScheduleRecurrence {
       .slice(0, 7)
   }
   return out
+}
+
+function normalizeMeterResult(raw: unknown): OperatorCommandMeterResult | null {
+  if (!raw || typeof raw !== "object") return null
+  const r = raw as Record<string, unknown>
+  const meterId = nonEmptyString(r.meterId)
+  const serialNumber = nonEmptyString(r.serialNumber) ?? meterId ?? ""
+  const state = r.state === "success" || r.state === "failed" ? r.state : null
+  const summary =
+    typeof r.summary === "string" ? r.summary : "(no summary)"
+  const finishedAt =
+    nonEmptyString(r.finishedAt) ?? new Date().toISOString()
+  if (!meterId || !state) return null
+  const errorDetail = nonEmptyString(r.errorDetail) ?? undefined
+  return {
+    meterId,
+    serialNumber,
+    state,
+    summary,
+    finishedAt,
+    errorDetail,
+  }
 }
 
 export function normalizeCommandGroup(raw: unknown): CommandGroup | null {
@@ -108,6 +134,22 @@ export function normalizeCommandSchedule(raw: unknown): CommandSchedule | null {
   const notes = typeof r.notes === "string" ? r.notes.trim() : ""
   const createdAt = nonEmptyString(r.createdAt) ?? new Date().toISOString()
   const updatedAt = nonEmptyString(r.updatedAt) ?? createdAt
+  const lastRunAt =
+    r.lastRunAt === null || r.lastRunAt === undefined
+      ? null
+      : nonEmptyString(r.lastRunAt)
+  const nextRunAt =
+    r.nextRunAt === null || r.nextRunAt === undefined
+      ? null
+      : nonEmptyString(r.nextRunAt)
+  const lastRunId =
+    r.lastRunId === null || r.lastRunId === undefined
+      ? null
+      : nonEmptyString(r.lastRunId)
+  const lastOutcomeSummary =
+    typeof r.lastOutcomeSummary === "string" ? r.lastOutcomeSummary : ""
+  const lastSchedulerNote =
+    typeof r.lastSchedulerNote === "string" ? r.lastSchedulerNote : ""
   return {
     id,
     name,
@@ -121,6 +163,11 @@ export function normalizeCommandSchedule(raw: unknown): CommandSchedule | null {
     notes,
     createdAt,
     updatedAt,
+    lastRunAt,
+    nextRunAt,
+    lastRunId,
+    lastOutcomeSummary,
+    lastSchedulerNote,
   }
 }
 
@@ -139,14 +186,31 @@ export function normalizeOperatorRun(raw: unknown): OperatorCommandRun | null {
   const targetType = isMember(r.targetType, TARGETS) ? r.targetType : null
   const status = isMember(r.status, RUN_STATUSES) ? r.status : null
   if (!actionType || !targetType || !status) return null
+  const sourceType: OperatorRunSourceType = isMember(
+    r.sourceType,
+    RUN_SOURCES
+  )
+    ? r.sourceType
+    : "manual"
+  const scheduleId =
+    r.scheduleId === null || r.scheduleId === undefined
+      ? null
+      : nonEmptyString(r.scheduleId)
   const targetSummary =
     nonEmptyString(r.targetSummary) ?? "(no target summary)"
   const groupId =
     r.groupId === null || r.groupId === undefined
       ? null
       : nonEmptyString(r.groupId)
+  const meterIds = stringArray(r.meterIds)
+  const resolvedRaw = r.resolvedMeterIds
+  const resolvedMeterIds =
+    Array.isArray(resolvedRaw) && resolvedRaw.length > 0
+      ? stringArray(resolvedRaw)
+      : meterIds
   const readProfileMode = nonEmptyString(r.readProfileMode) ?? undefined
   const createdAt = nonEmptyString(r.createdAt) ?? new Date().toISOString()
+  const queuedAt = nonEmptyString(r.queuedAt) ?? createdAt
   const startedAt =
     r.startedAt === null ? null : nonEmptyString(r.startedAt)
   const finishedAt =
@@ -162,21 +226,31 @@ export function normalizeOperatorRun(raw: unknown): OperatorCommandRun | null {
   const executionNote =
     typeof r.executionNote === "string" ? r.executionNote : ""
 
+  const pmRaw = r.perMeterResults
+  const perMeterResults: OperatorCommandMeterResult[] = Array.isArray(pmRaw)
+    ? pmRaw.map(normalizeMeterResult).filter((x): x is OperatorCommandMeterResult => x !== null)
+    : []
+
   return {
     id,
+    sourceType,
+    scheduleId,
     actionType,
     targetType,
     targetSummary,
-    meterIds: stringArray(r.meterIds),
+    meterIds,
+    resolvedMeterIds,
     groupId,
     status,
     readProfileMode,
     createdAt,
+    queuedAt,
     startedAt,
     finishedAt,
     resultSummary,
     errorSummary,
     executionNote,
+    perMeterResults,
   }
 }
 

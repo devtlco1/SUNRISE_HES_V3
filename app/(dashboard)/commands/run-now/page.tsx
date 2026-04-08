@@ -6,7 +6,7 @@ export default function CommandsRunNowPage() {
     <div className="space-y-6">
       <PageHeader
         title="Run now"
-        subtitle="Compose target + action and record an operator run (Phase 1: persisted queue row, no runtime dispatch)."
+        subtitle="Compose target + action; the server queues and executes against the Python sidecar (direct TCP path)."
       />
       <CommandsRunNowClient />
     </div>

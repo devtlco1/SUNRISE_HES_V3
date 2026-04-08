@@ -40,7 +40,7 @@ export async function GET() {
 
   const stats = buildCommandsOverviewStats({
     groupsCount: groups.length,
-    schedulesCount: schedules.length,
+    schedules,
     operatorRuns,
     legacyJobs,
   })
