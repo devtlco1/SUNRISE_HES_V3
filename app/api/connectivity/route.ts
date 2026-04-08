@@ -1,4 +1,7 @@
 import { buildConnectivityPhase1Response } from "@/lib/connectivity/phase1-aggregate"
+import { buildPhase2HintsBySerial } from "@/lib/connectivity-events/phase2-hints"
+import { syncConnectivityEventsFromListenerStatus } from "@/lib/connectivity-events/listener-snapshot"
+import { readConnectivityEventsRaw, toPublicConnectivityEvent } from "@/lib/connectivity-events/store"
 import { readMetersJsonRaw } from "@/lib/meters/meters-file"
 import { normalizeMeterRows } from "@/lib/meters/normalize"
 import {
@@ -10,6 +13,19 @@ import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+
+const RECENT_EVENTS_CAP = 50
+const HINTS_EVENT_SCAN = 2500
+
+function eventsNewestFirst(
+  events: import("@/types/connectivity-events").ConnectivityEventRecord[]
+): import("@/types/connectivity-events").ConnectivityEventRecord[] {
+  return [...events].sort((a, b) => {
+    if (a.createdAt < b.createdAt) return 1
+    if (a.createdAt > b.createdAt) return -1
+    return 0
+  })
+}
 
 export async function GET() {
   const raw = await readMetersJsonRaw()
@@ -39,13 +55,38 @@ export async function GET() {
     }
   }
 
-  const payload = buildConnectivityPhase1Response(
+  if (listenerStatus && !listenerFetchFailed) {
+    try {
+      await syncConnectivityEventsFromListenerStatus(listenerStatus)
+    } catch {
+      /* non-fatal: live table still serves */
+    }
+  }
+
+  const evRaw = await readConnectivityEventsRaw()
+  const allEvents = evRaw.ok ? evRaw.events : []
+  const newest = eventsNewestFirst(allEvents)
+  const forHints = newest.slice(0, HINTS_EVENT_SCAN)
+  const hintsBySerial = buildPhase2HintsBySerial(forHints)
+
+  const core = buildConnectivityPhase1Response(
     meters,
     listenerStatus,
-    listenerFetchFailed
+    listenerFetchFailed,
+    hintsBySerial
   )
 
-  return NextResponse.json(payload, {
-    headers: { "Cache-Control": "no-store" },
-  })
+  const recentEvents = newest
+    .slice(0, RECENT_EVENTS_CAP)
+    .map((e) => toPublicConnectivityEvent(e))
+
+  return NextResponse.json(
+    {
+      ...core,
+      recentEvents,
+    },
+    {
+      headers: { "Cache-Control": "no-store" },
+    }
+  )
 }

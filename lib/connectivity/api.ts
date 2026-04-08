@@ -16,6 +16,7 @@ function isPhase1Response(v: unknown): v is ConnectivityPhase1Response {
   const o = v as Record<string, unknown>
   if (!o.summary || typeof o.summary !== "object") return false
   if (!Array.isArray(o.rows)) return false
+  if (!Array.isArray(o.recentEvents)) return false
   if (typeof o.fetchedAt !== "string") return false
   const s = o.summary as Record<string, unknown>
   return typeof s.totalMeters === "number"

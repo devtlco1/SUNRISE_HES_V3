@@ -1,3 +1,5 @@
+import { logConnectivityPythonProxyFailure } from "@/lib/connectivity-events/proxy-failure"
+import { logConnectivityRuntimeEnvelope } from "@/lib/connectivity-events/runtime-envelope"
 import {
   postTcpListenerReadObisSelectionToPythonSidecar,
   PythonSidecarHttpError,
@@ -32,6 +34,7 @@ export async function POST(req: Request) {
 
   try {
     const envelope = await postTcpListenerReadObisSelectionToPythonSidecar(normalized)
+    logConnectivityRuntimeEnvelope(envelope, { route: "inbound_tcp" })
     return NextResponse.json(envelope, {
       headers: { "Cache-Control": "no-store" },
     })
@@ -43,6 +46,12 @@ export async function POST(req: Request) {
       )
     }
     if (e instanceof PythonSidecarHttpError) {
+      logConnectivityPythonProxyFailure(
+        normalized.meterId,
+        "readObisSelection",
+        e,
+        "inbound_tcp"
+      )
       return jsonResponseForPythonSidecarHttpError(e, {
         mapStatus404ToRouteMissing: true,
       })

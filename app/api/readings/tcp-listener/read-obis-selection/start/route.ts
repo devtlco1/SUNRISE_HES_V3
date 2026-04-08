@@ -1,3 +1,4 @@
+import { logConnectivityPythonProxyFailure } from "@/lib/connectivity-events/proxy-failure"
 import {
   postTcpListenerReadObisSelectionStartToPythonSidecar,
   PythonSidecarHttpError,
@@ -43,6 +44,12 @@ export async function POST(req: Request) {
       )
     }
     if (e instanceof PythonSidecarHttpError) {
+      logConnectivityPythonProxyFailure(
+        normalized.meterId,
+        "readObisSelection",
+        e,
+        "inbound_tcp"
+      )
       return jsonResponseForPythonSidecarHttpError(e, {
         mapStatus404ToRouteMissing: true,
       })

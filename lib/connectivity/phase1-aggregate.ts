@@ -22,6 +22,7 @@ import type {
   ConnectivityPhase1Response,
   ConnectivityPhase1Row,
   ConnectivityPhase1Summary,
+  ConnectivityPhase2RowHint,
 } from "@/types/connectivity"
 import type { MeterListRow } from "@/types/meter"
 
@@ -122,8 +123,9 @@ function pickSessionForMeter(
 export function buildConnectivityPhase1Response(
   meters: MeterListRow[],
   listenerStatus: Record<string, unknown> | null,
-  listenerFetchFailed: boolean
-): ConnectivityPhase1Response {
+  listenerFetchFailed: boolean,
+  phase2Hints?: Map<string, ConnectivityPhase2RowHint>
+): Omit<ConnectivityPhase1Response, "recentEvents"> {
   const sessions = parseTcpListenerStagedSessions(listenerStatus)
   const listenerEnabled = listenerStatus ? boolish(listenerStatus.listenerEnabled) : false
   const listenerListening = listenerStatus ? boolish(listenerStatus.listening) : false
@@ -221,6 +223,7 @@ export function buildConnectivityPhase1Response(
       }
     }
 
+    const sk = serial.trim().toLowerCase()
     rows.push({
       meterId: m.id,
       serialNumber: m.serialNumber,
@@ -245,6 +248,7 @@ export function buildConnectivityPhase1Response(
         bindHost && bindPort != null ? `${bindHost}:${bindPort}` : null,
       listenerEnabled,
       listenerListening,
+      phase2: phase2Hints?.get(sk),
     })
   }
 

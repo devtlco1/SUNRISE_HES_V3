@@ -1,3 +1,5 @@
+import { logConnectivityPythonProxyFailure } from "@/lib/connectivity-events/proxy-failure"
+import { logConnectivityRuntimeEnvelope } from "@/lib/connectivity-events/runtime-envelope"
 import { jsonResponseForPythonSidecarHttpError } from "@/lib/readings/python-sidecar-proxy-error"
 import {
   postTcpListenerReadBasicRegistersToPythonSidecar,
@@ -31,6 +33,7 @@ export async function POST(req: Request) {
 
   try {
     const envelope = await postTcpListenerReadBasicRegistersToPythonSidecar(parsed)
+    logConnectivityRuntimeEnvelope(envelope, { route: "inbound_tcp" })
     return NextResponse.json(envelope, {
       headers: { "Cache-Control": "no-store" },
     })
@@ -42,6 +45,12 @@ export async function POST(req: Request) {
       )
     }
     if (e instanceof PythonSidecarHttpError) {
+      logConnectivityPythonProxyFailure(
+        parsed.meterId,
+        "readBasicRegisters",
+        e,
+        "inbound_tcp"
+      )
       return jsonResponseForPythonSidecarHttpError(e, {
         mapStatus404ToRouteMissing: true,
       })

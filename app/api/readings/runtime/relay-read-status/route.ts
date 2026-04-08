@@ -1,3 +1,5 @@
+import { logConnectivityPythonProxyFailure } from "@/lib/connectivity-events/proxy-failure"
+import { logConnectivityRuntimeEnvelope } from "@/lib/connectivity-events/runtime-envelope"
 import {
   postRelayReadStatusToPythonSidecar,
   PythonSidecarHttpError,
@@ -27,6 +29,7 @@ export async function POST(req: Request) {
 
   try {
     const envelope = await postRelayReadStatusToPythonSidecar(parsed)
+    logConnectivityRuntimeEnvelope(envelope, { route: "direct_tcp" })
     return NextResponse.json(envelope, {
       headers: { "Cache-Control": "no-store" },
     })
@@ -38,6 +41,7 @@ export async function POST(req: Request) {
       )
     }
     if (e instanceof PythonSidecarHttpError) {
+      logConnectivityPythonProxyFailure(parsed.meterId, "relay", e, "direct_tcp")
       return NextResponse.json(
         {
           error: "PYTHON_SIDECAR_HTTP_ERROR",
