@@ -17,6 +17,10 @@ export async function fetchObisCatalog(
     const res = await fetch(OBIS_CATALOG_API_PATH, {
       cache: "no-store",
       signal,
+      headers: {
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
     })
     const data = await res.json()
     if (!res.ok || !Array.isArray(data)) {

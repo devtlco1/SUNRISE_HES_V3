@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal, flushSync } from "react-dom"
+import { usePathname } from "next/navigation"
 
 import { MeterSearchCombobox } from "@/components/readings/meter-search-combobox"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -375,19 +376,50 @@ export function ReadingsWorkspaceClient() {
     setSelected(new Set())
   }, [familyTab, pack])
 
+  const pathname = usePathname()
+
   useEffect(() => {
-    const ac = new AbortController()
-    fetchObisCatalog(ac.signal).then((r) => {
-      if (r.ok) {
-        setCatalog(r.rows)
-        setCatalogError(null)
-      } else {
-        setCatalog([])
-        setCatalogError(r.error)
-      }
-    })
-    return () => ac.abort()
-  }, [])
+    if (pathname !== "/readings") return
+
+    let ac: AbortController | null = null
+
+    const loadCatalog = () => {
+      ac?.abort()
+      ac = new AbortController()
+      const signal = ac.signal
+      fetchObisCatalog(signal).then((r) => {
+        if (signal.aborted) return
+        if (r.ok) {
+          setCatalog(r.rows)
+          setCatalogError(null)
+        } else {
+          setCatalog([])
+          setCatalogError(r.error)
+        }
+      })
+    }
+
+    loadCatalog()
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadCatalog()
+    }
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) loadCatalog()
+    }
+    const onCatalogSaved = () => loadCatalog()
+
+    document.addEventListener("visibilitychange", onVisibility)
+    window.addEventListener("pageshow", onPageShow)
+    window.addEventListener("sunrise-obis-catalog-saved", onCatalogSaved)
+
+    return () => {
+      ac?.abort()
+      document.removeEventListener("visibilitychange", onVisibility)
+      window.removeEventListener("pageshow", onPageShow)
+      window.removeEventListener("sunrise-obis-catalog-saved", onCatalogSaved)
+    }
+  }, [pathname])
 
   useEffect(() => {
     if (families.length === 0) return

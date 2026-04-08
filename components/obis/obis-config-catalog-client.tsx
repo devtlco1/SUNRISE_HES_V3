@@ -34,6 +34,11 @@ import { packKeysForFamily, sectionLabelForPack } from "@/lib/obis/catalog-seed"
 import type { ObisCatalogEntry, ObisFamilyTab } from "@/lib/obis/types"
 import { cn } from "@/lib/utils"
 
+function notifyObisCatalogSaved() {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent("sunrise-obis-catalog-saved"))
+}
+
 const emptyRow = (): ObisCatalogEntry => ({
   obis: "",
   description: "",
@@ -178,7 +183,10 @@ export function ObisConfigCatalogClient() {
         setSaveError(typeof data?.error === "string" ? data.error : "Save failed")
         return
       }
-      if (Array.isArray(data)) setRows(data as ObisCatalogEntry[])
+      if (Array.isArray(data)) {
+        setRows(data as ObisCatalogEntry[])
+        notifyObisCatalogSaved()
+      }
     } catch {
       setSaveError("Save failed")
     } finally {
@@ -235,6 +243,7 @@ export function ObisConfigCatalogClient() {
         setImportInfo("Import applied.")
       }
       await load()
+      notifyObisCatalogSaved()
     } catch {
       setImportInfo("Import failed")
     } finally {
@@ -379,6 +388,10 @@ export function ObisConfigCatalogClient() {
           </button>
         ))}
       </div>
+
+      <p className="text-xs text-muted-foreground tabular-nums">
+        Displayed rows: {loading ? "—" : filtered.length}
+      </p>
 
       <div className="max-h-[min(75vh,800px)] overflow-auto rounded-lg border border-border bg-card">
         <Table>
