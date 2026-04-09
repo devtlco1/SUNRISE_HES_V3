@@ -116,19 +116,44 @@ const LEGACY_ROLE_MAP: Record<string, string> = {
 }
 
 function usersFromMock(now: string): RbacUser[] {
-  return mockUserListRows.map((r) => ({
-    id: r.id,
-    username: r.username,
-    displayName: r.fullName,
-    email: r.email,
-    roleId: LEGACY_ROLE_MAP[r.role] ?? ROLE_OPERATOR,
-    active: r.status === "active",
-    team: r.team,
-    phone: r.phone,
-    assignedScope: r.assignedScope,
-    createdAt: r.createdAt.includes("T") ? r.createdAt : `${r.createdAt}T00:00:00.000Z`,
-    updatedAt: r.updatedAt.includes("T") ? r.updatedAt : `${r.updatedAt}T00:00:00.000Z`,
-  }))
+  return mockUserListRows.map((r) => {
+    const invited = r.status === "invited"
+    const active = r.status === "active"
+    return {
+      id: r.id,
+      username: r.username,
+      displayName: r.fullName,
+      email: r.email,
+      roleId: LEGACY_ROLE_MAP[r.role] ?? ROLE_OPERATOR,
+      active,
+      ...(invited
+        ? { invitePending: true as const, invitedAt: now }
+        : {}),
+      team: r.team,
+      phone: r.phone,
+      assignedScope: r.assignedScope,
+      createdAt: r.createdAt.includes("T") ? r.createdAt : `${r.createdAt}T00:00:00.000Z`,
+      updatedAt: r.updatedAt.includes("T") ? r.updatedAt : `${r.updatedAt}T00:00:00.000Z`,
+    }
+  })
+}
+
+/** Keeps built-in admin aligned with the full permission catalog (registry growth / legacy JSON). */
+function repairAdminFullCatalog(roles: RbacRole[], now: string): {
+  next: RbacRole[]
+  changed: boolean
+} {
+  const full = allPermissionKeys()
+  let changed = false
+  const next = roles.map((r) => {
+    if (r.id !== ROLE_ADMIN) return r
+    const keys = filterValidPermissionKeys(r.permissionKeys)
+    const hasAll = full.length === keys.length && full.every((k) => keys.includes(k))
+    if (hasAll) return r
+    changed = true
+    return { ...r, permissionKeys: full, updatedAt: now }
+  })
+  return { next, changed }
 }
 
 /**
@@ -140,6 +165,12 @@ export async function ensureRbacSeed(): Promise<void> {
   if (roles.length === 0) {
     roles = defaultRoles(now)
     await writeRbacRoles(roles)
+  } else {
+    const { next, changed } = repairAdminFullCatalog(roles, now)
+    if (changed) {
+      roles = next
+      await writeRbacRoles(roles)
+    }
   }
 
   let users = await readRbacUsersUnsafe()

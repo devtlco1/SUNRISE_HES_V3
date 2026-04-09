@@ -26,8 +26,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Can } from "@/components/rbac/can"
-import { useCan } from "@/components/rbac/operator-session-context"
+import {
+  useAnyPermission,
+  useCan,
+  usePermission,
+} from "@/components/rbac/operator-session-context"
 import { BUILTIN_ROLE_ID_SET } from "@/lib/rbac/builtin-role-ids"
 import { PERMISSION_REGISTRY } from "@/lib/rbac/permission-registry"
 import { operationalRowActionTriggerClass } from "@/lib/ui/operational"
@@ -116,8 +119,9 @@ function userStatusLabel(u: RbacUser): string {
 }
 
 function UsersRbacPanel() {
-  const canView = useCan("users.view")
-  const canCreate = useCan("users.create")
+  const viewPerm = usePermission("users.view")
+  const canView = viewPerm.allowed
+  const createPerm = usePermission("users.create")
   const canEdit = useCan("users.edit")
   const canDelete = useCan("users.delete")
 
@@ -144,7 +148,7 @@ function UsersRbacPanel() {
   const [invRoleId, setInvRoleId] = useState("")
 
   const load = useCallback(async () => {
-    if (!canView) {
+    if (viewPerm.loading || !viewPerm.allowed) {
       setLoading(false)
       return
     }
@@ -164,7 +168,7 @@ function UsersRbacPanel() {
     } finally {
       setLoading(false)
     }
-  }, [canView])
+  }, [viewPerm.loading, viewPerm.allowed])
 
   useEffect(() => {
     void load()
@@ -274,14 +278,31 @@ function UsersRbacPanel() {
     }
   }
 
-  async function deactivateUser(id: string) {
-    if (!window.confirm("Deactivate this user?")) return
-    const res = await fetch(`/api/rbac/users/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      credentials: "include",
-    })
+  async function disableUserAccount(u: RbacUser) {
+    if (
+      !window.confirm(
+        "Disable this user? They will not be able to sign in until re-enabled."
+      )
+    )
+      return
+    let res: Response
+    if (canEdit) {
+      res = await fetch(`/api/rbac/users/${encodeURIComponent(u.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ active: false, invitePending: false }),
+      })
+    } else if (canDelete) {
+      res = await fetch(`/api/rbac/users/${encodeURIComponent(u.id)}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+    } else {
+      return
+    }
     if (!res.ok) {
-      setError("Deactivate failed")
+      setError("Disable failed")
       return
     }
     await load()
@@ -304,11 +325,23 @@ function UsersRbacPanel() {
     await load()
   }
 
+  if (viewPerm.loading) {
+    return (
+      <SectionCard title="Users" description="Assign each user exactly one role.">
+        <p className="border-t border-border pt-3 text-sm text-muted-foreground">
+          Loading users…
+        </p>
+      </SectionCard>
+    )
+  }
+
   if (!canView) {
     return (
-      <p className="text-sm text-muted-foreground">
-        You need <code className="text-xs">users.view</code> to manage accounts.
-      </p>
+      <SectionCard title="Users" description="Assign each user exactly one role.">
+        <p className="border-t border-border pt-3 text-sm text-muted-foreground">
+          You need <code className="text-xs">users.view</code> to manage accounts.
+        </p>
+      </SectionCard>
     )
   }
 
@@ -321,23 +354,34 @@ function UsersRbacPanel() {
           </p>
         ) : null}
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Can permission="users.create">
-            <Button type="button" size="sm" onClick={openCreate}>
-              <UserPlus className="mr-1 size-3.5" />
-              Add user
-            </Button>
-          </Can>
-          <Can permission="users.create">
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={openInvite}
-            >
-              <MailPlus className="mr-1 size-3.5" />
-              Invite
-            </Button>
-          </Can>
+          {createPerm.loading ? (
+            <>
+              <Button type="button" size="sm" disabled>
+                <UserPlus className="mr-1 size-3.5" />
+                Add user
+              </Button>
+              <Button type="button" size="sm" variant="secondary" disabled>
+                <MailPlus className="mr-1 size-3.5" />
+                Invite
+              </Button>
+            </>
+          ) : createPerm.allowed ? (
+            <>
+              <Button type="button" size="sm" onClick={openCreate}>
+                <UserPlus className="mr-1 size-3.5" />
+                Add user
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={openInvite}
+              >
+                <MailPlus className="mr-1 size-3.5" />
+                Invite
+              </Button>
+            </>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -387,7 +431,7 @@ function UsersRbacPanel() {
                         >
                           <MoreHorizontal className="size-4" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-40">
+                        <DropdownMenuContent align="end" className="min-w-44">
                           <DropdownMenuItem
                             onClick={() => openEffectivePerms(u)}
                           >
@@ -398,22 +442,26 @@ function UsersRbacPanel() {
                               Edit user
                             </DropdownMenuItem>
                           ) : null}
+                          {canEdit ? (
+                            <DropdownMenuItem onClick={() => openEdit(u)}>
+                              Change role
+                            </DropdownMenuItem>
+                          ) : null}
                           {canEdit && !u.active ? (
                             <DropdownMenuItem
                               onClick={() => void activateUser(u)}
                             >
-                              Activate account
+                              Enable user
                             </DropdownMenuItem>
                           ) : null}
-                          {canDelete ? (
+                          {(canEdit || canDelete) && u.active ? (
                             <>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 variant="destructive"
-                                disabled={!u.active}
-                                onClick={() => void deactivateUser(u.id)}
+                                onClick={() => void disableUserAccount(u)}
                               >
-                                Deactivate
+                                Disable user
                               </DropdownMenuItem>
                             </>
                           ) : null}
@@ -485,7 +533,7 @@ function UsersRbacPanel() {
                 !username.trim() ||
                 !displayName.trim() ||
                 !roleId ||
-                (editing ? !canEdit : !canCreate)
+                (editing ? !canEdit : !createPerm.allowed)
               }
               onClick={() => void saveUser()}
             >
@@ -549,7 +597,7 @@ function UsersRbacPanel() {
                 !invUsername.trim() ||
                 !invDisplayName.trim() ||
                 !invRoleId ||
-                !canCreate
+                !createPerm.allowed
               }
               onClick={() => void saveInvite()}
             >
@@ -601,13 +649,21 @@ function groupByModule(
   return m
 }
 
+function rolePermissionDefs(role: RbacRole): PermissionDefinition[] {
+  const set = new Set(role.permissionKeys)
+  return PERMISSION_REGISTRY.filter((d) => set.has(d.key))
+}
+
 function RolesRbacPanel() {
-  const canManage = useCan("users.roles.manage")
+  const rolesManageP = usePermission("users.roles.manage")
+  const canManage = rolesManageP.allowed
   const [roles, setRoles] = useState<RbacRole[]>([])
   const [users, setUsers] = useState<RbacUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [inspectOpen, setInspectOpen] = useState(false)
+  const [inspectRole, setInspectRole] = useState<RbacRole | null>(null)
   const [editing, setEditing] = useState<RbacRole | null>(null)
   const [saving, setSaving] = useState(false)
   const [name, setName] = useState("")
@@ -645,12 +701,25 @@ function RolesRbacPanel() {
     return m
   }, [users])
 
+  const memberCountByRole = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const u of users) {
+      m.set(u.roleId, (m.get(u.roleId) ?? 0) + 1)
+    }
+    return m
+  }, [users])
+
   function openCreate() {
     setEditing(null)
     setName("")
     setDescription("")
     setSelectedKeys(new Set())
     setSheetOpen(true)
+  }
+
+  function openInspectRole(r: RbacRole) {
+    setInspectRole(r)
+    setInspectOpen(true)
   }
 
   function openEdit(r: RbacRole) {
@@ -719,13 +788,26 @@ function RolesRbacPanel() {
     []
   )
 
+  const inspectGrouped = useMemo(
+    () => groupByModule(inspectRole ? rolePermissionDefs(inspectRole) : []),
+    [inspectRole]
+  )
+
+  const inspectUnknownKeys = useMemo(() => {
+    if (!inspectRole) return []
+    const known = new Set(PERMISSION_REGISTRY.map((d) => d.key))
+    return inspectRole.permissionKeys.filter((k) => !known.has(k)).sort()
+  }, [inspectRole])
+
   return (
     <SectionCard
       title="Roles"
       description={
-        canManage
-          ? "Create roles and attach granular permissions."
-          : "Role definitions (view only). Request users.roles.manage to edit."
+        rolesManageP.loading
+          ? "Loading role capabilities…"
+          : canManage
+            ? "Create roles and attach granular permissions."
+            : "Role definitions (view only). Request users.roles.manage to edit."
       }
     >
       <div className="space-y-3 border-t border-border pt-3">
@@ -734,16 +816,20 @@ function RolesRbacPanel() {
             {error}
           </p>
         ) : null}
-        {!canManage ? (
+        {!rolesManageP.loading && !canManage ? (
           <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             You can review roles below. Editing requires{" "}
             <code className="text-[11px]">users.roles.manage</code>.
           </p>
         ) : null}
         <div className="flex flex-wrap justify-end gap-2">
-          {canManage ? (
+          {rolesManageP.loading ? (
+            <Button type="button" size="sm" disabled>
+              Create role
+            </Button>
+          ) : canManage ? (
             <Button type="button" size="sm" onClick={openCreate}>
-              Add role
+              Create role
             </Button>
           ) : null}
           <Button
@@ -766,7 +852,7 @@ function RolesRbacPanel() {
                   <TableHead>Name</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="tabular-nums">Permissions</TableHead>
-                  <TableHead className="tabular-nums">Active users</TableHead>
+                  <TableHead className="tabular-nums">Members</TableHead>
                   <TableHead className="w-[52px] text-right">
                     <span className="sr-only">Actions</span>
                   </TableHead>
@@ -775,6 +861,8 @@ function RolesRbacPanel() {
               <TableBody>
                 {roles.map((r) => {
                   const builtin = BUILTIN_ROLE_ID_SET.has(r.id)
+                  const activeN = userCountByRole.get(r.id) ?? 0
+                  const totalN = memberCountByRole.get(r.id) ?? 0
                   return (
                     <TableRow key={r.id}>
                       <TableCell className="font-medium">{r.name}</TableCell>
@@ -785,34 +873,43 @@ function RolesRbacPanel() {
                         {r.permissionKeys.length}
                       </TableCell>
                       <TableCell className="tabular-nums text-xs">
-                        {userCountByRole.get(r.id) ?? 0}
+                        <span>{activeN} active</span>
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {totalN} total
+                        </span>
                       </TableCell>
                       <TableCell className="text-right">
-                        {canManage ? (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              className={operationalRowActionTriggerClass}
-                              aria-label={`Actions for role ${r.name}`}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            className={operationalRowActionTriggerClass}
+                            aria-label={`Actions for role ${r.name}`}
+                          >
+                            <MoreHorizontal className="size-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-40">
+                            <DropdownMenuItem
+                              onClick={() => openInspectRole(r)}
                             >
-                              <MoreHorizontal className="size-4" />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="min-w-36">
-                              <DropdownMenuItem onClick={() => openEdit(r)}>
-                                Edit role
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                disabled={builtin}
-                                onClick={() => void deleteRole(r.id)}
-                              >
-                                Delete role
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
+                              View permissions
+                            </DropdownMenuItem>
+                            {canManage ? (
+                              <>
+                                <DropdownMenuItem onClick={() => openEdit(r)}>
+                                  Edit role
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={builtin}
+                                  onClick={() => void deleteRole(r.id)}
+                                >
+                                  Delete role
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   )
@@ -823,11 +920,64 @@ function RolesRbacPanel() {
         )}
       </div>
 
+      <Sheet
+        open={inspectOpen}
+        onOpenChange={(open) => {
+          setInspectOpen(open)
+          if (!open) setInspectRole(null)
+        }}
+      >
+        <SheetContent className="flex w-full max-w-lg flex-col gap-0 overflow-y-auto sm:max-w-xl">
+          <SheetHeader className="border-b border-border pb-4">
+            <SheetTitle>
+              Role permissions
+              {inspectRole ? ` · ${inspectRole.name}` : ""}
+            </SheetTitle>
+            <SheetDescription>
+              {inspectRole
+                ? `${inspectRole.permissionKeys.length} keys assigned to this role.`
+                : ""}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="max-h-[min(65vh,640px)] space-y-4 overflow-y-auto px-4 py-4 text-xs">
+            {[...inspectGrouped.entries()].map(([mod, defs]) => (
+              <div key={mod}>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {mod}
+                </div>
+                <ul className="space-y-2">
+                  {defs.map((d) => (
+                    <li key={d.key}>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {d.key}
+                      </span>
+                      <div className="text-foreground">{d.label}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+            {inspectUnknownKeys.length > 0 ? (
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Other keys
+                </div>
+                <ul className="space-y-1 font-mono text-[11px] text-muted-foreground">
+                  {inspectUnknownKeys.map((k) => (
+                    <li key={k}>{k}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {canManage ? (
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetContent className="flex w-full max-w-lg flex-col gap-0 overflow-y-auto sm:max-w-xl">
             <SheetHeader className="border-b border-border pb-4">
-              <SheetTitle>{editing ? "Edit role" : "Add role"}</SheetTitle>
+              <SheetTitle>{editing ? "Edit role" : "Create role"}</SheetTitle>
             </SheetHeader>
             <div className="flex flex-1 flex-col gap-3 px-4 py-4 text-sm">
               <label className="space-y-1">
@@ -844,7 +994,7 @@ function RolesRbacPanel() {
               <div className="text-xs font-semibold text-muted-foreground">
                 Permissions ({selectedKeys.size} selected)
               </div>
-              <div className="max-h-[50vh] space-y-4 overflow-y-auto rounded-md border border-border p-3">
+              <div className="max-h-[min(56vh,560px)] space-y-4 overflow-y-auto rounded-md border border-border p-3">
                 {[...grouped.entries()].map(([mod, defs]) => (
                   <div key={mod}>
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground">
@@ -888,20 +1038,25 @@ function RolesRbacPanel() {
 }
 
 function PermissionsCatalogPanel() {
-  const canCatalog =
-    useCan("users.view") ||
-    useCan("users.permissions.view") ||
-    useCan("users.roles.manage")
+  const catalogP = useAnyPermission([
+    "users.view",
+    "users.permissions.view",
+    "users.roles.manage",
+  ])
   const [defs, setDefs] = useState<PermissionDefinition[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!canCatalog) {
+    if (catalogP.loading) return
+    if (!catalogP.allowed) {
       setLoading(false)
+      setDefs([])
+      setError(null)
       return
     }
     setLoading(true)
+    setError(null)
     void fetch("/api/rbac/permissions", { credentials: "include" })
       .then(async (res) => {
         if (!res.ok) throw new Error("Load failed")
@@ -910,15 +1065,35 @@ function PermissionsCatalogPanel() {
       })
       .catch(() => setError("Could not load catalog"))
       .finally(() => setLoading(false))
-  }, [canCatalog])
+  }, [catalogP.loading, catalogP.allowed])
 
   const grouped = useMemo(() => groupByModule(defs), [defs])
 
-  if (!canCatalog) {
+  if (catalogP.loading) {
+    return (
+      <SectionCard
+        title="Permission catalog"
+        description="Grouped by module — roles grant subsets of these keys."
+      >
+        <p className="border-t border-border pt-3 text-sm text-muted-foreground">
+          Loading catalog…
+        </p>
+      </SectionCard>
+    )
+  }
+
+  if (!catalogP.allowed) {
     return (
       <SectionCard title="Permissions" description="Master catalog of keys.">
         <p className="border-t border-border pt-3 text-sm text-muted-foreground">
-          You need access to the users workspace to view the catalog.
+          You need{" "}
+          <code className="text-xs">
+            users.view
+          </code>
+          ,{" "}
+          <code className="text-xs">users.permissions.view</code>, or{" "}
+          <code className="text-xs">users.roles.manage</code>{" "}
+          to view the catalog.
         </p>
       </SectionCard>
     )

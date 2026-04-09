@@ -131,3 +131,26 @@ export function useCan(permission: string): boolean {
   if (loading) return false
   return permissions.has(permission)
 }
+
+/** Distinct loading vs denied — use for toolbars so session fetch does not look like “missing permission”. */
+export function usePermission(permission: string): {
+  loading: boolean
+  allowed: boolean
+} {
+  const { permissions, loading } = useOperatorSession()
+  return {
+    loading,
+    allowed: !loading && permissions.has(permission),
+  }
+}
+
+export function useAnyPermission(keys: readonly string[]): {
+  loading: boolean
+  allowed: boolean
+} {
+  const { permissions, loading } = useOperatorSession()
+  return {
+    loading,
+    allowed: !loading && keys.some((k) => permissions.has(k)),
+  }
+}

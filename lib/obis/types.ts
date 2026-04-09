@@ -3,6 +3,26 @@
  * Classification is vendor PRM_CODE_OBJECT (ClassName / SubClassName / SortNo) joined to PRM_CODE_OBIS.
  */
 
+export type ObisFamilyTab = "basic" | "energy" | "profile"
+
+export type ObisPackKey =
+  | "basic_setting"
+  | "instantaneous"
+  | "power"
+  | "demand"
+  | "energy"
+  | "event_logs"
+  | "load_profile"
+  | `${ObisFamilyTab}_${string}`
+
+export function packLabel(pack_key: string): string {
+  return pack_key
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ")
+}
+
 export interface ObisCatalogEntry {
   /** PRM_CODE_OBIS.ObjectCode / PRM_CODE_OBJECT.Code (may include 7th attribute segment). */
   object_code: string
