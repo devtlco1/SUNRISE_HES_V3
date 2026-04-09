@@ -9,6 +9,8 @@ export type RbacUser = {
   email: string
   roleId: string
   active: boolean
+  /** Bcrypt hash — persisted in JSON only; never send to clients. */
+  passwordHash?: string
   /** Pending onboarding — no outbound email is sent by this build. */
   invitePending?: boolean
   invitedAt?: string

@@ -47,6 +47,10 @@ function parseUsers(raw: unknown): RbacUser[] {
       email: o.email,
       roleId: o.roleId,
       active: o.active,
+      passwordHash:
+        typeof o.passwordHash === "string" && o.passwordHash.trim()
+          ? o.passwordHash.trim()
+          : undefined,
       invitePending:
         typeof o.invitePending === "boolean" ? o.invitePending : undefined,
       invitedAt: typeof o.invitedAt === "string" ? o.invitedAt : undefined,

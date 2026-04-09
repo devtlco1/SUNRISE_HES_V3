@@ -1,5 +1,6 @@
 import Link from "next/link"
 
+import { SunriseLogo } from "@/components/branding/sunrise-logo"
 import { MainNavList } from "@/components/layout/main-nav-list"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -12,12 +13,15 @@ export function AppSidebar({ className }: { className?: string }) {
         className
       )}
     >
-      <div className="flex h-14 items-center px-4">
+      <div className="flex h-14 items-center px-3">
         <Link
           href="/dashboard"
-          className="text-sm font-semibold tracking-tight text-sidebar-foreground"
+          className="flex min-w-0 items-center gap-2 text-sidebar-foreground"
         >
-          SUNRISE HES
+          <SunriseLogo className="max-h-8 shrink-0" />
+          <span className="truncate text-xs font-semibold tracking-tight">
+            SUNRISE HES
+          </span>
         </Link>
       </div>
       <Separator className="bg-sidebar-border" />

@@ -1,5 +1,6 @@
 import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import { readRbacUsersUnsafe, writeRbacUsers } from "@/lib/rbac/json-store"
+import { toPublicRbacUser } from "@/lib/rbac/public-user"
 import type { RbacUser } from "@/types/rbac"
 import { NextResponse } from "next/server"
 
@@ -17,7 +18,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (!row) {
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 })
   }
-  return NextResponse.json(row)
+  return NextResponse.json(toPublicRbacUser(row))
 }
 
 export async function PUT(req: Request, ctx: Ctx) {
@@ -99,7 +100,7 @@ export async function PUT(req: Request, ctx: Ctx) {
   if (!w.ok) {
     return NextResponse.json({ error: w.error }, { status: 500 })
   }
-  return NextResponse.json(next)
+  return NextResponse.json(toPublicRbacUser(next))
 }
 
 export async function DELETE(_req: Request, ctx: Ctx) {

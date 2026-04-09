@@ -1,5 +1,6 @@
 import { requireApiPermission } from "@/lib/rbac/require-api-permission"
 import { readRbacUsersUnsafe, writeRbacUsers } from "@/lib/rbac/json-store"
+import { toPublicRbacUser, toPublicRbacUsers } from "@/lib/rbac/public-user"
 import { ensureRbacSeed } from "@/lib/rbac/seed-defaults"
 import type { RbacUser } from "@/types/rbac"
 import { NextResponse } from "next/server"
@@ -12,7 +13,7 @@ export async function GET() {
   if (!gate.ok) return gate.response
   await ensureRbacSeed()
   const users = await readRbacUsersUnsafe()
-  return NextResponse.json(users, {
+  return NextResponse.json(toPublicRbacUsers(users), {
     headers: { "Cache-Control": "no-store" },
   })
 }
@@ -68,5 +69,5 @@ export async function POST(req: Request) {
   if (!w.ok) {
     return NextResponse.json({ error: w.error }, { status: 500 })
   }
-  return NextResponse.json(row, { status: 201 })
+  return NextResponse.json(toPublicRbacUser(row), { status: 201 })
 }

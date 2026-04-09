@@ -1,7 +1,7 @@
 "use client"
 
 import { ChevronRightIcon, MenuIcon, SearchIcon } from "lucide-react"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useState } from "react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -23,6 +23,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { SunriseLogo } from "@/components/branding/sunrise-logo"
 import { MainNavList } from "@/components/layout/main-nav-list"
 import { NotificationBell } from "@/components/layout/notification-bell"
 import { useOperatorSession } from "@/components/rbac/operator-session-context"
@@ -70,10 +71,25 @@ function titleFromPath(pathname: string) {
 
 export function AppTopbar({ className }: { className?: string }) {
   const pathname = usePathname()
+  const router = useRouter()
   const pageTitle = titleFromPath(pathname)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const { user, role, switchableUsers, switchUser, loading: sessionLoading } =
-    useOperatorSession()
+  const [logoutPending, setLogoutPending] = useState(false)
+  const { user, role, loading: sessionLoading } = useOperatorSession()
+
+  async function logout() {
+    setLogoutPending(true)
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      })
+      router.replace("/login")
+      router.refresh()
+    } finally {
+      setLogoutPending(false)
+    }
+  }
 
   const initials =
     user?.displayName
@@ -101,7 +117,10 @@ export function AppTopbar({ className }: { className?: string }) {
           </SheetTrigger>
           <SheetContent side="left" className="w-72 p-0">
             <SheetHeader className="border-b border-border px-4 py-3 text-left">
-              <SheetTitle className="text-sm font-semibold">SUNRISE HES</SheetTitle>
+              <SheetTitle className="flex items-center gap-2 text-sm font-semibold">
+                <SunriseLogo className="max-h-8" />
+                <span className="truncate">SUNRISE HES</span>
+              </SheetTitle>
             </SheetHeader>
             <nav className="flex flex-col gap-0.5 p-2" aria-label="Mobile primary">
               <MainNavList
@@ -165,27 +184,15 @@ export function AppTopbar({ className }: { className?: string }) {
               </span>
             </div>
           </DropdownMenuLabel>
-          {switchableUsers && switchableUsers.length > 0 ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Switch operator
-              </DropdownMenuLabel>
-              {switchableUsers.map((u) => (
-                <DropdownMenuItem
-                  key={u.id}
-                  onClick={() => void switchUser(u.id)}
-                  className={u.id === user?.id ? "bg-muted" : ""}
-                >
-                  <span className="truncate">{u.displayName}</span>
-                  <span className="text-muted-foreground">@{u.username}</span>
-                </DropdownMenuItem>
-              ))}
-            </>
-          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled>Profile</DropdownMenuItem>
-          <DropdownMenuItem disabled>Sign out</DropdownMenuItem>
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={logoutPending}
+            onClick={() => void logout()}
+          >
+            {logoutPending ? "Signing out…" : "Log out"}
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </header>

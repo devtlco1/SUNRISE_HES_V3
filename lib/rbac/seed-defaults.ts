@@ -6,6 +6,7 @@ import {
   filterValidPermissionKeys,
   PERMISSION_REGISTRY,
 } from "@/lib/rbac/permission-registry"
+import { ensureDefaultLoginAdmin } from "@/lib/rbac/ensure-default-admin"
 import {
   readRbacRolesUnsafe,
   readRbacUsersUnsafe,
@@ -177,6 +178,11 @@ export async function ensureRbacSeed(): Promise<void> {
   if (users.length === 0) {
     users = usersFromMock(now)
     await writeRbacUsers(users)
+  }
+
+  const adminSeed = await ensureDefaultLoginAdmin(users, now)
+  if (adminSeed.changed) {
+    await writeRbacUsers(adminSeed.users)
   }
 }
 

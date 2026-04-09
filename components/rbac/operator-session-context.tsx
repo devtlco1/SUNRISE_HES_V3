@@ -15,10 +15,8 @@ export type OperatorSessionState = {
   user: RbacUser | null
   role: RbacRole | null
   permissions: Set<string>
-  switchableUsers: { id: string; displayName: string; username: string }[] | null
   error: string | null
   reload: () => Promise<void>
-  switchUser: (userId: string) => Promise<boolean>
 }
 
 const defaultCtx: OperatorSessionState = {
@@ -26,10 +24,8 @@ const defaultCtx: OperatorSessionState = {
   user: null,
   role: null,
   permissions: new Set(),
-  switchableUsers: null,
   error: null,
   reload: async () => undefined,
-  switchUser: async () => false,
 }
 
 const OperatorSessionContext = createContext<OperatorSessionState>(defaultCtx)
@@ -43,9 +39,6 @@ export function OperatorSessionProvider({
   const [user, setUser] = useState<RbacUser | null>(null)
   const [role, setRole] = useState<RbacRole | null>(null)
   const [permissionList, setPermissionList] = useState<string[]>([])
-  const [switchableUsers, setSwitchableUsers] = useState<
-    { id: string; displayName: string; username: string }[] | null
-  >(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -56,26 +49,22 @@ export function OperatorSessionProvider({
         setUser(null)
         setRole(null)
         setPermissionList([])
-        setSwitchableUsers(null)
         return
       }
       const data = (await res.json()) as {
         user: RbacUser
         role: RbacRole
         permissions: string[]
-        switchableUsers?: { id: string; displayName: string; username: string }[]
       }
       setUser(data.user)
       setRole(data.role)
       setPermissionList(data.permissions)
-      setSwitchableUsers(data.switchableUsers ?? null)
       setError(null)
     } catch {
       setError("Session load failed")
       setUser(null)
       setRole(null)
       setPermissionList([])
-      setSwitchableUsers(null)
     } finally {
       setLoading(false)
     }
@@ -85,34 +74,16 @@ export function OperatorSessionProvider({
     void load()
   }, [load])
 
-  const switchUser = useCallback(async (userId: string) => {
-    try {
-      const res = await fetch("/api/rbac/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ userId }),
-      })
-      if (!res.ok) return false
-      await load()
-      return true
-    } catch {
-      return false
-    }
-  }, [load])
-
   const value = useMemo<OperatorSessionState>(
     () => ({
       loading,
       user,
       role,
       permissions: new Set(permissionList),
-      switchableUsers,
       error,
       reload: load,
-      switchUser,
     }),
-    [loading, user, role, permissionList, switchableUsers, error, load, switchUser]
+    [loading, user, role, permissionList, error, load]
   )
 
   return (
