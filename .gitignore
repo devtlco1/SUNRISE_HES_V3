@@ -43,14 +43,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Local OBIS catalog backups (see `npm run obis:prune-from-readings-csv`)
+/data/backups/*.json
+
 # Python sidecar
 apps/runtime-python/.venv/
 apps/runtime-python/**/__pycache__/
 apps/runtime-python/**/*.pyc
 apps/runtime-python/data/discovery-snapshots/
-
-# Operator-local read-results CSV (prune script input); keep out of git by default
-/data/obis-read-results.csv
-
-# Prune / migration backups (can be large)
-/data/backups/

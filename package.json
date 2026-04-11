@@ -10,8 +10,7 @@
     "obis:apply-excel": "tsx scripts/apply-excel-obis-catalog.ts",
     "obis:catalog:generate": "tsx scripts/generate-obis-catalog-from-prm.ts data1.sql",
     "obis:catalog:verify": "tsx scripts/verify-obis-catalog-prm.ts",
-    "obis:catalog:prune-read-results": "tsx scripts/prune-obis-catalog-from-read-results-csv.ts",
-    "obis:catalog:prune-read-results:dry-smoke": "tsx scripts/prune-obis-catalog-from-read-results-csv.ts scripts/fixtures/read-results-smoke.csv --dry-run"
+    "obis:prune-from-readings-csv": "tsx scripts/prune-obis-from-readings-csv.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

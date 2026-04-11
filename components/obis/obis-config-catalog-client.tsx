@@ -97,7 +97,7 @@ export function ObisConfigCatalogClient() {
   const importSpreadsheetRef = useRef<HTMLInputElement>(null)
   const [classFilter, setClassFilter] = useState<string | "all">("all")
   const [subclassFilter, setSubclassFilter] = useState<string | "all">("all")
-  /** Default: operator working set (enabled rows only). Enable to audit disabled rows. */
+  /** Default: working catalog — only enabled rows. Enable to audit disabled rows. */
   const [showDisabledRows, setShowDisabledRows] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ObisCatalogEntry | null>(null)
@@ -368,6 +368,16 @@ export function ObisConfigCatalogClient() {
         <span className="font-medium text-foreground">SortNo</span>. There are no Family/Section/Pack columns.
       </p>
 
+      <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          className="size-3.5 rounded border-input"
+          checked={showDisabledRows}
+          onChange={(e) => setShowDisabledRows(e.target.checked)}
+        />
+        Show disabled rows (full vendor / audit)
+      </label>
+
       <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
@@ -428,20 +438,9 @@ export function ObisConfigCatalogClient() {
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-        <label className="inline-flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            className="size-3.5 rounded border-input"
-            checked={showDisabledRows}
-            onChange={(e) => setShowDisabledRows(e.target.checked)}
-          />
-          <span>Show disabled rows (audit)</span>
-        </label>
-        <span className="tabular-nums">
-          Displayed: {loading ? "—" : filtered.length} of {rows.length} rows
-        </span>
-      </div>
+      <p className="text-xs text-muted-foreground tabular-nums">
+        Displayed rows: {loading ? "—" : filtered.length}
+      </p>
 
       <div className="max-h-[min(75vh,800px)] overflow-auto rounded-lg border border-border bg-card">
         <Table>
