@@ -97,6 +97,8 @@ export function ObisConfigCatalogClient() {
   const importSpreadsheetRef = useRef<HTMLInputElement>(null)
   const [classFilter, setClassFilter] = useState<string | "all">("all")
   const [subclassFilter, setSubclassFilter] = useState<string | "all">("all")
+  /** Default: operator working set (enabled rows only). Enable to audit disabled rows. */
+  const [showDisabledRows, setShowDisabledRows] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ObisCatalogEntry | null>(null)
   const [originalObjectCode, setOriginalObjectCode] = useState<string | null>(null)
@@ -133,12 +135,13 @@ export function ObisConfigCatalogClient() {
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
+      if (!showDisabledRows && !r.enabled) return false
       if (classFilter !== "all" && r.class_name !== classFilter) return false
       if (classFilter !== "all" && subclassFilter !== "all" && subclassKey(r) !== subclassFilter)
         return false
       return true
     })
-  }, [rows, classFilter, subclassFilter])
+  }, [rows, classFilter, subclassFilter, showDisabledRows])
 
   function openAdd() {
     setOriginalObjectCode(null)
@@ -425,9 +428,20 @@ export function ObisConfigCatalogClient() {
         </div>
       ) : null}
 
-      <p className="text-xs text-muted-foreground tabular-nums">
-        Displayed rows: {loading ? "—" : filtered.length}
-      </p>
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+        <label className="inline-flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            className="size-3.5 rounded border-input"
+            checked={showDisabledRows}
+            onChange={(e) => setShowDisabledRows(e.target.checked)}
+          />
+          <span>Show disabled rows (audit)</span>
+        </label>
+        <span className="tabular-nums">
+          Displayed: {loading ? "—" : filtered.length} of {rows.length} rows
+        </span>
+      </div>
 
       <div className="max-h-[min(75vh,800px)] overflow-auto rounded-lg border border-border bg-card">
         <Table>
