@@ -1205,10 +1205,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.0.3.1.255",
@@ -1242,10 +1241,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.32.33.0.255",
@@ -1279,10 +1277,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.32.37.0.255",
@@ -1316,10 +1313,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.52.33.0.255",
@@ -1353,10 +1349,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.52.37.0.255",
@@ -1390,10 +1385,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.72.33.0.255",
@@ -1427,10 +1421,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.72.37.0.255",
@@ -1464,10 +1457,9 @@
     "attribute": 2,
     "scaler_unit_attribute": 3,
     "result_format": "scalar",
-    "status": "catalog_only",
-    "enabled": false,
-    "sort_order": 0,
-    "notes": "disabled: not Read status ok in readings export"
+    "status": "active",
+    "enabled": true,
+    "sort_order": 0
   },
   {
     "object_code": "1.0.96.128.9.255.2",

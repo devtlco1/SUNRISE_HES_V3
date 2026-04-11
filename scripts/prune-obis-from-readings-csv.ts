@@ -12,6 +12,7 @@
 import { copyFile, mkdir, readFile } from "fs/promises"
 import path from "path"
 
+import { catalogEntrySupportedByReadingsSet } from "../lib/obis/catalog-readings-supported"
 import {
   parseReadingsExportCsv,
   summarizeReadingsCsv,
@@ -57,7 +58,7 @@ async function main() {
   let enabledCount = 0
   let disabledCount = 0
   const next: ObisCatalogEntry[] = catalog.map((r) => {
-    const ok = supported.has(r.object_code)
+    const ok = catalogEntrySupportedByReadingsSet(r, supported)
     if (ok) {
       enabledCount++
       return {
