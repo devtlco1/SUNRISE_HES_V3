@@ -13,12 +13,15 @@ export function AppSidebar({ className }: { className?: string }) {
         className
       )}
     >
-      <div className="flex h-14 items-center px-3">
+      <div className="flex h-[3.25rem] items-center px-3">
         <Link
           href="/dashboard"
-          className="flex min-w-0 items-center gap-2 text-sidebar-foreground"
+          className="flex min-w-0 items-center gap-2.5 text-sidebar-foreground"
         >
-          <SunriseLogo className="max-h-8 shrink-0" />
+          <SunriseLogo
+            className="shrink-0"
+            imgClassName="h-10 max-w-[200px] sm:h-11 sm:max-w-[220px]"
+          />
           <span className="truncate text-xs font-semibold tracking-tight">
             SUNRISE HES
           </span>

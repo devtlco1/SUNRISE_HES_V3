@@ -52,7 +52,10 @@ export function LoginForm() {
   return (
     <div className="w-full max-w-sm space-y-8">
       <div className="flex flex-col items-center gap-4 text-center">
-        <SunriseLogo className="justify-center" />
+        <SunriseLogo
+          className="justify-center"
+          imgClassName="h-12 max-w-[260px] sm:h-[3.25rem] sm:max-w-[280px]"
+        />
         <div>
           <h1 className="text-lg font-semibold tracking-tight text-foreground">
             SUNRISE HES

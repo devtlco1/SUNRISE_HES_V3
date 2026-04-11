@@ -118,7 +118,10 @@ export function AppTopbar({ className }: { className?: string }) {
           <SheetContent side="left" className="w-72 p-0">
             <SheetHeader className="border-b border-border px-4 py-3 text-left">
               <SheetTitle className="flex items-center gap-2 text-sm font-semibold">
-                <SunriseLogo className="max-h-8" />
+                <SunriseLogo
+                  className="shrink-0"
+                  imgClassName="h-9 max-w-[180px] sm:h-10 sm:max-w-[200px]"
+                />
                 <span className="truncate">SUNRISE HES</span>
               </SheetTitle>
             </SheetHeader>

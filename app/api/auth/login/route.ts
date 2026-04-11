@@ -1,5 +1,10 @@
 import { AUTH_SESSION_COOKIE } from "@/lib/auth/constants"
+import { resolveAuthCookieSecure } from "@/lib/auth/cookie-secure"
 import { verifyPassword } from "@/lib/auth/password"
+import {
+  AUTH_SESSION_MAX_AGE_SEC,
+  authSessionCookieBase,
+} from "@/lib/auth/session-cookie-options"
 import { signSessionToken } from "@/lib/auth/session-token"
 import { readRbacUsersUnsafe } from "@/lib/rbac/json-store"
 import { ensureRbacSeed } from "@/lib/rbac/seed-defaults"
@@ -43,13 +48,11 @@ export async function POST(req: Request) {
   }
 
   const token = signSessionToken(user.id)
+  const secure = resolveAuthCookieSecure(req)
   const jar = await cookies()
   jar.set(AUTH_SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
+    ...authSessionCookieBase(secure),
+    maxAge: AUTH_SESSION_MAX_AGE_SEC,
   })
 
   return NextResponse.json({ ok: true })
